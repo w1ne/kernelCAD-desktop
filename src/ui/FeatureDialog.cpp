@@ -187,6 +187,8 @@ void FeatureDialog::clearForm()
     m_directionCombo = nullptr;
     m_extentTypeCombo = nullptr;
     m_distanceSpin = nullptr;
+    m_distance2Spin = nullptr;
+    m_distance2Label = nullptr;
     m_taperAngleSpin = nullptr;
     m_operationCombo = nullptr;
     m_radiusSpin = nullptr;
@@ -311,6 +313,41 @@ void FeatureDialog::buildExtrudeForm(const features::ExtrudeParams& defaults)
         emit parameterChanged("distance", val);
     });
     m_formLayout->addRow(tr("Distance"), m_distanceSpin);
+
+    // Distance 2 (for Two Sides mode)
+    m_distance2Label = new QLabel(tr("Distance 2"), this);
+    m_distance2Spin = new QDoubleSpinBox(this);
+    m_distance2Spin->setRange(0.01, 10000.0);
+    m_distance2Spin->setDecimals(2);
+    m_distance2Spin->setSuffix(tr(" mm"));
+    double dist2 = 10.0;
+    if (!defaults.distance2Expr.empty()) {
+        QString expr2 = QString::fromStdString(defaults.distance2Expr);
+        expr2.remove(" mm");
+        bool ok2 = false;
+        double v2 = expr2.toDouble(&ok2);
+        if (ok2) dist2 = v2;
+    }
+    m_distance2Spin->setValue(dist2);
+    connect(m_distance2Spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double val) {
+        emit parameterChanged("distance2", val);
+    });
+    m_formLayout->addRow(m_distance2Label, m_distance2Spin);
+    // Only visible when direction is "Two Sides" (index 1)
+    bool showDist2 = (defaults.direction == features::ExtentDirection::Negative &&
+                      !defaults.distance2Expr.empty()) ||
+                     static_cast<int>(defaults.direction) == 1;
+    m_distance2Spin->setVisible(showDist2);
+    m_distance2Label->setVisible(showDist2);
+
+    // Wire direction combo to show/hide Distance 2
+    connect(m_directionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        bool twoSides = (idx == 1);
+        if (m_distance2Spin) m_distance2Spin->setVisible(twoSides);
+        if (m_distance2Label) m_distance2Label->setVisible(twoSides);
+    });
 
     // Taper Angle
     m_taperAngleSpin = new QDoubleSpinBox(this);
@@ -595,6 +632,9 @@ void FeatureDialog::emitAccepted()
             p.operation = static_cast<features::FeatureOperation>(m_operationCombo->currentIndex());
         if (m_directionCombo && m_directionCombo->currentIndex() == 2)
             p.isSymmetric = true;
+        // Two Sides: capture distance2
+        if (m_directionCombo && m_directionCombo->currentIndex() == 1 && m_distance2Spin)
+            p.distance2Expr = QString::number(m_distance2Spin->value(), 'f', 2).toStdString() + " mm";
         emit extrudeAccepted(p);
         emit accepted();
         break;

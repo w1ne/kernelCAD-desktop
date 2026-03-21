@@ -81,6 +81,14 @@ std::vector<std::string> DependencyGraph::dependentsOf(const std::string& featur
     return result;
 }
 
+std::vector<std::string> DependencyGraph::allDependentsOf(const std::string& featureId) const
+{
+    std::unordered_set<std::string> visited;
+    collectDownstream(featureId, visited);
+    visited.erase(featureId); // collectDownstream includes the seed via BFS
+    return std::vector<std::string>(visited.begin(), visited.end());
+}
+
 void DependencyGraph::collectDownstream(const std::string& id,
                                          std::unordered_set<std::string>& visited) const
 {

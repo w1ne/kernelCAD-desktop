@@ -61,7 +61,43 @@ TopoDS_Shape ExtrudeFeature::execute(kernel::OCCTKernel& kernel,
     }
 
     TopoDS_Face face = sketch::profileToFace(*sketch, curveIds);
-    return kernel.extrude(face, distance);
+
+    // Parse distance2 for two-sided extrude
+    double distance2 = 0.0;
+    if (!m_params.distance2Expr.empty()) {
+        try {
+            std::string expr2 = m_params.distance2Expr;
+            auto sp2 = expr2.find(' ');
+            if (sp2 != std::string::npos)
+                expr2 = expr2.substr(0, sp2);
+            distance2 = std::stod(expr2);
+        } catch (...) {
+            distance2 = 0.0;
+        }
+    }
+
+    // Two-sided extrude: when distance2 is explicitly set
+    if (distance2 > 0.0) {
+        return kernel.extrudeTwoSides(face, distance, distance2);
+    }
+
+    // Dispatch based on extent type
+    switch (m_params.extentType) {
+    case ExtentType::Symmetric:
+        return kernel.extrudeSymmetric(face, distance);
+    case ExtentType::ThroughAll:
+        return kernel.extrudeThroughAll(face);
+    case ExtentType::Distance:
+    default:
+        // Also handle symmetric via the isSymmetric flag or direction enum
+        if (m_params.isSymmetric || m_params.direction == ExtentDirection::Symmetric) {
+            return kernel.extrudeSymmetric(face, distance);
+        }
+        if (m_params.direction == ExtentDirection::Negative) {
+            return kernel.extrude(face, -distance);
+        }
+        return kernel.extrude(face, distance);
+    }
 }
 
 } // namespace features

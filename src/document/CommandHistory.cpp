@@ -1,12 +1,21 @@
 #include "CommandHistory.h"
+#include "Document.h"
+#include <stdexcept>
 
 namespace document {
 
 void CommandHistory::execute(std::unique_ptr<Command> cmd, Document& doc)
 {
-    cmd->execute(doc);
-    m_undoStack.push_back(std::move(cmd));
-    m_redoStack.clear();
+    doc.beginTransaction();
+    try {
+        cmd->execute(doc);
+        doc.commitTransaction();
+        m_undoStack.push_back(std::move(cmd));
+        m_redoStack.clear();
+    } catch (const std::exception&) {
+        doc.rollbackTransaction();
+        throw;  // Re-throw so caller can show error message
+    }
 }
 
 bool CommandHistory::undo(Document& doc)

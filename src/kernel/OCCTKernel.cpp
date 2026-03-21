@@ -205,6 +205,30 @@ TopoDS_Shape OCCTKernel::extrude(const TopoDS_Shape& profile, double distance)
     return BRepPrimAPI_MakePrism(profile, direction).Shape();
 }
 
+TopoDS_Shape OCCTKernel::extrudeSymmetric(const TopoDS_Shape& profile, double totalDistance)
+{
+    gp_Vec dirPos(0, 0, totalDistance / 2.0);
+    gp_Vec dirNeg(0, 0, -totalDistance / 2.0);
+    TopoDS_Shape pos = BRepPrimAPI_MakePrism(profile, dirPos).Shape();
+    TopoDS_Shape neg = BRepPrimAPI_MakePrism(profile, dirNeg).Shape();
+    return booleanUnion(pos, neg);
+}
+
+TopoDS_Shape OCCTKernel::extrudeTwoSides(const TopoDS_Shape& profile, double dist1, double dist2)
+{
+    gp_Vec dir1(0, 0, dist1);
+    gp_Vec dir2(0, 0, -dist2);
+    TopoDS_Shape s1 = BRepPrimAPI_MakePrism(profile, dir1).Shape();
+    TopoDS_Shape s2 = BRepPrimAPI_MakePrism(profile, dir2).Shape();
+    return booleanUnion(s1, s2);
+}
+
+TopoDS_Shape OCCTKernel::extrudeThroughAll(const TopoDS_Shape& profile)
+{
+    gp_Vec dir(0, 0, 10000.0);
+    return BRepPrimAPI_MakePrism(profile, dir).Shape();
+}
+
 TopoDS_Shape OCCTKernel::revolve(const TopoDS_Shape& profile, double angleDeg)
 {
     gp_Ax1 axis(gp_Pnt(0,0,0), gp_Dir(0,0,1));

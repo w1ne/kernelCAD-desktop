@@ -42,6 +42,9 @@ public:
 
     // ── Feature ops ───────────────────────────────────────────────────────
     TopoDS_Shape extrude(const TopoDS_Shape& profile, double distance);
+    TopoDS_Shape extrudeSymmetric(const TopoDS_Shape& profile, double totalDistance);
+    TopoDS_Shape extrudeTwoSides(const TopoDS_Shape& profile, double dist1, double dist2);
+    TopoDS_Shape extrudeThroughAll(const TopoDS_Shape& profile);
     TopoDS_Shape revolve(const TopoDS_Shape& profile, double angleDeg);
     TopoDS_Shape fillet(const TopoDS_Shape& shape,
                         const std::vector<int>& edgeIds,

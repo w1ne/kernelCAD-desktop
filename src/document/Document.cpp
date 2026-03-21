@@ -1807,6 +1807,20 @@ void Document::recompute()
             feat->setErrorMessage(e.what());
             m_erroredFeatureIds.insert(feat->id());
 
+            // Propagate error to all downstream dependents
+            auto dependents = m_depGraph.allDependentsOf(feat->id());
+            for (const auto& depId : dependents) {
+                for (size_t j = i + 1; j < m_timeline->count(); ++j) {
+                    auto& depEntry = m_timeline->entry(j);
+                    if (depEntry.id == depId && depEntry.feature) {
+                        depEntry.feature->setHealthState(features::HealthState::Error);
+                        depEntry.feature->setErrorMessage(
+                            "Upstream feature '" + feat->name() + "' failed");
+                        m_erroredFeatureIds.insert(depId);
+                    }
+                }
+            }
+
             // Restore bodies to last-good state so downstream features
             // can continue with valid geometry.
             for (const auto& [bid, shape] : m_lastGoodShapes) {
@@ -1892,6 +1906,20 @@ void Document::recompute(const std::vector<std::string>& dirtyFeatureIds)
                 feat->setErrorMessage(e.what());
                 m_erroredFeatureIds.insert(feat->id());
 
+                // Propagate error to all downstream dependents
+                auto dependents = m_depGraph.allDependentsOf(feat->id());
+                for (const auto& depId : dependents) {
+                    for (size_t j = i + 1; j < m_timeline->count(); ++j) {
+                        auto& depEntry = m_timeline->entry(j);
+                        if (depEntry.id == depId && depEntry.feature) {
+                            depEntry.feature->setHealthState(features::HealthState::Error);
+                            depEntry.feature->setErrorMessage(
+                                "Upstream feature '" + feat->name() + "' failed");
+                            m_erroredFeatureIds.insert(depId);
+                        }
+                    }
+                }
+
                 // Restore from last-good
                 for (const auto& [bid, shape] : m_lastGoodShapes) {
                     if (m_brepModel->hasBody(bid))
@@ -1914,6 +1942,43 @@ void Document::recomputeFrom(const std::string& featureId)
 void Document::executeCommand(std::unique_ptr<Command> cmd)
 {
     m_history.execute(std::move(cmd), *this);
+}
+
+// ── Transaction support ───────────────────────────────────────────────────────
+
+void Document::beginTransaction()
+{
+    m_transactionSnapshot.timelineCount = m_timeline->count();
+    m_transactionSnapshot.bodyIds = m_brepModel->bodyIds();
+    m_transactionSnapshot.active = true;
+}
+
+void Document::commitTransaction()
+{
+    m_transactionSnapshot.active = false;
+}
+
+void Document::rollbackTransaction()
+{
+    if (!m_transactionSnapshot.active) return;
+
+    // Remove any features added during the failed transaction
+    while (m_timeline->count() > m_transactionSnapshot.timelineCount) {
+        auto& entry = m_timeline->entry(m_timeline->count() - 1);
+        m_timeline->remove(entry.id);
+    }
+
+    // Remove any bodies added during the failed transaction
+    auto currentIds = m_brepModel->bodyIds();
+    for (const auto& id : currentIds) {
+        bool wasExisting = false;
+        for (const auto& origId : m_transactionSnapshot.bodyIds) {
+            if (origId == id) { wasExisting = true; break; }
+        }
+        if (!wasExisting) m_brepModel->removeBody(id);
+    }
+
+    m_transactionSnapshot.active = false;
 }
 
 // ── Error recovery helpers ────────────────────────────────────────────────────

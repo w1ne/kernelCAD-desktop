@@ -515,4 +515,20 @@ private:
     std::string m_featureId;
 };
 
+// ── ReorderFeatureCommand ────────────────────────────────────────────────────
+
+class ReorderFeatureCommand : public Command {
+public:
+    ReorderFeatureCommand(std::string featureId, size_t newIndex);
+
+    std::string description() const override { return "Reorder Feature"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    std::string m_featureId;
+    size_t m_newIndex;
+    size_t m_oldIndex = 0;
+};
+
 } // namespace document

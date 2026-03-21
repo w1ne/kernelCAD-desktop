@@ -99,6 +99,8 @@ private:
     QComboBox*      m_directionCombo    = nullptr;
     QComboBox*      m_extentTypeCombo   = nullptr;
     QDoubleSpinBox* m_distanceSpin      = nullptr;
+    QDoubleSpinBox* m_distance2Spin     = nullptr;
+    QLabel*         m_distance2Label    = nullptr;
     QDoubleSpinBox* m_taperAngleSpin    = nullptr;
     QComboBox*      m_operationCombo    = nullptr;
 

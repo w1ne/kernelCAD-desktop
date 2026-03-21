@@ -1136,17 +1136,18 @@ void MainWindow::connectSignals()
     connect(m_timeline, &TimelinePanel::entryDoubleClicked,
             this, &MainWindow::onEditFeature);
 
-    // Timeline drag-reorder -> validate against dependency graph
+    // Timeline drag-reorder -> execute as undoable command
     connect(m_timeline, &TimelinePanel::reorderRequested, this, [this](int from, int to) {
         auto& tl = m_document->timeline();
-        if (!tl.canReorder(static_cast<size_t>(from), static_cast<size_t>(to),
-                           m_document->depGraph())) {
-            statusBar()->showMessage(tr("Cannot reorder: dependency violation"), 3000);
-            return;
+        if (static_cast<size_t>(from) >= tl.count()) return;
+        const std::string featureId = tl.entry(static_cast<size_t>(from)).id;
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::ReorderFeatureCommand>(featureId, static_cast<size_t>(to)));
+            refreshAllPanels();
+        } catch (const std::exception& e) {
+            statusBar()->showMessage(tr(e.what()), 3000);
         }
-        tl.reorder(static_cast<size_t>(from), static_cast<size_t>(to), m_document->depGraph());
-        m_document->recompute();
-        refreshAllPanels();
     });
 
     // Feature tree item selected -> show in properties + highlight + manipulator

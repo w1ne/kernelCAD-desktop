@@ -3,6 +3,7 @@
 #include "../kernel/BRepModel.h"
 #include <TopoDS_Shape.hxx>
 #include <sstream>
+#include <stdexcept>
 
 namespace document {
 
@@ -14,6 +15,12 @@ AddExtrudeCommand::AddExtrudeCommand(features::ExtrudeParams params)
 
 void AddExtrudeCommand::execute(Document& doc)
 {
+    if (!m_params.sketchId.empty()) {
+        auto* sk = doc.findSketch(m_params.sketchId);
+        if (!sk)
+            throw std::runtime_error("Sketch '" + m_params.sketchId + "' not found");
+    }
+
     m_bodyId = doc.addExtrude(m_params);
 
     // Capture the feature ID (the last entry appended to the timeline)
@@ -39,6 +46,12 @@ AddRevolveCommand::AddRevolveCommand(features::RevolveParams params)
 
 void AddRevolveCommand::execute(Document& doc)
 {
+    if (!m_params.sketchId.empty()) {
+        auto* sk = doc.findSketch(m_params.sketchId);
+        if (!sk)
+            throw std::runtime_error("Sketch '" + m_params.sketchId + "' not found");
+    }
+
     m_bodyId = doc.addRevolve(m_params);
 
     auto& tl = doc.timeline();
@@ -193,6 +206,9 @@ AddFilletCommand::AddFilletCommand(features::FilletParams params)
 
 void AddFilletCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addFillet(m_params);
 
     // Capture the feature ID (the last entry appended to the timeline)
@@ -217,6 +233,9 @@ AddChamferCommand::AddChamferCommand(features::ChamferParams params)
 
 void AddChamferCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addChamfer(m_params);
 
     // Capture the feature ID (the last entry appended to the timeline)
@@ -241,6 +260,12 @@ AddSweepCommand::AddSweepCommand(features::SweepParams params)
 
 void AddSweepCommand::execute(Document& doc)
 {
+    if (!m_params.sketchId.empty()) {
+        auto* sk = doc.findSketch(m_params.sketchId);
+        if (!sk)
+            throw std::runtime_error("Sketch '" + m_params.sketchId + "' not found");
+    }
+
     m_bodyId = doc.addSweep(m_params);
 
     auto& tl = doc.timeline();
@@ -287,6 +312,9 @@ AddHoleCommand::AddHoleCommand(features::HoleParams params)
 
 void AddHoleCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addHole(m_params);
 
     auto& tl = doc.timeline();
@@ -310,6 +338,9 @@ AddShellCommand::AddShellCommand(features::ShellParams params)
 
 void AddShellCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addShell(m_params);
 
     auto& tl = doc.timeline();
@@ -333,6 +364,9 @@ AddMirrorCommand::AddMirrorCommand(features::MirrorParams params)
 
 void AddMirrorCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addMirror(m_params);
 
     auto& tl = doc.timeline();
@@ -356,6 +390,9 @@ AddRectangularPatternCommand::AddRectangularPatternCommand(features::Rectangular
 
 void AddRectangularPatternCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addRectangularPattern(m_params);
 
     auto& tl = doc.timeline();
@@ -379,6 +416,9 @@ AddCircularPatternCommand::AddCircularPatternCommand(features::CircularPatternPa
 
 void AddCircularPatternCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addCircularPattern(m_params);
 
     auto& tl = doc.timeline();
@@ -402,6 +442,9 @@ AddCombineCommand::AddCombineCommand(features::CombineParams params)
 
 void AddCombineCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addCombine(m_params);
 
     auto& tl = doc.timeline();
@@ -425,6 +468,9 @@ AddSplitBodyCommand::AddSplitBodyCommand(features::SplitBodyParams params)
 
 void AddSplitBodyCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addSplitBody(m_params);
 
     auto& tl = doc.timeline();
@@ -448,6 +494,9 @@ AddOffsetFacesCommand::AddOffsetFacesCommand(features::OffsetFacesParams params)
 
 void AddOffsetFacesCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addOffsetFaces(m_params);
 
     auto& tl = doc.timeline();
@@ -471,6 +520,9 @@ AddMoveCommand::AddMoveCommand(features::MoveParams params)
 
 void AddMoveCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addMove(m_params);
 
     auto& tl = doc.timeline();
@@ -494,6 +546,9 @@ AddDraftCommand::AddDraftCommand(features::DraftParams params)
 
 void AddDraftCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addDraft(m_params);
 
     auto& tl = doc.timeline();
@@ -517,6 +572,9 @@ AddThickenCommand::AddThickenCommand(features::ThickenParams params)
 
 void AddThickenCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addThicken(m_params);
 
     auto& tl = doc.timeline();
@@ -540,6 +598,9 @@ AddThreadCommand::AddThreadCommand(features::ThreadParams params)
 
 void AddThreadCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addThread(m_params);
 
     auto& tl = doc.timeline();
@@ -563,6 +624,9 @@ AddScaleCommand::AddScaleCommand(features::ScaleParams params)
 
 void AddScaleCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addScale(m_params);
 
     auto& tl = doc.timeline();
@@ -586,6 +650,9 @@ AddPathPatternCommand::AddPathPatternCommand(features::PathPatternParams params)
 
 void AddPathPatternCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addPathPattern(m_params);
 
     auto& tl = doc.timeline();
@@ -631,6 +698,9 @@ AddDeleteFaceCommand::AddDeleteFaceCommand(features::DeleteFaceParams params)
 
 void AddDeleteFaceCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addDeleteFace(m_params);
 
     auto& tl = doc.timeline();
@@ -653,6 +723,9 @@ AddReplaceFaceCommand::AddReplaceFaceCommand(features::ReplaceFaceParams params)
 
 void AddReplaceFaceCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addReplaceFace(m_params);
 
     auto& tl = doc.timeline();
@@ -675,6 +748,9 @@ AddReverseNormalCommand::AddReverseNormalCommand(features::ReverseNormalParams p
 
 void AddReverseNormalCommand::execute(Document& doc)
 {
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
     m_bodyId = doc.addReverseNormal(m_params);
 
     auto& tl = doc.timeline();
@@ -705,6 +781,43 @@ void AddJointCommand::undo(Document& doc)
     doc.timeline().remove(m_featureId);
     doc.recompute();
     doc.setModified(true);
+}
+
+// ── ReorderFeatureCommand ────────────────────────────────────────────────────
+
+ReorderFeatureCommand::ReorderFeatureCommand(std::string featureId, size_t newIndex)
+    : m_featureId(std::move(featureId)), m_newIndex(newIndex) {}
+
+void ReorderFeatureCommand::execute(Document& doc)
+{
+    auto& tl = doc.timeline();
+    // Find current index
+    for (size_t i = 0; i < tl.count(); ++i) {
+        if (tl.entry(i).id == m_featureId) {
+            m_oldIndex = i;
+            break;
+        }
+    }
+
+    if (!tl.canReorder(m_oldIndex, m_newIndex, doc.depGraph()))
+        throw std::runtime_error("Cannot reorder: dependency violation");
+
+    tl.reorder(m_oldIndex, m_newIndex, doc.depGraph());
+    doc.recompute();
+}
+
+void ReorderFeatureCommand::undo(Document& doc)
+{
+    auto& tl = doc.timeline();
+    size_t currentIdx = 0;
+    for (size_t i = 0; i < tl.count(); ++i) {
+        if (tl.entry(i).id == m_featureId) {
+            currentIdx = i;
+            break;
+        }
+    }
+    tl.reorder(currentIdx, m_oldIndex);
+    doc.recompute();
 }
 
 } // namespace document

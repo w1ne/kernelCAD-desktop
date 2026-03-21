@@ -28,6 +28,9 @@ public:
     /// Get all direct dependents of a feature (what depends on it).
     std::vector<std::string> dependentsOf(const std::string& featureId) const;
 
+    /// Get all transitive dependents of a feature (BFS downstream).
+    std::vector<std::string> allDependentsOf(const std::string& featureId) const;
+
     /// Given a set of dirty features, compute the full set that needs recompute
     /// (all downstream dependents, transitively). The returned list includes
     /// the initially dirty features themselves.

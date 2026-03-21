@@ -193,6 +193,11 @@ public:
     /// Execute a command through the history (pushes onto the undo stack).
     void executeCommand(std::unique_ptr<Command> cmd);
 
+    // Transaction support for atomic command execution
+    void beginTransaction();
+    void commitTransaction();
+    void rollbackTransaction();
+
     /// Lookup which feature last created/modified a body.
     std::string featureForBody(const std::string& bodyId) const;
 
@@ -222,6 +227,14 @@ private:
 
     /// Maps body IDs to the feature ID that created/last modified them.
     std::unordered_map<std::string, std::string> m_bodyToFeature;
+
+    /// Transaction snapshot for atomic command execution rollback.
+    struct TransactionSnapshot {
+        size_t timelineCount = 0;
+        std::vector<std::string> bodyIds;
+        bool active = false;
+    };
+    TransactionSnapshot m_transactionSnapshot;
 
     /// Last-good shape per body for error recovery.  Before executing a
     /// feature that modifies a body, we snapshot its current shape.  If the
