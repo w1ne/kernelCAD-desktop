@@ -334,6 +334,9 @@ void Viewport3D::initializeGL()
 
     // Create ground grid and origin axes buffers
     initGridBuffers();
+
+    // Create origin reference planes (XY, XZ, YZ)
+    initOriginPlanes();
 }
 
 void Viewport3D::resizeGL(int w, int h)
@@ -358,10 +361,26 @@ void Viewport3D::paintGL()
     QMatrix4x4 mvp = projection * view * model;
 
     // ====================================================================
-    // 0. Draw ground grid and origin axes (behind everything)
+    // 0. Draw ground grid (farthest back)
     // ====================================================================
     if (m_showGrid && m_gridInitialized && m_edgeProgram) {
         drawGrid(mvp);
+    }
+
+    // ====================================================================
+    // 0b. Draw origin planes (semi-transparent, behind bodies)
+    // ====================================================================
+    if (m_showOrigin && m_originPlanesInitialized && m_edgeProgram) {
+        drawOriginPlanes(mvp);
+    }
+
+    // ====================================================================
+    // 0c. Draw origin axes and point (on top of planes, behind bodies)
+    // ====================================================================
+    if (m_showOrigin && m_gridInitialized && m_edgeProgram) {
+        drawOriginAxes(mvp);
+        drawOriginPoint(mvp);
+    } else if (m_showGrid && m_gridInitialized && m_edgeProgram) {
         drawOriginAxes(mvp);
     }
 
@@ -1911,6 +1930,12 @@ void Viewport3D::setShowGrid(bool show)
     update();
 }
 
+void Viewport3D::setShowOrigin(bool show)
+{
+    m_showOrigin = show;
+    update();
+}
+
 void Viewport3D::initGridBuffers()
 {
     // Build vertex data: minor grid lines, major grid lines, then origin axes.
@@ -1945,16 +1970,16 @@ void Viewport3D::initGridBuffers()
     }
     m_gridMajorVertexCount = static_cast<GLsizei>(verts.size() / 3) - m_gridMinorVertexCount;
 
-    // --- Origin axes (three colored lines) ---
-    // X axis: (0,0,0) -> (50,0,0)
-    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back(0.0f);
-    verts.push_back(50.0f); verts.push_back(0.0f); verts.push_back(0.0f);
-    // Y axis: (0,0,0) -> (0,50,0)
-    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back(0.0f);
-    verts.push_back(0.0f); verts.push_back(50.0f); verts.push_back(0.0f);
-    // Z axis: (0,0,0) -> (0,0,50)
-    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back(0.0f);
-    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back(50.0f);
+    // --- Origin axes (three colored lines extending in both directions) ---
+    // X axis: (-100,0,0) -> (100,0,0)
+    verts.push_back(-extent); verts.push_back(0.0f); verts.push_back(0.0f);
+    verts.push_back( extent); verts.push_back(0.0f); verts.push_back(0.0f);
+    // Y axis: (0,-100,0) -> (0,100,0)
+    verts.push_back(0.0f); verts.push_back(-extent); verts.push_back(0.0f);
+    verts.push_back(0.0f); verts.push_back( extent); verts.push_back(0.0f);
+    // Z axis: (0,0,-100) -> (0,0,100)
+    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back(-extent);
+    verts.push_back(0.0f); verts.push_back(0.0f); verts.push_back( extent);
     m_gridAxesVertexCount = 6; // 3 lines x 2 verts
 
     // Upload to GPU
@@ -2025,9 +2050,11 @@ void Viewport3D::drawOriginAxes(const QMatrix4x4& mvp)
     m_edgeProgram->setUniformValue("uDepthBias", 0.0f);
     m_edgeProgram->setUniformValue("uEdgeAlpha", 1.0f);
 
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_LINE_SMOOTH);
     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-    glLineWidth(2.5f);
+    glLineWidth(1.5f);
 
     m_gridVao.bind();
 
@@ -2048,7 +2075,150 @@ void Viewport3D::drawOriginAxes(const QMatrix4x4& mvp)
     m_gridVao.release();
 
     glDisable(GL_LINE_SMOOTH);
-    glLineWidth(1.5f);
+    glDisable(GL_BLEND);
+    m_edgeProgram->release();
+}
+
+// =============================================================================
+// Origin reference planes (XY, XZ, YZ)
+// =============================================================================
+
+void Viewport3D::initOriginPlanes()
+{
+    // Build vertex data for three quads centered at origin, each 50x50mm.
+    // Each quad = 4 vertices (position only), drawn as two triangles via indices.
+    // Layout: [XY plane 4 verts] [XZ plane 4 verts] [YZ plane 4 verts]
+    // Then border line-loop vertices reuse the same positions.
+    const float S = 50.0f; // half-extent of each plane
+
+    // clang-format off
+    float verts[] = {
+        // XY plane (Z=0): 4 corners  [indices 0-3]
+        -S, -S, 0.0f,
+         S, -S, 0.0f,
+         S,  S, 0.0f,
+        -S,  S, 0.0f,
+        // XZ plane (Y=0): 4 corners  [indices 4-7]
+        -S, 0.0f, -S,
+         S, 0.0f, -S,
+         S, 0.0f,  S,
+        -S, 0.0f,  S,
+        // YZ plane (X=0): 4 corners  [indices 8-11]
+        0.0f, -S, -S,
+        0.0f,  S, -S,
+        0.0f,  S,  S,
+        0.0f, -S,  S,
+        // Origin point  [index 12]
+        0.0f, 0.0f, 0.0f,
+    };
+    // clang-format on
+
+    // Two triangles per quad: (0,1,2), (0,2,3) offset per plane
+    uint32_t indices[] = {
+        // XY
+        0, 1, 2,   0, 2, 3,
+        // XZ
+        4, 5, 6,   4, 6, 7,
+        // YZ
+        8, 9, 10,  8, 10, 11,
+    };
+
+    m_originPlaneVao.create();
+    m_originPlaneVbo.create();
+    m_originPlaneEbo.create();
+
+    m_originPlaneVao.bind();
+
+    m_originPlaneVbo.bind();
+    m_originPlaneVbo.allocate(verts, static_cast<int>(sizeof(verts)));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    m_originPlaneVbo.release();
+
+    m_originPlaneEbo.bind();
+    m_originPlaneEbo.allocate(indices, static_cast<int>(sizeof(indices)));
+
+    m_originPlaneVao.release();
+    m_originPlaneEbo.release();
+
+    m_originPlanesInitialized = true;
+}
+
+void Viewport3D::drawOriginPlanes(const QMatrix4x4& mvp)
+{
+    m_edgeProgram->bind();
+    m_edgeProgram->setUniformValue("uMVP", mvp);
+    m_edgeProgram->setUniformValue("uDepthBias", 0.0f);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE); // don't write to depth so bodies render in front
+
+    m_originPlaneVao.bind();
+
+    // --- Fill quads (semi-transparent) ---
+
+    // XY plane -- blue tint
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.2f, 0.4f, 0.8f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.12f);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+
+    // XZ plane -- red tint
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.8f, 0.2f, 0.2f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.12f);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT,
+                   reinterpret_cast<const void*>(6 * sizeof(uint32_t)));
+
+    // YZ plane -- green tint
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.2f, 0.7f, 0.2f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.12f);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT,
+                   reinterpret_cast<const void*>(12 * sizeof(uint32_t)));
+
+    // --- Border edges (GL_LINE_LOOP per plane, brighter) ---
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glLineWidth(1.0f);
+
+    // XY border -- blue
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.3f, 0.5f, 0.9f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.4f);
+    glDrawArrays(GL_LINE_LOOP, 0, 4);
+
+    // XZ border -- red
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.9f, 0.3f, 0.3f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.4f);
+    glDrawArrays(GL_LINE_LOOP, 4, 4);
+
+    // YZ border -- green
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.3f, 0.8f, 0.3f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 0.4f);
+    glDrawArrays(GL_LINE_LOOP, 8, 4);
+
+    m_originPlaneVao.release();
+
+    glDisable(GL_LINE_SMOOTH);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    m_edgeProgram->release();
+}
+
+void Viewport3D::drawOriginPoint(const QMatrix4x4& mvp)
+{
+    m_edgeProgram->bind();
+    m_edgeProgram->setUniformValue("uMVP", mvp);
+    m_edgeProgram->setUniformValue("uDepthBias", 0.0f);
+    m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(1.0f, 1.0f, 1.0f));
+    m_edgeProgram->setUniformValue("uEdgeAlpha", 1.0f);
+
+    // Draw a single white point at the origin.
+    // Vertex 12 in the origin plane VBO is at (0,0,0).
+    m_originPlaneVao.bind();
+
+    glPointSize(5.0f);
+    glDrawArrays(GL_POINTS, 12, 1);
+
+    m_originPlaneVao.release();
     m_edgeProgram->release();
 }
 

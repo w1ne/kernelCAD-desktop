@@ -246,10 +246,15 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
         btn->setIconSize(QSize(32, 32));
+        btn->setText(tool.name);
+        btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
-        btn->setFixedSize(40, 40);
+        btn->setFixedSize(48, 56);
         btn->setObjectName("RibbonButton");
+        QFont btnFont = btn->font();
+        btnFont.setPointSize(9);
+        btn->setFont(btnFont);
         if (tool.action)
             connect(btn, &QToolButton::clicked, this, tool.action);
         buttonRow->addWidget(btn);
@@ -297,22 +302,24 @@ void MainWindow::setupToolBar()
     qaLayout->setContentsMargins(8, 2, 8, 2);
     qaLayout->setSpacing(4);
 
-    auto makeQAButton = [this](const QString& iconName, const QString& tip,
-                                auto slot) -> QToolButton* {
+    auto makeQAButton = [this](const QString& iconName, const QString& text,
+                                const QString& tip, auto slot) -> QToolButton* {
         auto* btn = new QToolButton;
         btn->setIcon(IconFactory::createIcon(iconName, 16));
         btn->setIconSize(QSize(16, 16));
+        btn->setText(text);
+        btn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         btn->setToolTip(tip);
         btn->setAutoRaise(true);
-        btn->setFixedSize(22, 22);
+        btn->setMinimumSize(22, 22);
         btn->setObjectName("QuickAccessButton");
         connect(btn, &QToolButton::clicked, this, slot);
         return btn;
     };
 
-    qaLayout->addWidget(makeQAButton("new",  tr("New (Ctrl+N)"),  &MainWindow::onNewDocument));
-    qaLayout->addWidget(makeQAButton("open", tr("Open (Ctrl+O)"), &MainWindow::onOpenDocument));
-    qaLayout->addWidget(makeQAButton("save", tr("Save (Ctrl+S)"), &MainWindow::onSaveDocument));
+    qaLayout->addWidget(makeQAButton("new",  tr("New"),  tr("New (Ctrl+N)"),  &MainWindow::onNewDocument));
+    qaLayout->addWidget(makeQAButton("open", tr("Open"), tr("Open (Ctrl+O)"), &MainWindow::onOpenDocument));
+    qaLayout->addWidget(makeQAButton("save", tr("Save"), tr("Save (Ctrl+S)"), &MainWindow::onSaveDocument));
 
     // Small separator
     auto* qaSep = new QFrame;
@@ -321,8 +328,8 @@ void MainWindow::setupToolBar()
     qaSep->setFixedSize(1, 16);
     qaLayout->addWidget(qaSep);
 
-    qaLayout->addWidget(makeQAButton("undo", tr("Undo (Ctrl+Z)"), &MainWindow::onUndo));
-    qaLayout->addWidget(makeQAButton("redo", tr("Redo (Ctrl+Shift+Z)"), &MainWindow::onRedo));
+    qaLayout->addWidget(makeQAButton("undo", tr("Undo"), tr("Undo (Ctrl+Z)"), &MainWindow::onUndo));
+    qaLayout->addWidget(makeQAButton("redo", tr("Redo"), tr("Redo (Ctrl+Shift+Z)"), &MainWindow::onRedo));
 
     qaLayout->addStretch();
     containerLayout->addWidget(m_quickAccessBar);
@@ -331,7 +338,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(80);
+    m_ribbon->setFixedHeight(96);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
@@ -342,8 +349,10 @@ void MainWindow::setupToolBar()
         layout->setContentsMargins(6, 2, 6, 2);
         layout->setSpacing(2);
 
-        // Group: Create (primitives + sketch)
+        // Group: Create (sketch + primitives)
         addToolGroup(layout, "Create", {
+            {"Sketch",   IconFactory::createIcon("sketch"),   tr("Sketch (S) \u2014 Create a 2D sketch"),
+             [this]() { onCreateSketch(); }},
             {"Box",      IconFactory::createIcon("box"),      tr("Box \u2014 Create a parametric box"),
              [this]() { onCreateBox(); }},
             {"Cylinder", IconFactory::createIcon("cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
@@ -706,6 +715,16 @@ void MainWindow::setupMenuBar()
     connect(showGridAction, &QAction::toggled, this, [this](bool checked) {
         m_viewport->setShowGrid(checked);
         statusBar()->showMessage(checked ? tr("Grid visible") : tr("Grid hidden"));
+    });
+
+    // -- Show Origin toggle -----------------------------------------------
+    auto* showOriginAction = viewMenu->addAction(tr("Show Origin"));
+    showOriginAction->setCheckable(true);
+    showOriginAction->setChecked(true);
+    showOriginAction->setShortcut(QKeySequence(tr("O")));
+    connect(showOriginAction, &QAction::toggled, this, [this](bool checked) {
+        m_viewport->setShowOrigin(checked);
+        statusBar()->showMessage(checked ? tr("Origin visible") : tr("Origin hidden"));
     });
 
     // -- Standard camera views ---------------------------------------------
@@ -1579,6 +1598,13 @@ void MainWindow::onCreateBox()
         std::make_unique<document::AddExtrudeCommand>(std::move(params)));
     statusBar()->showMessage(tr("Created box"));
     refreshAllPanels();
+
+    // Select the newly created feature in the properties panel
+    auto& tl = m_document->timeline();
+    if (tl.count() > 0) {
+        auto& lastEntry = tl.entry(tl.count() - 1);
+        m_properties->showFeature(QString::fromStdString(lastEntry.id));
+    }
 }
 
 void MainWindow::onCreateCylinder()
@@ -1593,6 +1619,13 @@ void MainWindow::onCreateCylinder()
         std::make_unique<document::AddRevolveCommand>(std::move(params)));
     statusBar()->showMessage(tr("Created cylinder"));
     refreshAllPanels();
+
+    // Select the newly created feature in the properties panel
+    auto& tl = m_document->timeline();
+    if (tl.count() > 0) {
+        auto& lastEntry = tl.entry(tl.count() - 1);
+        m_properties->showFeature(QString::fromStdString(lastEntry.id));
+    }
 }
 
 void MainWindow::onCreateSphere()
@@ -1601,6 +1634,13 @@ void MainWindow::onCreateSphere()
         std::make_unique<document::AddSphereCommand>(25.0));
     statusBar()->showMessage(tr("Created sphere"));
     refreshAllPanels();
+
+    // Select the newly created feature in the properties panel
+    auto& tl = m_document->timeline();
+    if (tl.count() > 0) {
+        auto& lastEntry = tl.entry(tl.count() - 1);
+        m_properties->showFeature(QString::fromStdString(lastEntry.id));
+    }
 }
 
 void MainWindow::onCreateSketch()
@@ -1655,8 +1695,7 @@ void MainWindow::onEditSketch()
     }
 
     if (!targetSketch) {
-        QMessageBox::information(this, tr("Edit Sketch"),
-            tr("No sketch found. Create a sketch first."));
+        statusBar()->showMessage(tr("No sketch found. Create a sketch first."), 3000);
         return;
     }
 
@@ -1692,16 +1731,14 @@ void MainWindow::onExtrudeSketch()
     }
 
     if (!lastSketch) {
-        QMessageBox::information(this, tr("Extrude Sketch"),
-            tr("No sketch found. Create a sketch first."));
+        statusBar()->showMessage(tr("No sketch found. Create a sketch first."), 3000);
         return;
     }
 
     // Detect profiles in the sketch
     auto profiles = lastSketch->sketch().detectProfiles();
     if (profiles.empty()) {
-        QMessageBox::information(this, tr("Extrude Sketch"),
-            tr("No closed profiles found in the sketch."));
+        statusBar()->showMessage(tr("No closed profiles found in the sketch."), 3000);
         return;
     }
 
@@ -1744,16 +1781,14 @@ void MainWindow::onRevolveSketch()
     }
 
     if (!lastSketch) {
-        QMessageBox::information(this, tr("Revolve Sketch"),
-            tr("No sketch found. Create a sketch first."));
+        statusBar()->showMessage(tr("No sketch found. Create a sketch first."), 3000);
         return;
     }
 
     // Detect profiles in the sketch
     auto profiles = lastSketch->sketch().detectProfiles();
     if (profiles.empty()) {
-        QMessageBox::information(this, tr("Revolve Sketch"),
-            tr("No closed profiles found in the sketch."));
+        statusBar()->showMessage(tr("No closed profiles found in the sketch."), 3000);
         return;
     }
 
@@ -1784,8 +1819,7 @@ void MainWindow::onAddHole()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Add Hole"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -1962,8 +1996,7 @@ void MainWindow::onFillet()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Fillet"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2032,8 +2065,7 @@ void MainWindow::onChamfer()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Chamfer"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2096,8 +2128,7 @@ void MainWindow::onShell()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Shell"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2161,8 +2192,7 @@ void MainWindow::onDraft()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Draft"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2185,8 +2215,7 @@ void MainWindow::onDraft()
         bodyId = ids.back();
 
     if (faceIndices.empty()) {
-        QMessageBox::information(this, tr("Draft"),
-            tr("Please select at least one face to draft."));
+        statusBar()->showMessage(tr("Please select at least one face to draft."), 3000);
         return;
     }
 
@@ -2279,8 +2308,7 @@ void MainWindow::onMirrorLastBody()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Mirror"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2311,8 +2339,7 @@ void MainWindow::onCircularPattern()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Circular Pattern"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2345,8 +2372,7 @@ void MainWindow::onRectangularPattern()
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
-        QMessageBox::information(this, tr("Rectangular Pattern"),
-            tr("No bodies found. Create a body first."));
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
         return;
     }
 
@@ -2426,8 +2452,7 @@ void MainWindow::onSweepSketch()
     }
 
     if (sketches.size() < 2) {
-        QMessageBox::information(this, tr("Sweep Sketch"),
-            tr("Need at least two sketches (profile + path). Create them first."));
+        statusBar()->showMessage(tr("Need at least two sketches (profile + path). Create them first."), 3000);
         return;
     }
 
@@ -2438,8 +2463,7 @@ void MainWindow::onSweepSketch()
     // Detect profiles in the profile sketch
     auto profiles = profileSketch->sketch().detectProfiles();
     if (profiles.empty()) {
-        QMessageBox::information(this, tr("Sweep Sketch"),
-            tr("No closed profiles found in the profile sketch."));
+        statusBar()->showMessage(tr("No closed profiles found in the profile sketch."), 3000);
         return;
     }
 
@@ -2453,8 +2477,7 @@ void MainWindow::onSweepSketch()
     // Detect profiles in the path sketch to get path curves
     auto pathProfiles = pathSketch->sketch().detectProfiles();
     if (pathProfiles.empty()) {
-        QMessageBox::information(this, tr("Sweep Sketch"),
-            tr("No profiles found in the path sketch."));
+        statusBar()->showMessage(tr("No profiles found in the path sketch."), 3000);
         return;
     }
 
@@ -2550,8 +2573,7 @@ void MainWindow::onCheckInterference()
     auto ids = brep.bodyIds();
 
     if (ids.size() < 2) {
-        QMessageBox::information(this, tr("Interference Check"),
-            tr("Need at least two bodies to check interference."));
+        statusBar()->showMessage(tr("Need at least two bodies to check interference."), 3000);
         return;
     }
 
@@ -2567,8 +2589,7 @@ void MainWindow::onCheckInterference()
     if (results.empty()) {
         statusBar()->showMessage(tr("No interference detected between %1 bodies")
             .arg(static_cast<int>(ids.size())));
-        QMessageBox::information(this, tr("Interference Check"),
-            tr("No interference detected. All bodies are clear."));
+        statusBar()->showMessage(tr("No interference detected. All bodies are clear."), 3000);
         return;
     }
 
@@ -3460,6 +3481,15 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
             statusBar()->showMessage(checked ? tr("Grid visible") : tr("Grid hidden"));
         });
 
+        // Toggle Origin
+        auto* originAction = menu.addAction(tr("Toggle Origin"));
+        originAction->setCheckable(true);
+        originAction->setChecked(m_viewport->showOrigin());
+        connect(originAction, &QAction::toggled, this, [this](bool checked) {
+            m_viewport->setShowOrigin(checked);
+            statusBar()->showMessage(checked ? tr("Origin visible") : tr("Origin hidden"));
+        });
+
         // View Mode submenu
         auto* viewModeMenu = menu.addMenu(tr("View Mode"));
         auto* solidEdgesAct = viewModeMenu->addAction(tr("Solid with Edges"));
@@ -3944,6 +3974,7 @@ void MainWindow::setupCommandPalette()
         {"Bottom View",      "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Bottom); }},
         {"Isometric View",   "Num0",         "View",   [this]() { m_viewport->setStandardView(StandardView::Isometric); }},
         {"Toggle Grid",      "G",            "View",   [this]() { m_viewport->setShowGrid(!m_viewport->showGrid()); }},
+        {"Toggle Origin",    "O",            "View",   [this]() { m_viewport->setShowOrigin(!m_viewport->showOrigin()); }},
 
         // ── Tools ───────────────────────────────────────────────────────
         {"Measure",          "M",            "Tools",  [this]() { onMeasure(); }},

@@ -159,6 +159,10 @@ public:
     void setShowGrid(bool show);
     bool showGrid() const { return m_showGrid; }
 
+    /// Toggle origin planes (XY/XZ/YZ reference planes + origin point) visibility.
+    void setShowOrigin(bool show);
+    bool showOrigin() const { return m_showOrigin; }
+
     /// Set the viewport manipulator (owned externally, e.g. by MainWindow).
     void setManipulator(ViewportManipulator* manipulator);
     ViewportManipulator* manipulator() const { return m_manipulator; }
@@ -321,6 +325,17 @@ private:
     void initGridBuffers();
     void drawGrid(const QMatrix4x4& mvp);
     void drawOriginAxes(const QMatrix4x4& mvp);
+
+    // ── origin planes (XY, XZ, YZ reference planes) ─────────────────────
+    bool m_showOrigin = true;
+    QOpenGLVertexArrayObject m_originPlaneVao;
+    QOpenGLBuffer m_originPlaneVbo{QOpenGLBuffer::VertexBuffer};
+    QOpenGLBuffer m_originPlaneEbo{QOpenGLBuffer::IndexBuffer};
+    bool m_originPlanesInitialized = false;
+
+    void initOriginPlanes();
+    void drawOriginPlanes(const QMatrix4x4& mvp);
+    void drawOriginPoint(const QMatrix4x4& mvp);
 
     // ── standard views & ViewCube ───────────────────────────────────────
     /// Position camera along `direction` at m_orbitDistance from m_center.
