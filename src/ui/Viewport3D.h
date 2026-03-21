@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 
+namespace sketch { class Sketch; }
 class SelectionManager;
 class SketchEditor;
 class ViewportManipulator;
@@ -104,6 +105,15 @@ public:
 
     /// Set a standard view preset (Front, Back, Left, Right, Top, Bottom, Isometric).
     void setStandardView(StandardView view);
+
+    /// Set passive sketches to draw in 3D mode (thin gray lines on their planes).
+    /// These are rendered even when NOT in sketch editing mode.
+    void setPassiveSketches(const std::vector<const sketch::Sketch*>& sketches);
+
+    /// Set a single sketch to highlight with brighter, thicker lines in the
+    /// passive sketch pass.  nullptr clears the highlight.
+    void setHighlightedSketch(const sketch::Sketch* sk);
+
 
     /// Animate the camera to target position over durationMs milliseconds.
     void animateTo(const QVector3D& targetEye, const QVector3D& targetCenter,
@@ -290,6 +300,10 @@ private:
 
     // ── sketch overlay ──────────────────────────────────────────────────
     SketchEditor* m_sketchEditor = nullptr;
+    std::vector<const sketch::Sketch*> m_passiveSketches;
+    const sketch::Sketch* m_highlightedSketch = nullptr;  ///< single-click highlight
+
+    void drawPassiveSketches();
     QOpenGLShaderProgram* m_sketchOverlayProgram = nullptr;
 
     void buildSketchOverlayShader();

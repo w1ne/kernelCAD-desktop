@@ -97,12 +97,19 @@ QIcon IconFactory::createIcon(const QString& name, int size) {
     if (it != map.end())
         return QIcon((*it)(size));
 
-    // Fallback: a grey diamond with a "?" feel
+    // Fallback: rounded-rect with subtle fill and "?" letter
     QPixmap px = makePixmap(size);
     QPainter p(&px);
-    initPainter(p, QColor(160, 160, 160), 2.0);
-    int m = kMargin + 2;
-    p.drawRect(m, m, size - 2*m, size - 2*m);
+    initPainter(p, QColor(160, 160, 160, 150), 1.0);
+    QColor fillColor(160, 160, 160, 100);
+    p.setBrush(fillColor);
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 6, 6);
+    p.setPen(Qt::white);
+    QFont f = p.font();
+    f.setPixelSize(size / 2);
+    f.setBold(true);
+    p.setFont(f);
+    p.drawText(QRect(0, 0, size, size), Qt::AlignCenter, "?");
     return QIcon(px);
 }
 
@@ -111,6 +118,13 @@ QIcon IconFactory::createIcon(const QString& name, int size) {
 QPixmap IconFactory::drawExtrude(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+
+    // Subtle rounded-rect background
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
     initPainter(p, QColor(100, 180, 255), 2.0);
 
     int m = kMargin;
@@ -141,6 +155,13 @@ QPixmap IconFactory::drawExtrude(int size) {
 QPixmap IconFactory::drawRevolve(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+
+    // Subtle rounded-rect background
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 200, 130, 150), 1.0));
+    p.setBrush(QColor(100, 200, 130, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
     initPainter(p, QColor(100, 200, 130), 2.0);
 
     int m = kMargin;
@@ -184,6 +205,12 @@ QPixmap IconFactory::drawRevolve(int size) {
 QPixmap IconFactory::drawFillet(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(255, 170, 60, 150), 1.0));
+    p.setBrush(QColor(255, 170, 60, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
     initPainter(p, QColor(255, 170, 60), 2.5);
 
     int m = kMargin + 1;
@@ -220,6 +247,10 @@ QPixmap IconFactory::drawFillet(int size) {
 QPixmap IconFactory::drawChamfer(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(255, 170, 60, 150), 1.0));
+    p.setBrush(QColor(255, 170, 60, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(255, 170, 60), 2.5);
 
     int m = kMargin + 1;
@@ -249,6 +280,10 @@ QPixmap IconFactory::drawChamfer(int size) {
 QPixmap IconFactory::drawHole(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(220, 80, 80, 150), 1.0));
+    p.setBrush(QColor(220, 80, 80, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(220, 80, 80), 2.0);
 
     int m = kMargin + 2;
@@ -276,6 +311,10 @@ QPixmap IconFactory::drawHole(int size) {
 QPixmap IconFactory::drawShell(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(80, 200, 200, 150), 1.0));
+    p.setBrush(QColor(80, 200, 200, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(80, 200, 200), 2.0);
 
     int m = kMargin + 1;
@@ -303,6 +342,10 @@ QPixmap IconFactory::drawShell(int size) {
 QPixmap IconFactory::drawDraft(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(180, 140, 255, 150), 1.0));
+    p.setBrush(QColor(180, 140, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(180, 140, 255), 2.0);
 
     int m = kMargin + 1;
@@ -335,6 +378,12 @@ QPixmap IconFactory::drawDraft(int size) {
 QPixmap IconFactory::drawSketch(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(180, 130, 255, 150), 1.0));
+    p.setBrush(QColor(180, 130, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
     initPainter(p, QColor(180, 130, 255), 1.5);
 
     int m = kMargin;
@@ -476,6 +525,10 @@ QPixmap IconFactory::drawSlot(int size) {
 QPixmap IconFactory::drawBox(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(100, 180, 255), 1.8);
 
     int m = kMargin + 1;
@@ -512,6 +565,10 @@ QPixmap IconFactory::drawBox(int size) {
 QPixmap IconFactory::drawCylinder(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(100, 180, 255), 1.8);
 
     int m = kMargin + 2;
@@ -538,6 +595,10 @@ QPixmap IconFactory::drawCylinder(int size) {
 QPixmap IconFactory::drawSphere(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(100, 180, 255), 1.8);
 
     int m = kMargin + 2;
@@ -562,6 +623,10 @@ QPixmap IconFactory::drawSphere(int size) {
 QPixmap IconFactory::drawMirror(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(180, 180, 190, 150), 1.0));
+    p.setBrush(QColor(180, 180, 190, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(180, 180, 190), 1.8);
 
     int m = kMargin + 1;
@@ -836,6 +901,10 @@ QPixmap IconFactory::drawNew(int size) {
 QPixmap IconFactory::drawSweep(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(100, 180, 255), 2.0);
 
     int m = kMargin + 1;
@@ -865,6 +934,10 @@ QPixmap IconFactory::drawSweep(int size) {
 QPixmap IconFactory::drawLoft(int size) {
     QPixmap px = makePixmap(size);
     QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 180, 255, 150), 1.0));
+    p.setBrush(QColor(100, 180, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
     initPainter(p, QColor(100, 180, 255), 2.0);
 
     int m = kMargin + 2;

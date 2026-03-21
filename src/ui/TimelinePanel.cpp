@@ -24,8 +24,8 @@
 // TimelineIconWidget -- compact 34x34 feature icon
 // ====================================================================
 
-static constexpr int kIconSize = 34;
-static constexpr int kIconInner = 20; // inner icon drawing area
+static constexpr int kIconSize = 50;
+static constexpr int kIconInner = 28; // inner icon drawing area
 
 TimelineIconWidget::TimelineIconWidget(const QString& featureId,
                                        features::FeatureType type,
@@ -94,14 +94,14 @@ void TimelineIconWidget::paintEvent(QPaintEvent* /*event*/)
     p.setOpacity(opacity);
 
     // 1. Background rounded rect
-    QColor bg(0x3c, 0x3f, 0x41);  // #3c3f41
+    QColor bg(0x2a, 0x2a, 0x2a);  // #2a2a2a
     if (m_hovered && !m_dimmed)
-        bg = QColor(0x4a, 0x4d, 0x50);  // slightly lighter on hover
+        bg = QColor(0x33, 0x33, 0x33);  // #333 on hover
     if (m_selected)
         bg = QColor(50, 70, 100);
 
     p.setBrush(bg);
-    p.setPen(Qt::NoPen);
+    p.setPen(QPen(QColor(0x3a, 0x3a, 0x3a), 1));  // subtle border
     p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 4, 4);
 
     // 2. Draw the feature-type icon in center (20x20 area)
@@ -331,6 +331,27 @@ void TimelineIconWidget::drawFeatureIcon(QPainter& p, const QRect& iconRect)
         p.drawRect(8, 8, 4, 4);
         break;
     }
+    case features::FeatureType::ConstructionPlane: {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(80, 140, 255));
+        p.drawEllipse(QRect(2, 2, 12, 12));
+        break;
+    }
+    case features::FeatureType::ConstructionAxis: {
+        p.setPen(QPen(QColor(220, 80, 80), 2));
+        p.drawLine(3, 8, 13, 8);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(220, 80, 80));
+        p.drawEllipse(QRect(1, 6, 4, 4));
+        p.drawEllipse(QRect(11, 6, 4, 4));
+        break;
+    }
+    case features::FeatureType::ConstructionPoint: {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 160, 60));
+        p.drawEllipse(QRect(4, 4, 8, 8));
+        break;
+    }
     default: {
         // Generic feature: gray diamond
         p.setPen(Qt::NoPen);
@@ -362,12 +383,12 @@ void TimelineMarker::paintEvent(QPaintEvent* /*event*/)
     p.setRenderHint(QPainter::Antialiasing);
 
     const int cx = width() / 2;
-    const QColor markerColor(0, 0x95, 0xFF);  // #0095FF
+    const QColor markerColor(0x00, 0x78, 0xd4);  // #0078d4
 
-    // Vertical bar (4px wide)
+    // Vertical bar (2px wide)
     p.setPen(Qt::NoPen);
     p.setBrush(markerColor);
-    p.drawRect(cx - 2, 8, 4, height() - 8);
+    p.drawRect(cx - 1, 8, 2, height() - 8);
 
     // Small downward-pointing triangle at top
     QPainterPath tri;
@@ -385,7 +406,7 @@ void TimelineMarker::paintEvent(QPaintEvent* /*event*/)
 TimelinePanel::TimelinePanel(QWidget* parent)
     : QWidget(parent)
 {
-    setFixedHeight(48);
+    setFixedHeight(68);
     setAcceptDrops(true);
 
     // Very dark background (#1e1e1e)

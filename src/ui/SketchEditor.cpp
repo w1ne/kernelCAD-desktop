@@ -700,26 +700,38 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
     if (!screenToSketch(event->pos(), sx, sy))
         return false;
 
-    // ── Drag mode: move point and re-solve ──────────────────────────────
-    if (m_isDragging && !m_dragPointId.empty()) {
-        // Snap to grid during drag
+    // ── Drag mode: move point or change radius, re-solve ───────────────
+    if (m_isDragging) {
         sx = snapToGrid(sx);
         sy = snapToGrid(sy);
 
-        // Use solver drag target for constraint-respecting drag
-        m_sketch->solve();  // ensure solver state is fresh
-
-        // Directly move the point and solve with drag target
-        auto& pt = m_sketch->point(m_dragPointId);
-        // We set the drag target and solve — the solver will pull the point
-        // toward (sx, sy) while respecting constraints.
-
-        // Access solver via the sketch: the sketch's solve() method rebuilds
-        // the solver each time, so we need a different approach.
-        // Simplest: directly set point position and re-solve.
-        pt.x = sx;
-        pt.y = sy;
-        m_sketch->solve();
+        if (m_dragMode == DragMode::Point && !m_dragPointId.empty()) {
+            // Drag a point — move it and re-solve constraints
+            auto& pt = m_sketch->point(m_dragPointId);
+            pt.x = sx;
+            pt.y = sy;
+            m_sketch->solve();
+        } else if (m_dragMode == DragMode::CircleRadius && !m_dragCircleId.empty()) {
+            // Drag circle edge — change radius based on distance from center
+            auto& circ = m_sketch->circle(m_dragCircleId);
+            const auto& center = m_sketch->point(circ.centerPointId);
+            double dx = sx - center.x, dy = sy - center.y;
+            double newRadius = std::sqrt(dx * dx + dy * dy);
+            if (newRadius > 0.1) {
+                circ.radius = newRadius;
+                m_sketch->solve();
+            }
+        } else if (m_dragMode == DragMode::ArcRadius && !m_dragCircleId.empty()) {
+            // Drag arc edge — change radius
+            auto& a = m_sketch->arc(m_dragCircleId);
+            const auto& center = m_sketch->point(a.centerPointId);
+            double dx = sx - center.x, dy = sy - center.y;
+            double newRadius = std::sqrt(dx * dx + dy * dy);
+            if (newRadius > 0.1) {
+                a.radius = newRadius;
+                m_sketch->solve();
+            }
+        }
 
         m_currentX = sx;
         m_currentY = sy;
@@ -767,7 +779,12 @@ bool SketchEditor::handleMouseRelease(QMouseEvent* event)
         }
         m_isDragging = false;
         m_dragPointId.clear();
-        if (m_viewport) m_viewport->update();
+        m_dragCircleId.clear();
+        m_dragMode = DragMode::Point;
+        if (m_viewport) {
+            m_viewport->setCursor(Qt::CrossCursor);
+            m_viewport->update();
+        }
         emit sketchChanged();
         return true;
     }

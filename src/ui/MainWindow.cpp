@@ -260,12 +260,12 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(32, 32));
+        btn->setIconSize(QSize(28, 28));
         btn->setText(tool.name);
         btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
-        btn->setFixedSize(48, 56);
+        btn->setFixedSize(48, 52);
         btn->setObjectName("RibbonButton");
         QFont btnFont = btn->font();
         btnFont.setPointSize(9);
@@ -282,7 +282,7 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     // Group label as clickable dropdown button (shows all commands in this group)
     auto* groupLabel = new QPushButton(groupName + QString::fromUtf8(" \xe2\x96\xbe"));
     groupLabel->setFlat(true);
-    groupLabel->setStyleSheet("color: #888; font-size: 9px; border: none; padding: 0 2px;");
+    groupLabel->setStyleSheet("color: #777; font-size: 10px; border: none; padding: 0 2px;");
     groupLabel->setCursor(Qt::PointingHandCursor);
     // Capture copies of tools and extras for the dropdown lambda
     auto toolsCopy = tools;
@@ -313,7 +313,7 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(52);
+    sep->setFixedHeight(58);
     layout->addWidget(sep);
 }
 
@@ -372,7 +372,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(96);
+    m_ribbon->setFixedHeight(88);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
@@ -1088,18 +1088,21 @@ void MainWindow::setupDocks()
     auto* leftDock = new QDockWidget(tr("Browser"), this);
     leftDock->setWidget(browserContainer);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    leftDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // Properties -- right
     m_properties = new PropertiesPanel(this);
     auto* rightDock = new QDockWidget(tr("Properties"), this);
     rightDock->setWidget(m_properties);
+    rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
     // Parameter Table -- tabbed alongside Properties on the right
     m_parameterTable = new ParameterTablePanel(this);
     auto* paramDock = new QDockWidget(tr("Parameters"), this);
     paramDock->setWidget(m_parameterTable);
+    paramDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     addDockWidget(Qt::RightDockWidgetArea, paramDock);
     tabifyDockWidget(rightDock, paramDock);
     rightDock->raise();  // Properties tab is shown first by default
@@ -1109,6 +1112,7 @@ void MainWindow::setupDocks()
     auto* bottomDock = new QDockWidget(tr("Timeline"), this);
     bottomDock->setWidget(m_timeline);
     bottomDock->setAllowedAreas(Qt::BottomDockWidgetArea);
+    bottomDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     addDockWidget(Qt::BottomDockWidgetArea, bottomDock);
 }
 
@@ -1145,9 +1149,51 @@ void MainWindow::connectSignals()
         refreshAllPanels();
     });
 
-    // Feature tree item selected -> show in properties
+    // Feature tree item selected -> show in properties + highlight + manipulator
     connect(m_featureTree, &FeatureTree::featureSelected, this, [this](const QString& featureId) {
         m_properties->showFeature(featureId);
+
+        // Don't interfere when already in edit mode or sketch mode
+        if (!m_editingFeatureId.isEmpty() ||
+            (m_sketchEditor && m_sketchEditor->isEditing()))
+            return;
+
+        // Look up the feature in the timeline
+        auto& tl = m_document->timeline();
+        const features::Feature* feat = nullptr;
+        for (size_t i = 0; i < tl.count(); ++i) {
+            if (tl.entry(i).id == featureId.toStdString()) {
+                feat = tl.entry(i).feature.get();
+                break;
+            }
+        }
+        if (!feat) {
+            hideManipulator();
+            m_viewport->setHighlightedSketch(nullptr);
+            m_viewport->setHighlightedFaces({});
+            return;
+        }
+
+        // --- Issue 3: If the selected feature is a Sketch, highlight it ---
+        if (feat->type() == features::FeatureType::Sketch) {
+            auto* skFeat = static_cast<const features::SketchFeature*>(feat);
+            m_viewport->setHighlightedSketch(&skFeat->sketch());
+            hideManipulator();
+            m_viewport->setHighlightedFaces({});
+            return;
+        }
+
+        // Clear sketch highlight for non-sketch features
+        m_viewport->setHighlightedSketch(nullptr);
+
+        // --- Issue 2: Show manipulator for dimensional features ---
+        if (feat->type() == features::FeatureType::Extrude) {
+            showExtrudeManipulator(featureId);
+        } else if (feat->type() == features::FeatureType::Fillet) {
+            showFilletManipulator(featureId);
+        } else {
+            hideManipulator();
+        }
     });
 
     // Viewport Ctrl+drag -> move occurrence transform
@@ -1465,6 +1511,7 @@ void MainWindow::onEditingCommitted(const QString& /*featureId*/)
 {
     hideConfirmBar();
     m_viewport->setHighlightedFaces({});
+    m_viewport->setHighlightedSketch(nullptr);
 
     if (m_previewEngine->isActive()) {
         m_previewEngine->commitPreview();
@@ -1496,6 +1543,7 @@ void MainWindow::onEditingCancelled(const QString& featureId)
     hideConfirmBar();
     hideManipulator();
     m_viewport->setHighlightedFaces({});
+    m_viewport->setHighlightedSketch(nullptr);
 
     if (m_previewEngine->isActive()) {
         m_previewEngine->cancelPreview();
@@ -1566,7 +1614,7 @@ void MainWindow::onEditFeature(const QString& featureId)
                 }
             }
 
-            statusBar()->showMessage(tr("Editing: %1 -- press Enter to commit, Escape to cancel")
+            statusBar()->showMessage(tr("Editing %1 \u2014 drag arrow or edit properties.  Enter:OK  Esc:Cancel")
                 .arg(QString::fromStdString(tl.entry(i).displayName())));
             return;
         }
@@ -1587,6 +1635,7 @@ void MainWindow::onFinishEditing()
     m_timeline->setEditingFeatureId(QString());
     hideConfirmBar();
     m_viewport->setHighlightedFaces({});
+    m_viewport->setHighlightedSketch(nullptr);
     refreshAllPanels();
 
     statusBar()->showMessage(tr("Ready"));
@@ -3141,6 +3190,12 @@ void MainWindow::onSelectionChanged()
 
     if (!m_selectionMgr->hasSelection()) {
         m_properties->clear();
+        // Clear single-click highlights from tree selection
+        if (m_editingFeatureId.isEmpty()) {
+            hideManipulator();
+            m_viewport->setHighlightedSketch(nullptr);
+            m_viewport->setHighlightedFaces({});
+        }
         updateStatusBarInfo();
         statusBar()->showMessage(tr("Selection cleared"));
         return;
@@ -3487,6 +3542,21 @@ void MainWindow::refreshAllPanels()
 
 void MainWindow::updateViewport()
 {
+    // Collect all sketches from timeline for passive rendering
+    {
+        std::vector<const sketch::Sketch*> passiveSketches;
+        auto& tl = m_document->timeline();
+        for (size_t i = 0; i < tl.count(); ++i) {
+            const auto& entry = tl.entry(i);
+            if (entry.feature && !entry.isSuppressed && !entry.isRolledBack &&
+                entry.feature->type() == features::FeatureType::Sketch) {
+                auto* skFeat = static_cast<const features::SketchFeature*>(entry.feature.get());
+                passiveSketches.push_back(&skFeat->sketch());
+            }
+        }
+        m_viewport->setPassiveSketches(passiveSketches);
+    }
+
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty())
@@ -3702,7 +3772,7 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     // Auto-switch ribbon to SKETCH tab
     if (m_ribbon) m_ribbon->setCurrentIndex(m_sketchTabIndex);
     showConfirmBar(tr("Sketch: Line"));
-    statusBar()->showMessage(tr("Editing sketch -- L=Line, R=Rect, C=Circle, A=Arc, X=Construction, T=Trim, E=Extend, O=Offset, Esc=Finish"));
+    statusBar()->showMessage(tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  A:Arc  D:Dim  T:Trim  X:Construction  Esc:Finish"));
 
     // Show sketch palettes in the properties panel
     m_properties->showSketchPalettes(&sketchFeat->sketch(), m_sketchEditor);
@@ -4067,7 +4137,10 @@ void MainWindow::showConfirmBar(const QString& toolName)
     int vpH  = m_viewport->height();
     m_confirmBar->move((vpW - barW) / 2, vpH - barH - 20);
     m_confirmBar->raise();
-    m_confirmBar->setVisible(true);
+    // Floating confirm bar disabled -- keyboard hints are shown in the status
+    // bar instead (Enter/Escape).  The widget is kept alive so button
+    // connections remain valid; it simply never becomes visible.
+    // m_confirmBar->setVisible(true);
 }
 
 void MainWindow::hideConfirmBar()
@@ -4086,10 +4159,11 @@ void MainWindow::setupStatusBar()
     m_statusCenter = new QLabel(this);
     m_statusRight  = new QLabel(this);
 
-    m_statusLeft->setStyleSheet("padding-left: 8px;");
+    m_statusLeft->setStyleSheet("padding-left: 8px; color: white;");
     m_statusCenter->setAlignment(Qt::AlignCenter);
+    m_statusCenter->setStyleSheet("color: rgba(255,255,255,0.85);");
     m_statusRight->setAlignment(Qt::AlignRight);
-    m_statusRight->setStyleSheet("padding-right: 8px;");
+    m_statusRight->setStyleSheet("padding-right: 8px; color: rgba(255,255,255,0.85);");
 
     statusBar()->addWidget(m_statusLeft, 1);
     statusBar()->addWidget(m_statusCenter, 1);
@@ -4112,11 +4186,11 @@ void MainWindow::updateStatusBarInfo()
     // --- Left: Current status / active command ---
     QString leftText;
     if (m_sketchEditor && m_sketchEditor->isEditing())
-        leftText = tr("Sketch editing");
+        leftText = tr("Sketch Mode \u2014 L:Line R:Rect C:Circle Esc:Finish");
     else if (!m_editingFeatureId.isEmpty())
-        leftText = tr("Editing feature");
+        leftText = tr("Editing \u2014 Enter:OK  Esc:Cancel");
     else if (m_pendingCommand != PendingCommand::None)
-        leftText = tr("Command active");
+        leftText = tr("Select geometry\u2026  Enter:OK  Esc:Cancel");
     else {
         const auto& sel = m_selectionMgr->selection();
         if (!sel.empty() && !sel[0].bodyId.empty()) {
@@ -4607,6 +4681,103 @@ void MainWindow::hideManipulator()
         m_manipulator->hide();
         m_viewport->update();
     }
+}
+
+// -----------------------------------------------------------------------------
+// Fillet radius manipulator (single-click preview from tree)
+// -----------------------------------------------------------------------------
+
+void MainWindow::showFilletManipulator(const QString& featureId)
+{
+    auto& tl = m_document->timeline();
+    features::FilletFeature* filletFeat = nullptr;
+
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.id == featureId.toStdString() &&
+            entry.feature &&
+            entry.feature->type() == features::FeatureType::Fillet) {
+            filletFeat = static_cast<features::FilletFeature*>(entry.feature.get());
+            break;
+        }
+    }
+
+    if (!filletFeat) {
+        hideManipulator();
+        return;
+    }
+
+    const auto& params = filletFeat->params();
+
+    // Place the manipulator at the body origin with direction along +Y
+    // (a reasonable default for radius visualization).
+    QVector3D origin(0.0f, 0.0f, 0.0f);
+    QVector3D direction(0.0f, 1.0f, 0.0f);
+
+    double currentRadius = 2.0;
+    try {
+        currentRadius = std::stod(params.radiusExpr);
+    } catch (...) {
+        currentRadius = 2.0;
+    }
+
+    m_manipulator->showDistance(origin, direction, currentRadius, 0.1, 200.0);
+
+    disconnect(m_manipulator, nullptr, this, nullptr);
+
+    connect(m_manipulator, &ViewportManipulator::valueChanged, this,
+            [this, featureId](double newValue) {
+        auto& tl2 = m_document->timeline();
+        for (size_t i = 0; i < tl2.count(); ++i) {
+            auto& entry = tl2.entry(i);
+            if (entry.id == featureId.toStdString() &&
+                entry.feature &&
+                entry.feature->type() == features::FeatureType::Fillet) {
+                auto* feat = static_cast<features::FilletFeature*>(entry.feature.get());
+                feat->params().radiusExpr =
+                    QString::number(newValue, 'f', 2).toStdString() + " mm";
+                break;
+            }
+        }
+
+        if (m_previewEngine && m_previewEngine->isActive()) {
+            m_previewEngine->updatePreview();
+        }
+    });
+
+    connect(m_manipulator, &ViewportManipulator::dragFinished, this,
+            [this, featureId](double finalValue) {
+        statusBar()->showMessage(
+            tr("Fillet radius: %1 mm").arg(finalValue, 0, 'f', 1));
+    });
+}
+
+// -----------------------------------------------------------------------------
+// Generic manipulator dispatch (used by single-click in feature tree)
+// -----------------------------------------------------------------------------
+
+void MainWindow::showManipulatorForFeature(const QString& featureId)
+{
+    auto& tl = m_document->timeline();
+    for (size_t i = 0; i < tl.count(); ++i) {
+        if (tl.entry(i).id != featureId.toStdString())
+            continue;
+        const auto* feat = tl.entry(i).feature.get();
+        if (!feat) break;
+
+        switch (feat->type()) {
+        case features::FeatureType::Extrude:
+            showExtrudeManipulator(featureId);
+            return;
+        case features::FeatureType::Fillet:
+            showFilletManipulator(featureId);
+            return;
+        default:
+            break;
+        }
+        break;
+    }
+    hideManipulator();
 }
 
 // =============================================================================

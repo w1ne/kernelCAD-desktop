@@ -311,7 +311,7 @@ void Viewport3D::initializeGL()
 {
     initializeOpenGLFunctions();   // QOpenGLFunctions_3_3_Core
 
-    glClearColor(0.18f, 0.18f, 0.18f, 1.0f);
+    glClearColor(0.14f, 0.14f, 0.16f, 1.0f);  // blue-tinted dark gray
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);
 
@@ -672,7 +672,10 @@ void Viewport3D::paintGL()
         m_manipulator->draw(this, m_edgeProgram, view, projection);
     }
 
-    // -- sketch overlay (drawn on top of 3D scene) -----------------------
+    // -- passive sketches (finished sketches shown as thin lines) --------
+    drawPassiveSketches();
+
+    // -- active sketch overlay (drawn on top of 3D scene) ---------------
     if (m_sketchEditor) {
         drawSketchOverlay();
         drawSketchConstraintOverlay();
@@ -2023,17 +2026,17 @@ void Viewport3D::drawGrid(const QMatrix4x4& mvp)
 
     m_gridVao.bind();
 
-    // Draw minor grid lines (thin, dark gray #444444)
+    // Draw minor grid lines (barely visible #262626)
     glLineWidth(1.0f);
     m_edgeProgram->setUniformValue("uEdgeColor",
-        QVector3D(0.267f, 0.267f, 0.267f));  // #444444
+        QVector3D(0.149f, 0.149f, 0.149f));  // #262626
     m_edgeProgram->setUniformValue("uEdgeAlpha", alpha);
     glDrawArrays(GL_LINES, 0, m_gridMinorVertexCount);
 
-    // Draw major grid lines (slightly brighter #666666)
+    // Draw major grid lines (subtle #333333)
     glLineWidth(1.0f);
     m_edgeProgram->setUniformValue("uEdgeColor",
-        QVector3D(0.4f, 0.4f, 0.4f));  // #666666
+        QVector3D(0.2f, 0.2f, 0.2f));  // #333333
     m_edgeProgram->setUniformValue("uEdgeAlpha", alpha);
     glDrawArrays(GL_LINES, m_gridMinorVertexCount, m_gridMajorVertexCount);
 
@@ -2055,7 +2058,7 @@ void Viewport3D::drawOriginAxes(const QMatrix4x4& mvp)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_LINE_SMOOTH);
     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-    glLineWidth(1.5f);
+    glLineWidth(3.0f);
 
     m_gridVao.bind();
 
@@ -2224,7 +2227,121 @@ void Viewport3D::drawOriginPoint(const QMatrix4x4& mvp)
 }
 
 // =============================================================================
-// Sketch overlay rendering
+// Passive sketch rendering (thin gray lines for finished sketches)
+// =============================================================================
+
+void Viewport3D::setPassiveSketches(const std::vector<const sketch::Sketch*>& sketches)
+{
+    m_passiveSketches = sketches;
+    update();
+}
+
+void Viewport3D::setHighlightedSketch(const sketch::Sketch* sk)
+{
+    if (m_highlightedSketch != sk) {
+        m_highlightedSketch = sk;
+        update();
+    }
+}
+
+void Viewport3D::drawPassiveSketches()
+{
+    if (m_passiveSketches.empty() || !m_sketchOverlayProgram)
+        return;
+
+    // Don't draw passive sketches while actively editing one
+    if (m_sketchEditor && m_sketchEditor->isEditing())
+        return;
+
+    QMatrix4x4 mvp = projectionMatrix() * viewMatrix();
+    m_sketchOverlayProgram->bind();
+    m_sketchOverlayProgram->setUniformValue("uMVP", mvp);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(1.0f);
+
+    // Default: thin gray color for passive sketch geometry
+    QVector4D passiveColor(0.5f, 0.6f, 0.8f, 0.5f);
+    // Highlighted sketch: bright blue, fully opaque
+    QVector4D highlightColor(0.3f, 0.6f, 1.0f, 0.95f);
+
+    QOpenGLVertexArrayObject tmpVao;
+    QOpenGLBuffer tmpVbo(QOpenGLBuffer::VertexBuffer);
+    tmpVao.create();
+    tmpVbo.create();
+
+    for (const auto* sk : m_passiveSketches) {
+        if (!sk) continue;
+
+        bool isHighlighted = (sk == m_highlightedSketch);
+
+        // Set color and line width based on highlight state
+        if (isHighlighted) {
+            m_sketchOverlayProgram->setUniformValue("uColor", highlightColor);
+            glLineWidth(2.5f);
+        } else {
+            m_sketchOverlayProgram->setUniformValue("uColor", passiveColor);
+            glLineWidth(1.0f);
+        }
+
+        // Collect all line segments
+        std::vector<float> verts;
+
+        for (const auto& [lid, ln] : sk->lines()) {
+            if (ln.isConstruction) continue;
+            const auto& p1 = sk->point(ln.startPointId);
+            const auto& p2 = sk->point(ln.endPointId);
+            double wx1, wy1, wz1, wx2, wy2, wz2;
+            sk->sketchToWorld(p1.x, p1.y, wx1, wy1, wz1);
+            sk->sketchToWorld(p2.x, p2.y, wx2, wy2, wz2);
+            verts.insert(verts.end(), {(float)wx1,(float)wy1,(float)wz1,
+                                       (float)wx2,(float)wy2,(float)wz2});
+        }
+
+        // Draw circles as polylines
+        for (const auto& [cid, circ] : sk->circles()) {
+            if (circ.isConstruction) continue;
+            const auto& center = sk->point(circ.centerPointId);
+            const int segs = 48;
+            for (int i = 0; i < segs; ++i) {
+                double a1 = 2.0 * M_PI * i / segs;
+                double a2 = 2.0 * M_PI * (i + 1) / segs;
+                double sx1 = center.x + circ.radius * std::cos(a1);
+                double sy1 = center.y + circ.radius * std::sin(a1);
+                double sx2 = center.x + circ.radius * std::cos(a2);
+                double sy2 = center.y + circ.radius * std::sin(a2);
+                double wx1, wy1, wz1, wx2, wy2, wz2;
+                sk->sketchToWorld(sx1, sy1, wx1, wy1, wz1);
+                sk->sketchToWorld(sx2, sy2, wx2, wy2, wz2);
+                verts.insert(verts.end(), {(float)wx1,(float)wy1,(float)wz1,
+                                           (float)wx2,(float)wy2,(float)wz2});
+            }
+        }
+
+        if (verts.empty()) continue;
+
+        tmpVao.bind();
+        tmpVbo.bind();
+        tmpVbo.allocate(verts.data(), static_cast<int>(verts.size() * sizeof(float)));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(verts.size() / 3));
+        tmpVbo.release();
+        tmpVao.release();
+    }
+
+    tmpVbo.destroy();
+    tmpVao.destroy();
+
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    m_sketchOverlayProgram->release();
+}
+
+// =============================================================================
+// Sketch overlay rendering (active editing)
 // =============================================================================
 
 void Viewport3D::drawSketchOverlay()

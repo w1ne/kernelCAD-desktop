@@ -322,6 +322,13 @@ private:
     /// Show the distance manipulator for the currently-edited Extrude feature.
     void showExtrudeManipulator(const QString& featureId);
 
+    /// Show the radius manipulator for a Fillet feature (single-click preview).
+    void showFilletManipulator(const QString& featureId);
+
+    /// Show the appropriate manipulator for a feature, if it is a dimensional type.
+    /// Called on single-click in the feature tree for direct manipulation.
+    void showManipulatorForFeature(const QString& featureId);
+
     /// Hide the manipulator and disconnect signals.
     void hideManipulator();
 

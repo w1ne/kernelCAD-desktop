@@ -203,6 +203,31 @@ QIcon FeatureTree::featureIcon(features::FeatureType type)
         p.drawEllipse(QRect(7, 7, 8, 8));
         break;
     }
+    case features::FeatureType::ConstructionPlane: {
+        // Colored filled circle -- plane icon
+        // Determine color by name later; default blue for XY
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(80, 140, 255));
+        p.drawEllipse(QRect(2, 2, 12, 12));
+        break;
+    }
+    case features::FeatureType::ConstructionAxis: {
+        // Red line icon for axis
+        p.setPen(QPen(QColor(220, 80, 80), 2));
+        p.drawLine(3, 8, 13, 8);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(220, 80, 80));
+        p.drawEllipse(QRect(1, 6, 4, 4));
+        p.drawEllipse(QRect(11, 6, 4, 4));
+        break;
+    }
+    case features::FeatureType::ConstructionPoint: {
+        // Orange dot
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 160, 60));
+        p.drawEllipse(QRect(4, 4, 8, 8));
+        break;
+    }
     default: {
         // Generic feature: gray diamond
         p.setPen(Qt::NoPen);

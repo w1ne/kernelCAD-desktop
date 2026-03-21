@@ -169,8 +169,11 @@ private:
     double m_pt2X = 0, m_pt2Y = 0;
 
     // ── Drag state ──────────────────────────────────────────────────────
+    enum class DragMode { Point, CircleRadius, ArcRadius };
     bool m_isDragging = false;
+    DragMode m_dragMode = DragMode::Point;
     std::string m_dragPointId;
+    std::string m_dragCircleId;  // for radius dragging
 
     // ── Constraint / Dimension tool state ───────────────────────────────
     SketchPickResult m_firstPick;   // first entity picked for two-entity tools

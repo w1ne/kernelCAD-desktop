@@ -49,44 +49,45 @@
 // ---------------------------------------------------------------------------
 static const char* kPanelStyle = R"(
     PropertiesPanel {
-        background-color: #2b2b2b;
+        background-color: #1e1e1e;
     }
     QLabel#headerLabel {
-        color: #e0e0e0;
-        font-weight: bold;
+        color: #d4d4d4;
+        font-weight: 600;
         font-size: 13px;
-        padding: 6px 4px 2px 4px;
+        padding: 8px 8px 4px 8px;
     }
     QLabel {
-        color: #cccccc;
+        color: #bbb;
+        font-size: 12px;
     }
     QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit {
-        background-color: #3c3f41;
-        color: #e0e0e0;
-        border: 1px solid #555555;
+        background-color: #2a2a2a;
+        color: #d4d4d4;
+        border: 1px solid #3a3a3a;
         border-radius: 3px;
-        padding: 2px 4px;
-        min-height: 22px;
+        padding: 3px 6px;
+        min-height: 24px;
     }
     QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus, QLineEdit:focus {
-        border: 1px solid #5294e2;
+        border: 1px solid #0078d4;
     }
     QCheckBox {
-        color: #cccccc;
+        color: #bbb;
         spacing: 6px;
     }
     QCheckBox::indicator {
         width: 16px; height: 16px;
-        border: 1px solid #555555;
+        border: 1px solid #3a3a3a;
         border-radius: 2px;
-        background-color: #3c3f41;
+        background-color: #2a2a2a;
     }
     QCheckBox::indicator:checked {
-        background-color: #5294e2;
-        border-color: #5294e2;
+        background-color: #0078d4;
+        border-color: #0078d4;
     }
     QFrame#separator {
-        color: #555555;
+        color: #3a3a3a;
     }
 )";
 
@@ -118,10 +119,10 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
-    m_scrollArea->setStyleSheet("QScrollArea { background-color: #2b2b2b; }");
+    m_scrollArea->setStyleSheet("QScrollArea { background-color: #1e1e1e; }");
 
     m_formContainer = new QWidget();
-    m_formContainer->setStyleSheet("background-color: #2b2b2b;");
+    m_formContainer->setStyleSheet("background-color: #1e1e1e;");
     m_formLayout = new QFormLayout(m_formContainer);
     m_formLayout->setContentsMargins(8, 6, 8, 6);
     m_formLayout->setSpacing(6);
@@ -316,8 +317,10 @@ void PropertiesPanel::clear()
     m_statsConstraints = nullptr;
     m_statsDOF = nullptr;
     m_headerLabel->setText(
-        QStringLiteral("<span style='color:#888; font-style:italic;'>"
-                       "Select a feature or body to view properties</span>"));
+        QStringLiteral("<div style='text-align:center; padding-top:30px;'>"
+                       "<div style='color:#888; font-size:13px;'>Select a feature, body, or face</div>"
+                       "<div style='color:#666; font-size:11px; padding-top:4px;'>to view and edit its properties</div>"
+                       "</div>"));
     clearFormWidgets();
 }
 
