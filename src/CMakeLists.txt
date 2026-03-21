@@ -69,6 +69,7 @@ add_executable(kernelCAD
   ui/MeasureTool.cpp
   ui/JointCreator.cpp
   ui/CommandDialog.cpp
+  ui/FeatureDialog.cpp
   ui/MarkingMenu.cpp
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp

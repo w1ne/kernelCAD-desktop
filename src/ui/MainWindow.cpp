@@ -12,6 +12,7 @@
 #include "CommandDialog.h"
 #include "MarkingMenu.h"
 #include "CommandPalette.h"
+#include "FeatureDialog.h"
 #include "../document/Document.h"
 #include "../document/InteractiveCommands.h"
 #include "../document/AutoSave.h"
@@ -117,6 +118,7 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onSketchEditingFinished);
     connect(m_sketchEditor, &SketchEditor::sketchChanged, this, [this]() {
         m_viewport->update();
+        m_properties->refreshSketchStats();
     });
     connect(m_sketchEditor, &SketchEditor::toolChanged, this, [this](SketchTool tool) {
         QString toolName;
@@ -226,6 +228,9 @@ void MainWindow::setupUI()
 
     setupStatusBar();
     setupConfirmBar();
+
+    // Create floating feature dialog (parented to viewport so it floats over it)
+    m_featureDialog = new FeatureDialog(m_viewport);
 }
 
 // ─── Ribbon helpers ─────────────────────────────────────────────────────────
@@ -1205,6 +1210,10 @@ void MainWindow::connectSignals()
     // Cancel preview when Escape is pressed
     connect(m_properties, &PropertiesPanel::editingCancelled,
             this, &MainWindow::onEditingCancelled);
+    connect(m_properties, &PropertiesPanel::finishSketchClicked, this, [this]() {
+        if (m_sketchEditor && m_sketchEditor->isEditing())
+            m_sketchEditor->finishEditing();
+    });
 }
 
 void MainWindow::onPropertyChanged(const QString& featureId,
@@ -1649,13 +1658,150 @@ void MainWindow::onCreateSketch()
     if (m_sketchEditor->isEditing())
         m_sketchEditor->finishEditing();
 
-    // Create a sketch on the XY plane at the origin (empty -- user draws interactively)
-    features::SketchParams skParams;
-    skParams.planeId = "XY";
-    skParams.originX = 0; skParams.originY = 0; skParams.originZ = 0;
-    skParams.xDirX = 1; skParams.xDirY = 0; skParams.xDirZ = 0;
-    skParams.yDirX = 0; skParams.yDirY = 1; skParams.yDirZ = 0;
+    // Enter "pick a plane" mode -- wait for user to click an origin plane or planar face
+    m_pendingSketchPlane = true;
+    m_pendingCommand = PendingCommand::SketchPlane;
+    m_selectionMgr->setFilter(SelectionFilter::Faces);
+    if (m_selectFacesAction) m_selectFacesAction->setChecked(true);
+    statusBar()->showMessage(tr("Select a plane or planar face to sketch on..."));
+    showConfirmBar(tr("Sketch: Pick Plane"));
+}
 
+std::string MainWindow::hitTestOriginPlanes(const QPoint& screenPos,
+                                            double& ox, double& oy, double& oz,
+                                            double& xDirX, double& xDirY, double& xDirZ,
+                                            double& yDirX, double& yDirY, double& yDirZ) const
+{
+    // Unproject screen position to a ray using the viewport camera matrices
+    QMatrix4x4 view = m_viewport->viewMatrix();
+    QMatrix4x4 proj = m_viewport->projectionMatrix();
+    QMatrix4x4 invVP = (proj * view).inverted();
+
+    float ndcX = (2.0f * screenPos.x()) / m_viewport->width() - 1.0f;
+    float ndcY = 1.0f - (2.0f * screenPos.y()) / m_viewport->height();
+
+    QVector4D nearPt4 = invVP * QVector4D(ndcX, ndcY, -1.0f, 1.0f);
+    QVector4D farPt4  = invVP * QVector4D(ndcX, ndcY,  1.0f, 1.0f);
+    if (std::abs(nearPt4.w()) > 1e-7f) nearPt4 /= nearPt4.w();
+    if (std::abs(farPt4.w())  > 1e-7f) farPt4  /= farPt4.w();
+
+    QVector3D rayOrigin = nearPt4.toVector3D();
+    QVector3D rayDir    = (farPt4.toVector3D() - rayOrigin).normalized();
+
+    // Origin plane half-extent (matches initOriginPlanes)
+    constexpr float S = 50.0f;
+
+    // Test each origin plane: XY (normal Z), XZ (normal Y), YZ (normal X)
+    struct PlaneTest {
+        const char* name;
+        QVector3D normal;
+        // For bounds check: which two axes define the plane
+        int axis1, axis2; // 0=X, 1=Y, 2=Z
+        double oxv, oyv, ozv;
+        double xdx, xdy, xdz, ydx, ydy, ydz;
+    };
+
+    PlaneTest planes[] = {
+        {"XY", QVector3D(0, 0, 1), 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0},
+        {"XZ", QVector3D(0, 1, 0), 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+        {"YZ", QVector3D(1, 0, 0), 1, 2, 0, 0, 0, 0, 1, 0, 0, 0, 1},
+    };
+
+    float bestDist = std::numeric_limits<float>::max();
+    std::string bestPlane;
+
+    for (auto& pl : planes) {
+        float denom = QVector3D::dotProduct(rayDir, pl.normal);
+        if (std::abs(denom) < 1e-7f) continue; // parallel
+
+        // Plane passes through origin, so d=0: t = -dot(rayOrigin, normal) / denom
+        float t = -QVector3D::dotProduct(rayOrigin, pl.normal) / denom;
+        if (t < 0.0f) continue; // behind camera
+
+        QVector3D hitPt = rayOrigin + t * rayDir;
+
+        // Check if within the plane bounds (S x S)
+        float v1 = hitPt[pl.axis1];
+        float v2 = hitPt[pl.axis2];
+        if (std::abs(v1) <= S && std::abs(v2) <= S) {
+            if (t < bestDist) {
+                bestDist = t;
+                bestPlane = pl.name;
+                ox = pl.oxv; oy = pl.oyv; oz = pl.ozv;
+                xDirX = pl.xdx; xDirY = pl.xdy; xDirZ = pl.xdz;
+                yDirX = pl.ydx; yDirY = pl.ydy; yDirZ = pl.ydz;
+            }
+        }
+    }
+
+    return bestPlane;
+}
+
+void MainWindow::handleSketchPlaneSelection(const SelectionHit& hit)
+{
+    features::SketchParams skParams;
+
+    // Check if the hit is on a planar face of a body
+    if (!hit.bodyId.empty() && hit.faceIndex >= 0) {
+        auto& brep = m_document->brepModel();
+        if (brep.hasBody(hit.bodyId)) {
+            try {
+                kernel::BRepQuery bq = brep.query(hit.bodyId);
+                if (hit.faceIndex < bq.faceCount()) {
+                    kernel::FaceInfo fi = bq.faceInfo(hit.faceIndex);
+                    if (fi.surfaceType == kernel::SurfaceType::Plane) {
+                        // Use the face centroid as sketch origin and face normal for orientation
+                        skParams.planeId = hit.bodyId + ":face:" + std::to_string(hit.faceIndex);
+                        skParams.originX = fi.centroidX;
+                        skParams.originY = fi.centroidY;
+                        skParams.originZ = fi.centroidZ;
+
+                        // Build a coordinate frame from the face normal
+                        double nx = fi.normalX, ny = fi.normalY, nz = fi.normalZ;
+                        // Choose an up vector that is not parallel to normal
+                        double ux = 0, uy = 1, uz = 0;
+                        if (std::abs(ny) > 0.9) { ux = 1; uy = 0; uz = 0; }
+                        // xDir = cross(up, normal), then yDir = cross(normal, xDir)
+                        skParams.xDirX = uy * nz - uz * ny;
+                        skParams.xDirY = uz * nx - ux * nz;
+                        skParams.xDirZ = ux * ny - uy * nx;
+                        double xLen = std::sqrt(skParams.xDirX * skParams.xDirX +
+                                                skParams.xDirY * skParams.xDirY +
+                                                skParams.xDirZ * skParams.xDirZ);
+                        if (xLen > 1e-9) {
+                            skParams.xDirX /= xLen;
+                            skParams.xDirY /= xLen;
+                            skParams.xDirZ /= xLen;
+                        }
+                        skParams.yDirX = ny * skParams.xDirZ - nz * skParams.xDirY;
+                        skParams.yDirY = nz * skParams.xDirX - nx * skParams.xDirZ;
+                        skParams.yDirZ = nx * skParams.xDirY - ny * skParams.xDirX;
+                    } else {
+                        statusBar()->showMessage(tr("Selected face is not planar. Pick a flat face or origin plane."), 3000);
+                        return;
+                    }
+                }
+            } catch (...) {
+                statusBar()->showMessage(tr("Could not query face geometry."), 3000);
+                return;
+            }
+        }
+    } else {
+        // No body face hit -- check origin planes using the world hit position
+        // Approximate: use the hit world coords to determine which origin plane
+        statusBar()->showMessage(tr("No planar face selected. Click an origin plane or a flat face."), 3000);
+        return;
+    }
+
+    // Clean up pending state
+    m_pendingSketchPlane = false;
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
+    m_selectionMgr->setFilter(SelectionFilter::All);
+    if (m_selectAllAction) m_selectAllAction->setChecked(true);
+    hideConfirmBar();
+
+    // Create the sketch with the selected plane params
     m_document->executeCommand(
         std::make_unique<document::AddSketchCommand>(std::move(skParams)));
     refreshAllPanels();
@@ -1749,18 +1895,31 @@ void MainWindow::onExtrudeSketch()
         profileId += profiles[0][i];
     }
 
-    // Create an extrude feature referencing this sketch
+    // Build default params and show the floating feature dialog
     features::ExtrudeParams params;
     params.profileId    = profileId;
     params.sketchId     = lastSketchId;
-    params.distanceExpr = "20 mm";
+    params.distanceExpr = "10 mm";
     params.extentType   = features::ExtentType::Distance;
     params.operation    = features::FeatureOperation::NewBody;
 
-    m_document->executeCommand(
-        std::make_unique<document::AddExtrudeCommand>(std::move(params)));
-    statusBar()->showMessage(tr("Extruded sketch"));
-    refreshAllPanels();
+    m_featureDialog->showExtrude(params);
+    showConfirmBar(tr("Extrude"));
+
+    connect(m_featureDialog, &FeatureDialog::extrudeAccepted, this,
+            [this](features::ExtrudeParams p) {
+        m_document->executeCommand(
+            std::make_unique<document::AddExtrudeCommand>(std::move(p)));
+        statusBar()->showMessage(tr("Extruded sketch"));
+        hideConfirmBar();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        statusBar()->showMessage(tr("Extrude cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 void MainWindow::onRevolveSketch()
@@ -1799,7 +1958,7 @@ void MainWindow::onRevolveSketch()
         profileId += profiles[0][i];
     }
 
-    // Create a revolve feature referencing this sketch
+    // Build default params and show the floating feature dialog
     features::RevolveParams params;
     params.profileId        = profileId;
     params.sketchId         = lastSketchId;
@@ -1808,10 +1967,23 @@ void MainWindow::onRevolveSketch()
     params.isFullRevolution = true;
     params.operation        = features::FeatureOperation::NewBody;
 
-    m_document->executeCommand(
-        std::make_unique<document::AddRevolveCommand>(std::move(params)));
-    statusBar()->showMessage(tr("Revolved sketch"));
-    refreshAllPanels();
+    m_featureDialog->showRevolve(params);
+    showConfirmBar(tr("Revolve"));
+
+    connect(m_featureDialog, &FeatureDialog::revolveAccepted, this,
+            [this](features::RevolveParams p) {
+        m_document->executeCommand(
+            std::make_unique<document::AddRevolveCommand>(std::move(p)));
+        statusBar()->showMessage(tr("Revolved sketch"));
+        hideConfirmBar();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        statusBar()->showMessage(tr("Revolve cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 void MainWindow::onAddHole()
@@ -2038,23 +2210,33 @@ void MainWindow::onFillet()
         }
     }
 
-    try {
-        m_document->executeCommand(
-            std::make_unique<document::AddFilletCommand>(std::move(params)));
-        QString msg = edgeIndices.empty()
-            ? tr("Filleted all edges of %1 (3 mm)").arg(QString::fromStdString(bodyId))
-            : tr("Filleted %1 edge(s) on %2 (3 mm)")
-                  .arg(edgeIndices.size())
-                  .arg(QString::fromStdString(bodyId));
-        statusBar()->showMessage(msg);
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Fillet Failed"),
-            tr("Could not fillet: %1").arg(e.what()));
-    }
+    // Show the floating feature dialog for parameter input
+    m_featureDialog->showFillet(params);
+    showConfirmBar(tr("Fillet"));
 
-    m_pendingCommand = PendingCommand::None;
-    m_selectionMgr->clearSelection();
-    refreshAllPanels();
+    connect(m_featureDialog, &FeatureDialog::filletAccepted, this,
+            [this](features::FilletParams p) {
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddFilletCommand>(std::move(p)));
+            statusBar()->showMessage(tr("Fillet applied"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Fillet Failed"),
+                tr("Could not fillet: %1").arg(e.what()));
+        }
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        statusBar()->showMessage(tr("Fillet cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 // ---------------------------------------------------------------------------
@@ -2101,23 +2283,33 @@ void MainWindow::onChamfer()
         } catch (...) {}
     }
 
-    try {
-        m_document->executeCommand(
-            std::make_unique<document::AddChamferCommand>(std::move(params)));
-        QString msg = edgeIndices.empty()
-            ? tr("Chamfered all edges of %1 (2 mm)").arg(QString::fromStdString(bodyId))
-            : tr("Chamfered %1 edge(s) on %2 (2 mm)")
-                  .arg(edgeIndices.size())
-                  .arg(QString::fromStdString(bodyId));
-        statusBar()->showMessage(msg);
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Chamfer Failed"),
-            tr("Could not chamfer: %1").arg(e.what()));
-    }
+    // Show the floating feature dialog for parameter input
+    m_featureDialog->showChamfer(params);
+    showConfirmBar(tr("Chamfer"));
 
-    m_pendingCommand = PendingCommand::None;
-    m_selectionMgr->clearSelection();
-    refreshAllPanels();
+    connect(m_featureDialog, &FeatureDialog::chamferAccepted, this,
+            [this](features::ChamferParams p) {
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddChamferCommand>(std::move(p)));
+            statusBar()->showMessage(tr("Chamfer applied"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Chamfer Failed"),
+                tr("Could not chamfer: %1").arg(e.what()));
+        }
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        statusBar()->showMessage(tr("Chamfer cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 // ---------------------------------------------------------------------------
@@ -2165,23 +2357,33 @@ void MainWindow::onShell()
         } catch (...) {}
     }
 
-    try {
-        m_document->executeCommand(
-            std::make_unique<document::AddShellCommand>(std::move(params)));
-        QString msg = faceIndices.empty()
-            ? tr("Shelled %1 (2 mm wall, auto face)").arg(QString::fromStdString(bodyId))
-            : tr("Shelled %1 removing %2 face(s) (2 mm wall)")
-                  .arg(QString::fromStdString(bodyId))
-                  .arg(faceIndices.size());
-        statusBar()->showMessage(msg);
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Shell Failed"),
-            tr("Could not shell body: %1").arg(e.what()));
-    }
+    // Show the floating feature dialog for parameter input
+    m_featureDialog->showShell(params);
+    showConfirmBar(tr("Shell"));
 
-    m_pendingCommand = PendingCommand::None;
-    m_selectionMgr->clearSelection();
-    refreshAllPanels();
+    connect(m_featureDialog, &FeatureDialog::shellAccepted, this,
+            [this](features::ShellParams p) {
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddShellCommand>(std::move(p)));
+            statusBar()->showMessage(tr("Shell applied"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Shell Failed"),
+                tr("Could not shell body: %1").arg(e.what()));
+        }
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        statusBar()->showMessage(tr("Shell cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 // ---------------------------------------------------------------------------
@@ -2258,12 +2460,13 @@ void MainWindow::onCommitPendingCommand()
     m_pendingCommand = PendingCommand::None;
 
     switch (cmd) {
-    case PendingCommand::Fillet:  onFillet();  break;
-    case PendingCommand::Chamfer: onChamfer(); break;
-    case PendingCommand::Shell:   onShell();   break;
-    case PendingCommand::Draft:   onDraft();   break;
-    case PendingCommand::Hole:    onAddHole(); break;
-    case PendingCommand::None:    break;
+    case PendingCommand::Fillet:      onFillet();  break;
+    case PendingCommand::Chamfer:     onChamfer(); break;
+    case PendingCommand::Shell:       onShell();   break;
+    case PendingCommand::Draft:       onDraft();   break;
+    case PendingCommand::Hole:        onAddHole(); break;
+    case PendingCommand::SketchPlane: break; // no commit for plane pick
+    case PendingCommand::None:        break;
     }
 }
 
@@ -2274,12 +2477,19 @@ void MainWindow::onCancelPendingCommand()
         m_jointCreator->cancel();
     }
 
+    // Dismiss the feature dialog if active
+    if (m_featureDialog && m_featureDialog->isActive()) {
+        m_featureDialog->dismiss();
+    }
+
     if (m_pendingCommand != PendingCommand::None) {
+        m_pendingSketchPlane = false;
         m_pendingCommand = PendingCommand::None;
         m_selectionMgr->clearSelection();
         m_selectionMgr->setFilter(SelectionFilter::All);
         if (m_selectAllAction)
             m_selectAllAction->setChecked(true);
+        hideConfirmBar();
         statusBar()->showMessage(tr("Command cancelled"));
     }
 }
@@ -2750,6 +2960,13 @@ void MainWindow::onSelectionChanged()
         && m_selectionMgr->hasSelection()) {
         const auto& hit = m_selectionMgr->selection().front();
         m_jointCreator->onFaceSelected(hit);
+        return;
+    }
+
+    // Handle pending sketch plane selection
+    if (m_pendingSketchPlane && m_selectionMgr->hasSelection()) {
+        const auto& hit = m_selectionMgr->selection().front();
+        handleSketchPlaneSelection(hit);
         return;
     }
 
@@ -3313,10 +3530,16 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     if (m_ribbon) m_ribbon->setCurrentIndex(m_sketchTabIndex);
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Editing sketch -- L=Line, R=Rect, C=Circle, A=Arc, X=Construction, T=Trim, E=Extend, O=Offset, Esc=Finish"));
+
+    // Show sketch palettes in the properties panel
+    m_properties->showSketchPalettes(&sketchFeat->sketch(), m_sketchEditor);
 }
 
 void MainWindow::onSketchEditingFinished()
 {
+    // Clear sketch palettes from the properties panel
+    m_properties->clear();
+
     // Restore bodies to full opacity and re-enable rotation
     m_viewport->setSketchMode(false);
 
@@ -3339,11 +3562,24 @@ void MainWindow::onSketchEditingFinished()
     if (m_activeSketchFeature) {
         // Solve the sketch one final time
         m_activeSketchFeature->sketch().solve();
-        m_activeSketchFeature = nullptr;
-    }
 
-    statusBar()->showMessage(tr("Sketch editing finished"));
-    refreshAllPanels();
+        // If the sketch has closed profiles, suggest extruding
+        auto profiles = m_activeSketchFeature->sketch().detectProfiles();
+        m_activeSketchFeature = nullptr;
+
+        refreshAllPanels();
+
+        if (!profiles.empty()) {
+            statusBar()->showMessage(
+                tr("Sketch has %1 profile(s). Press E to extrude.")
+                    .arg(profiles.size()), 5000);
+        } else {
+            statusBar()->showMessage(tr("Sketch editing finished"));
+        }
+    } else {
+        refreshAllPanels();
+        statusBar()->showMessage(tr("Sketch editing finished"));
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -3856,6 +4092,48 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
                 m_markingMenuShown = false;
                 m_markingMenuTimer->start();
                 // Do not consume -- let viewport handle the press too (for camera state)
+            }
+        } else if (event->type() == QEvent::MouseButtonRelease &&
+                   m_pendingSketchPlane) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton) {
+                // Check if user clicked on an origin plane (ray-plane intersection)
+                double ox, oy, oz, xdx, xdy, xdz, ydx, ydy, ydz;
+                std::string planeName = hitTestOriginPlanes(me->pos(),
+                    ox, oy, oz, xdx, xdy, xdz, ydx, ydy, ydz);
+                if (!planeName.empty()) {
+                    // Create sketch on this origin plane
+                    features::SketchParams skParams;
+                    skParams.planeId = planeName;
+                    skParams.originX = ox; skParams.originY = oy; skParams.originZ = oz;
+                    skParams.xDirX = xdx; skParams.xDirY = xdy; skParams.xDirZ = xdz;
+                    skParams.yDirX = ydx; skParams.yDirY = ydy; skParams.yDirZ = ydz;
+
+                    m_pendingSketchPlane = false;
+                    m_pendingCommand = PendingCommand::None;
+                    m_selectionMgr->clearSelection();
+                    m_selectionMgr->setFilter(SelectionFilter::All);
+                    if (m_selectAllAction) m_selectAllAction->setChecked(true);
+                    hideConfirmBar();
+
+                    m_document->executeCommand(
+                        std::make_unique<document::AddSketchCommand>(std::move(skParams)));
+                    refreshAllPanels();
+
+                    auto& tl = m_document->timeline();
+                    for (size_t i = tl.count(); i > 0; --i) {
+                        auto& entry = tl.entry(i - 1);
+                        if (entry.feature &&
+                            entry.feature->type() == features::FeatureType::Sketch &&
+                            !entry.isSuppressed && !entry.isRolledBack) {
+                            auto* skFeat = static_cast<features::SketchFeature*>(entry.feature.get());
+                            beginSketchEditing(skFeat);
+                            break;
+                        }
+                    }
+                    return true; // consume the event
+                }
+                // Otherwise, let it fall through to normal picking (for planar face selection)
             }
         } else if (event->type() == QEvent::MouseMove) {
             auto* me = static_cast<QMouseEvent*>(event);

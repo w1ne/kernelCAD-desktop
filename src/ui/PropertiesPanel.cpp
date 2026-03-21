@@ -23,6 +23,8 @@
 #include "../features/CombineFeature.h"
 #include "../features/SplitBodyFeature.h"
 #include "../features/OffsetFacesFeature.h"
+#include "../sketch/Sketch.h"
+#include "SketchEditor.h"
 
 #include <QVBoxLayout>
 #include <QFormLayout>
@@ -143,11 +145,176 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
 }
 
 // ---------------------------------------------------------------------------
+// showSketchPalettes — show toggles, stats and Finish button during sketch editing
+// ---------------------------------------------------------------------------
+void PropertiesPanel::showSketchPalettes(sketch::Sketch* sketch, SketchEditor* editor)
+{
+    m_paletteSketch = sketch;
+    m_paletteEditor = editor;
+    m_currentFeatureId.clear();
+    clearFormWidgets();
+
+    // Header
+    m_headerLabel->setText(
+        QStringLiteral("<b style='color:#e0e0e0;'>SKETCH PALETTES</b>"));
+
+    // ── Options section ──────────────────────────────────────────────────
+    auto* optLabel = new QLabel(QStringLiteral(
+        "<span style='color:#aaa; font-weight:bold;'>Options</span>"));
+    m_formLayout->addRow(optLabel);
+
+    auto* snapCb = new QCheckBox(tr("Snap to Grid"));
+    snapCb->setChecked(editor->gridSnapEnabled());
+    connect(snapCb, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_paletteEditor)
+            m_paletteEditor->setGridSnap(checked);
+    });
+    m_formLayout->addRow(snapCb);
+
+    auto* gridSpin = new QDoubleSpinBox();
+    gridSpin->setRange(0.1, 1000.0);
+    gridSpin->setDecimals(1);
+    gridSpin->setSuffix(QStringLiteral(" mm"));
+    gridSpin->setValue(5.0);
+    connect(gridSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double val) {
+        emit propertyChanged(QString(), QStringLiteral("Grid Size"), val);
+    });
+    m_formLayout->addRow(tr("Grid Size"), gridSpin);
+
+    auto* inferCb = new QCheckBox(tr("Show Inference Lines"));
+    inferCb->setChecked(true);
+    connect(inferCb, &QCheckBox::toggled, this, [this](bool checked) {
+        emit propertyChanged(QString(), QStringLiteral("Show Inference Lines"), checked);
+    });
+    m_formLayout->addRow(inferCb);
+
+    // Separator
+    auto* sep1 = new QFrame();
+    sep1->setObjectName("separator");
+    sep1->setFrameShape(QFrame::HLine);
+    sep1->setFrameShadow(QFrame::Sunken);
+    m_formLayout->addRow(sep1);
+
+    // ── Display section ──────────────────────────────────────────────────
+    auto* dispLabel = new QLabel(QStringLiteral(
+        "<span style='color:#aaa; font-weight:bold;'>Display</span>"));
+    m_formLayout->addRow(dispLabel);
+
+    auto* ptsCb = new QCheckBox(tr("Show Points"));
+    ptsCb->setChecked(true);
+    connect(ptsCb, &QCheckBox::toggled, this, [this](bool checked) {
+        emit propertyChanged(QString(), QStringLiteral("Show Points"), checked);
+    });
+    m_formLayout->addRow(ptsCb);
+
+    auto* dimCb = new QCheckBox(tr("Show Dimensions"));
+    dimCb->setChecked(true);
+    connect(dimCb, &QCheckBox::toggled, this, [this](bool checked) {
+        emit propertyChanged(QString(), QStringLiteral("Show Dimensions"), checked);
+    });
+    m_formLayout->addRow(dimCb);
+
+    auto* conCb = new QCheckBox(tr("Show Constraints"));
+    conCb->setChecked(true);
+    connect(conCb, &QCheckBox::toggled, this, [this](bool checked) {
+        emit propertyChanged(QString(), QStringLiteral("Show Constraints"), checked);
+    });
+    m_formLayout->addRow(conCb);
+
+    auto* cstrCb = new QCheckBox(tr("Show Construction"));
+    cstrCb->setChecked(true);
+    connect(cstrCb, &QCheckBox::toggled, this, [this](bool checked) {
+        emit propertyChanged(QString(), QStringLiteral("Show Construction"), checked);
+    });
+    m_formLayout->addRow(cstrCb);
+
+    // Separator
+    auto* sep2 = new QFrame();
+    sep2->setObjectName("separator");
+    sep2->setFrameShape(QFrame::HLine);
+    sep2->setFrameShadow(QFrame::Sunken);
+    m_formLayout->addRow(sep2);
+
+    // ── Sketch Info section ──────────────────────────────────────────────
+    auto* infoLabel = new QLabel(QStringLiteral(
+        "<span style='color:#aaa; font-weight:bold;'>Sketch Info</span>"));
+    m_formLayout->addRow(infoLabel);
+
+    m_statsPoints      = new QLabel();
+    m_statsLines       = new QLabel();
+    m_statsCircles     = new QLabel();
+    m_statsConstraints = new QLabel();
+    m_statsDOF         = new QLabel();
+
+    m_formLayout->addRow(tr("Points"),      m_statsPoints);
+    m_formLayout->addRow(tr("Lines"),       m_statsLines);
+    m_formLayout->addRow(tr("Circles"),     m_statsCircles);
+    m_formLayout->addRow(tr("Constraints"), m_statsConstraints);
+    m_formLayout->addRow(tr("DOF"),         m_statsDOF);
+
+    refreshSketchStats();
+
+    // Separator
+    auto* sep3 = new QFrame();
+    sep3->setObjectName("separator");
+    sep3->setFrameShape(QFrame::HLine);
+    sep3->setFrameShadow(QFrame::Sunken);
+    m_formLayout->addRow(sep3);
+
+    // ── Finish Sketch button ─────────────────────────────────────────────
+    auto* finishBtn = new QPushButton(tr("Finish Sketch"));
+    finishBtn->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #5294e2; color: #fff; border: none;"
+        "  border-radius: 4px; padding: 6px 16px; font-weight: bold;"
+        "}"
+        "QPushButton:hover { background-color: #6aa5ef; }"
+        "QPushButton:pressed { background-color: #3a7bd5; }");
+    connect(finishBtn, &QPushButton::clicked, this, [this]() {
+        emit finishSketchClicked();
+    });
+    m_formLayout->addRow(finishBtn);
+}
+
+// ---------------------------------------------------------------------------
+// refreshSketchStats — update entity counts and DOF in the sketch palette
+// ---------------------------------------------------------------------------
+void PropertiesPanel::refreshSketchStats()
+{
+    if (!m_paletteSketch || !m_statsPoints)
+        return;
+
+    const auto& sk = *m_paletteSketch;
+    m_statsPoints->setText(QString::number(static_cast<int>(sk.points().size())));
+    m_statsLines->setText(QString::number(static_cast<int>(sk.lines().size())));
+    m_statsCircles->setText(QString::number(
+        static_cast<int>(sk.circles().size()) + static_cast<int>(sk.arcs().size())));
+    m_statsConstraints->setText(QString::number(static_cast<int>(sk.constraints().size())));
+
+    int dof = sk.freeDOF();
+    if (dof == 0) {
+        m_statsDOF->setText(QStringLiteral("0 (Fully constrained)"));
+        m_statsDOF->setStyleSheet("color: #4caf50;");
+    } else {
+        m_statsDOF->setText(QString::number(dof));
+        m_statsDOF->setStyleSheet("color: #ff9800;");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // clear()
 // ---------------------------------------------------------------------------
 void PropertiesPanel::clear()
 {
     m_currentFeatureId.clear();
+    m_paletteSketch = nullptr;
+    m_paletteEditor = nullptr;
+    m_statsPoints = nullptr;
+    m_statsLines = nullptr;
+    m_statsCircles = nullptr;
+    m_statsConstraints = nullptr;
+    m_statsDOF = nullptr;
     m_headerLabel->setText(
         QStringLiteral("<span style='color:#888; font-style:italic;'>"
                        "Select a feature or body to view properties</span>"));

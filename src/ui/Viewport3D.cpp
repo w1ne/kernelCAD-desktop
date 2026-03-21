@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <unordered_map>
 
 // =============================================================================
 // Inline shaders -- Blinn-Phong lighting
@@ -2276,15 +2277,76 @@ void Viewport3D::drawSketchOverlay()
         tempVao.release();
     };
 
-    // Colors
-    const QVector4D cGreen(0.1f, 0.8f, 0.1f, 1.0f);
-    const QVector4D cBlue(0.2f, 0.5f, 1.0f, 1.0f);
-    const QVector4D cOrange(0.6f, 0.4f, 0.1f, 0.7f);
+    // Colors -- per-curve constraint status coloring
+    const QVector4D cBlue(0.27f, 0.53f, 1.0f, 1.0f);      // under-constrained
+    const QVector4D cDark(0.75f, 0.75f, 0.75f, 1.0f);      // fully constrained (light gray on dark bg)
+    const QVector4D cRed(1.0f, 0.25f, 0.25f, 1.0f);        // over-constrained / error
+    const QVector4D cOrange(1.0f, 0.53f, 0.0f, 0.9f);      // construction geometry
     const QVector4D cWhite(1.0f, 1.0f, 1.0f, 1.0f);
-    const QVector4D cRubberGreen(0.2f, 1.0f, 0.2f, 0.9f);   // bright green preview
+    const QVector4D cRubberGreen(0.2f, 1.0f, 0.2f, 0.9f);  // bright green preview
     // Grid colors are now defined locally in the grid section below
 
-    QVector4D lineColor = sk->isFullyConstrained() ? cGreen : cBlue;
+    // Determine if the whole sketch is fully constrained or solver failed
+    bool sketchFullyConstrained = sk->isFullyConstrained();
+    sketch::SolveResult lastSolveResult = sk->solve();
+    bool solverFailed = (lastSolveResult.status == sketch::SolveStatus::Failed ||
+                         lastSolveResult.status == sketch::SolveStatus::OverConstrained);
+
+    // Helper: determine the color for a non-construction curve entity
+    // based on its constraint status
+    auto curveColor = [&](const std::string& entityId,
+                          const std::string& startPtId,
+                          const std::string& endPtId) -> QVector4D {
+        if (solverFailed) return cRed;
+        if (sketchFullyConstrained) return cDark;
+
+        // Count constraints involving this entity or its endpoints
+        int constraintCount = 0;
+        bool startFixed = false, endFixed = false;
+        if (!startPtId.empty()) {
+            try { startFixed = sk->point(startPtId).isFixed; } catch (...) {}
+        }
+        if (!endPtId.empty()) {
+            try { endFixed = sk->point(endPtId).isFixed; } catch (...) {}
+        }
+
+        for (const auto& [cid, con] : sk->constraints()) {
+            for (const auto& eid : con.entityIds) {
+                if (eid == entityId || eid == startPtId || eid == endPtId) {
+                    constraintCount++;
+                    break;
+                }
+            }
+        }
+
+        if (startFixed && endFixed) return cDark;
+        if (constraintCount >= 3) return cDark;
+        return cBlue;
+    };
+
+    // Helper for center-only entities (circles, ellipses)
+    auto centerCurveColor = [&](const std::string& entityId,
+                                const std::string& centerPtId) -> QVector4D {
+        if (solverFailed) return cRed;
+        if (sketchFullyConstrained) return cDark;
+
+        bool centerFixed = false;
+        try { centerFixed = sk->point(centerPtId).isFixed; } catch (...) {}
+
+        int constraintCount = 0;
+        for (const auto& [cid, con] : sk->constraints()) {
+            for (const auto& eid : con.entityIds) {
+                if (eid == entityId || eid == centerPtId) {
+                    constraintCount++;
+                    break;
+                }
+            }
+        }
+
+        if (centerFixed && constraintCount >= 2) return cDark;
+        if (constraintCount >= 3) return cDark;
+        return cBlue;
+    };
 
     // -- Grid: 5mm minor, 25mm major, 200mm extent ─────────────────────────
     {
@@ -2361,24 +2423,42 @@ void Viewport3D::drawSketchOverlay()
         }
     }
 
-    // -- Lines ---------------------------------------------------------------
+    // -- Lines (per-curve color coding) ----------------------------------------
     {
-        std::vector<float> lv, cv;
+        // Group line vertices by color to minimize draw calls
+        std::unordered_map<uint32_t, std::vector<float>> colorBuckets;
+
+        auto colorKey = [](const QVector4D& c) -> uint32_t {
+            return (static_cast<uint32_t>(c.x() * 255) << 24) |
+                   (static_cast<uint32_t>(c.y() * 255) << 16) |
+                   (static_cast<uint32_t>(c.z() * 255) << 8)  |
+                   static_cast<uint32_t>(c.w() * 255);
+        };
+
+        std::unordered_map<uint32_t, QVector4D> colorMap;
+
         for (const auto& [lid, ln] : sk->lines()) {
             const auto& p1 = sk->point(ln.startPointId);
             const auto& p2 = sk->point(ln.endPointId);
             QVector3D w1 = skToWorld(p1.x, p1.y);
             QVector3D w2 = skToWorld(p2.x, p2.y);
-            auto& t = ln.isConstruction ? cv : lv;
-            t.push_back(w1.x()); t.push_back(w1.y()); t.push_back(w1.z());
-            t.push_back(w2.x()); t.push_back(w2.y()); t.push_back(w2.z());
+
+            QVector4D color = ln.isConstruction ? cOrange
+                : curveColor(lid, ln.startPointId, ln.endPointId);
+
+            uint32_t key = colorKey(color);
+            colorMap[key] = color;
+            auto& bucket = colorBuckets[key];
+            bucket.push_back(w1.x()); bucket.push_back(w1.y()); bucket.push_back(w1.z());
+            bucket.push_back(w2.x()); bucket.push_back(w2.y()); bucket.push_back(w2.z());
         }
         glLineWidth(2.0f);
-        uploadAndDraw(lv, lineColor, GL_LINES);
-        uploadAndDraw(cv, cOrange, GL_LINES);
+        for (const auto& [key, verts] : colorBuckets) {
+            uploadAndDraw(verts, colorMap[key], GL_LINES);
+        }
     }
 
-    // -- Circles -------------------------------------------------------------
+    // -- Circles (per-curve color coding) --------------------------------------
     {
         for (const auto& [cid, circ] : sk->circles()) {
             const auto& cp = sk->point(circ.centerPointId);
@@ -2390,13 +2470,14 @@ void Viewport3D::drawSketchOverlay()
                                         cp.y + circ.radius * std::sin(a));
                 cv2.push_back(w.x()); cv2.push_back(w.y()); cv2.push_back(w.z());
             }
+            QVector4D color = circ.isConstruction ? cOrange
+                : centerCurveColor(cid, circ.centerPointId);
             glLineWidth(2.0f);
-            uploadAndDraw(cv2, circ.isConstruction ? cOrange : lineColor,
-                          GL_LINE_LOOP);
+            uploadAndDraw(cv2, color, GL_LINE_LOOP);
         }
     }
 
-    // -- Arcs ----------------------------------------------------------------
+    // -- Arcs (per-curve color coding) -----------------------------------------
     {
         for (const auto& [aid, arc] : sk->arcs()) {
             const auto& cp = sk->point(arc.centerPointId);
@@ -2418,8 +2499,10 @@ void Viewport3D::drawSketchOverlay()
                 av.push_back(w1.x()); av.push_back(w1.y()); av.push_back(w1.z());
                 av.push_back(w2.x()); av.push_back(w2.y()); av.push_back(w2.z());
             }
+            QVector4D color = arc.isConstruction ? cOrange
+                : curveColor(aid, arc.startPointId, arc.endPointId);
             glLineWidth(2.0f);
-            uploadAndDraw(av, arc.isConstruction ? cOrange : lineColor, GL_LINES);
+            uploadAndDraw(av, color, GL_LINES);
         }
     }
 
@@ -2447,8 +2530,10 @@ void Viewport3D::drawSketchOverlay()
                 ev.push_back(w1.x()); ev.push_back(w1.y()); ev.push_back(w1.z());
                 ev.push_back(w2.x()); ev.push_back(w2.y()); ev.push_back(w2.z());
             }
+            QVector4D ellColor = ell.isConstruction ? cOrange
+                : centerCurveColor(eid, ell.centerPointId);
             glLineWidth(2.0f);
-            uploadAndDraw(ev, ell.isConstruction ? cOrange : lineColor, GL_LINES);
+            uploadAndDraw(ev, ellColor, GL_LINES);
         }
     }
 
@@ -2503,8 +2588,26 @@ void Viewport3D::drawSketchOverlay()
                     sv.push_back(w2.x()); sv.push_back(w2.y()); sv.push_back(w2.z());
                 }
             }
+            QVector4D splColor = spl.isConstruction ? cOrange : cBlue;
+            if (!spl.isConstruction) {
+                // Splines: check constraint status via their control points
+                if (solverFailed) splColor = cRed;
+                else if (sketchFullyConstrained) splColor = cDark;
+                else {
+                    int cc = 0;
+                    for (const auto& [cid2, con2] : sk->constraints()) {
+                        for (const auto& eid2 : con2.entityIds) {
+                            if (eid2 == sid) { cc++; break; }
+                            for (const auto& cpid : spl.controlPointIds) {
+                                if (eid2 == cpid) { cc++; break; }
+                            }
+                        }
+                    }
+                    if (cc >= 3) splColor = cDark;
+                }
+            }
             glLineWidth(2.0f);
-            uploadAndDraw(sv, spl.isConstruction ? cOrange : lineColor, GL_LINES);
+            uploadAndDraw(sv, splColor, GL_LINES);
         }
     }
 

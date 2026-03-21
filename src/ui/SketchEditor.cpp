@@ -1227,6 +1227,52 @@ std::string SketchEditor::findLineForShortcut(double sx, double sy)
 }
 
 // =============================================================================
+// Auto-constraint: apply H/V to nearly axis-aligned lines on draw
+// =============================================================================
+
+void SketchEditor::autoConstrainLastEntity(const std::string& entityId)
+{
+    if (!m_sketch) return;
+
+    // Check if the entity is a line
+    const auto& allLines = m_sketch->lines();
+    auto lineIt = allLines.find(entityId);
+    if (lineIt != allLines.end()) {
+        const auto& ln = lineIt->second;
+        const auto& p1 = m_sketch->point(ln.startPointId);
+        const auto& p2 = m_sketch->point(ln.endPointId);
+
+        double dx = p2.x - p1.x;
+        double dy = p2.y - p1.y;
+        double angle = std::atan2(std::abs(dy), std::abs(dx)) * 180.0 / M_PI;
+
+        // Check that no H/V constraint already exists for this line
+        bool hasHV = false;
+        for (const auto& [cid, con] : m_sketch->constraints()) {
+            if (con.type == sketch::ConstraintType::Horizontal ||
+                con.type == sketch::ConstraintType::Vertical) {
+                for (const auto& eid : con.entityIds) {
+                    if (eid == entityId) { hasHV = true; break; }
+                }
+                if (hasHV) break;
+            }
+        }
+        if (hasHV) return;
+
+        // Auto horizontal if within 3 degrees
+        if (angle < 3.0) {
+            m_sketch->addConstraint(sketch::ConstraintType::Horizontal, {entityId});
+            m_sketch->solve();
+        }
+        // Auto vertical if within 3 degrees of 90
+        else if (std::abs(angle - 90.0) < 3.0) {
+            m_sketch->addConstraint(sketch::ConstraintType::Vertical, {entityId});
+            m_sketch->solve();
+        }
+    }
+}
+
+// =============================================================================
 // Finalize operations
 // =============================================================================
 
@@ -1244,8 +1290,11 @@ void SketchEditor::finalizeLine()
         return;
     }
 
-    m_sketch->addLine(x1, y1, x2, y2);
+    std::string lineId = m_sketch->addLine(x1, y1, x2, y2);
     m_sketch->solve();
+
+    // Always auto-apply H/V constraints to nearly-aligned lines
+    autoConstrainLastEntity(lineId);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();
@@ -1280,12 +1329,18 @@ void SketchEditor::finalizeRectangle()
     std::string p2 = m_sketch->addPoint(x2, y2);
     std::string p3 = m_sketch->addPoint(x1, y2);
 
-    m_sketch->addLine(p0, p1);  // bottom
-    m_sketch->addLine(p1, p2);  // right
-    m_sketch->addLine(p2, p3);  // top
-    m_sketch->addLine(p3, p0);  // left
+    std::string lb = m_sketch->addLine(p0, p1);  // bottom
+    std::string lr = m_sketch->addLine(p1, p2);  // right
+    std::string lt = m_sketch->addLine(p2, p3);  // top
+    std::string ll = m_sketch->addLine(p3, p0);  // left
 
     m_sketch->solve();
+
+    // Auto-apply H/V constraints to rectangle edges
+    autoConstrainLastEntity(lb);
+    autoConstrainLastEntity(lr);
+    autoConstrainLastEntity(lt);
+    autoConstrainLastEntity(ll);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();
@@ -1418,15 +1473,21 @@ void SketchEditor::finalizePolygon()
     }
 
     // Create N lines forming the polygon
+    std::vector<std::string> lineIds;
+    lineIds.reserve(n);
     for (int i = 0; i < n; ++i) {
         int next = (i + 1) % n;
-        m_sketch->addLine(ptIds[i], ptIds[next], construction);
+        lineIds.push_back(m_sketch->addLine(ptIds[i], ptIds[next], construction));
     }
 
     // Add coincident constraints at each vertex to close the polygon
     // (already closed by sharing point IDs)
 
     m_sketch->solve();
+
+    // Auto-apply H/V constraints to nearly-aligned polygon edges
+    for (const auto& lid : lineIds)
+        autoConstrainLastEntity(lid);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();
@@ -1467,8 +1528,8 @@ void SketchEditor::finalizeSlot()
     std::string p4 = m_sketch->addPoint(x1 - halfWidth * nx, y1 - halfWidth * ny);
 
     // Two parallel lines
-    m_sketch->addLine(p1, p2, construction);
-    m_sketch->addLine(p3, p4, construction);
+    std::string sl1 = m_sketch->addLine(p1, p2, construction);
+    std::string sl2 = m_sketch->addLine(p3, p4, construction);
 
     // Two semicircular arcs at each end
     std::string c1 = m_sketch->addPoint(x1, y1);  // center of arc 1
@@ -1477,6 +1538,10 @@ void SketchEditor::finalizeSlot()
     m_sketch->addArc(c2, p2, p3, halfWidth, construction);
 
     m_sketch->solve();
+
+    // Auto-apply H/V constraints to slot lines
+    autoConstrainLastEntity(sl1);
+    autoConstrainLastEntity(sl2);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();
@@ -1616,12 +1681,18 @@ void SketchEditor::finalizeRectangleCenter()
     std::string p2 = m_sketch->addPoint(cx + dx, cy + dy);
     std::string p3 = m_sketch->addPoint(cx - dx, cy + dy);
 
-    m_sketch->addLine(p0, p1, construction);
-    m_sketch->addLine(p1, p2, construction);
-    m_sketch->addLine(p2, p3, construction);
-    m_sketch->addLine(p3, p0, construction);
+    std::string rcl0 = m_sketch->addLine(p0, p1, construction);
+    std::string rcl1 = m_sketch->addLine(p1, p2, construction);
+    std::string rcl2 = m_sketch->addLine(p2, p3, construction);
+    std::string rcl3 = m_sketch->addLine(p3, p0, construction);
 
     m_sketch->solve();
+
+    // Auto-apply H/V constraints to center-rectangle edges
+    autoConstrainLastEntity(rcl0);
+    autoConstrainLastEntity(rcl1);
+    autoConstrainLastEntity(rcl2);
+    autoConstrainLastEntity(rcl3);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();

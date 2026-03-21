@@ -209,6 +209,10 @@ private:
     /// Composite pick: try point first, then line, circle, arc.
     SketchPickResult pickEntity(double sx, double sy, double threshold = 5.0);
 
+    /// Auto-apply Horizontal/Vertical constraints to a newly finalized line
+    /// if it is nearly axis-aligned (within 3 degrees).
+    void autoConstrainLastEntity(const std::string& entityId);
+
     // Finalize the current draw operation
     void finalizeLine();
     void finalizeRectangle();

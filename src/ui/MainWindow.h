@@ -30,6 +30,7 @@ class SketchEditor;
 class MeasureTool;
 class MarkingMenu;
 class CommandPalette;
+class FeatureDialog;
 
 namespace features { class SketchFeature; }
 
@@ -251,8 +252,22 @@ private:
     void executeInteractiveCommand(std::unique_ptr<document::InteractiveCommand> cmd);
 
     // Pending selection-driven command workflow
-    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole };
+    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane };
     PendingCommand m_pendingCommand = PendingCommand::None;
+
+    /// True when waiting for the user to pick a plane or planar face to start a sketch.
+    bool m_pendingSketchPlane = false;
+
+    /// Handle the plane/face selection to start a sketch on the chosen plane.
+    void handleSketchPlaneSelection(const SelectionHit& hit);
+
+    /// Check if a click ray hits an origin plane (XY/XZ/YZ).
+    /// Returns "XY", "XZ", "YZ", or empty string if no hit.
+    /// Also fills planeOrigin, planeXDir, planeYDir for the matched plane.
+    std::string hitTestOriginPlanes(const QPoint& screenPos,
+                                    double& ox, double& oy, double& oz,
+                                    double& xDirX, double& xDirY, double& xDirZ,
+                                    double& yDirX, double& yDirY, double& yDirZ) const;
 
     /// Helper: collect selected edge indices for a single body from the current selection.
     /// Returns the bodyId via the out parameter. Edges are only collected from the first body.
@@ -289,6 +304,9 @@ private:
     // ── Command palette ─────────────────────────────────────────────────
     CommandPalette* m_commandPalette = nullptr;
     void setupCommandPalette();
+
+    // ── Feature dialog (floating command panel for feature creation) ─────
+    FeatureDialog* m_featureDialog = nullptr;
 
     // ── Viewport manipulator (drag handles for feature editing) ──────────
     ViewportManipulator* m_manipulator = nullptr;

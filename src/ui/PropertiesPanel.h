@@ -13,6 +13,8 @@ class QVBoxLayout;
 class QScrollArea;
 
 namespace document { class Document; }
+namespace sketch { class Sketch; }
+class SketchEditor;
 namespace features {
     class Feature;
     class ExtrudeFeature;
@@ -68,6 +70,13 @@ public:
     /// When the user selects a different material, materialChanged is emitted.
     void addMaterialDropdown(const QString& bodyId, const QString& currentMaterialName);
 
+    /// Show the Sketch Palettes panel (display toggles, stats, Finish button).
+    /// Called when entering sketch editing mode.
+    void showSketchPalettes(sketch::Sketch* sketch, SketchEditor* editor);
+
+    /// Refresh just the stats section of the sketch palette (entity counts, DOF).
+    void refreshSketchStats();
+
     /// Remove all property widgets and reset header.
     void clear();
 
@@ -94,6 +103,9 @@ signals:
 
     /// Emitted when the user picks a new body color via the color picker.
     void bodyColorChanged(const QString& bodyId, const QColor& color);
+
+    /// Emitted when the user clicks Finish Sketch in the palette.
+    void finishSketchClicked();
 
 private:
     void buildExtrudeForm(const QString& featureId, const features::ExtrudeFeature* feat);
@@ -147,4 +159,13 @@ private:
     QString        m_pendingFeatureId;
     QString        m_pendingPropertyName;
     QVariant       m_pendingValue;
+
+    // Sketch palette state
+    sketch::Sketch* m_paletteSketch = nullptr;
+    SketchEditor*   m_paletteEditor = nullptr;
+    QLabel*         m_statsPoints      = nullptr;
+    QLabel*         m_statsLines       = nullptr;
+    QLabel*         m_statsCircles     = nullptr;
+    QLabel*         m_statsConstraints = nullptr;
+    QLabel*         m_statsDOF         = nullptr;
 };
