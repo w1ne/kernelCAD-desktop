@@ -9,5 +9,7 @@ public:
     Application(int& argc, char* argv[]);
 
 private:
+    void setupDarkTheme();
+
     MainWindow* m_mainWindow = nullptr;
 };

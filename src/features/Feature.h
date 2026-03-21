@@ -10,12 +10,15 @@ enum class FeatureType {
     Extrude, Revolve, Fillet, Chamfer, Shell,
     Loft, Sweep, Hole, Thread,
     RectangularPattern, CircularPattern, Mirror,
-    Draft, Scale, SplitBody, Combine,
+    Draft, Scale, SplitBody, Combine, OffsetFaces, Move, Thicken,
     Sketch, ConstructionPlane, ConstructionAxis, ConstructionPoint,
+    PathPattern, Coil,
+    DeleteFace, ReplaceFace, ReverseNormal,
+    Joint,
     BaseFeature
 };
 
-enum class HealthState { Healthy, Warning, Error };
+enum class HealthState { Healthy, Warning, Error, Suppressed, RolledBack, Unknown };
 
 class Feature
 {

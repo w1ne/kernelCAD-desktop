@@ -4,19 +4,70 @@ add_executable(kernelCAD
   # kernel
   kernel/OCCTKernel.cpp
   kernel/BRepModel.cpp
+  kernel/EntityAttribute.cpp
+  kernel/BRepQuery.cpp
+  kernel/StableReference.cpp
+  kernel/Appearance.cpp
   # document
   document/Document.cpp
   document/Timeline.cpp
+  document/DependencyGraph.cpp
   document/ParameterStore.cpp
+  document/Origin.cpp
+  document/CommandHistory.cpp
+  document/Commands.cpp
+  document/JsonReader.cpp
+  document/Serializer.cpp
+  document/Component.cpp
+  document/JointSolver.cpp
+  document/PreviewEngine.cpp
+  document/AutoSave.cpp
+  document/InteractiveCommands.cpp
   # features
   features/Feature.cpp
+  features/ConstructionPlane.cpp
+  features/ConstructionAxis.cpp
+  features/ConstructionPoint.cpp
   features/ExtrudeFeature.cpp
+  features/RevolveFeature.cpp
+  features/FilletFeature.cpp
+  features/ChamferFeature.cpp
+  features/SweepFeature.cpp
+  features/LoftFeature.cpp
+  features/ShellFeature.cpp
+  features/MirrorFeature.cpp
+  features/RectangularPatternFeature.cpp
+  features/CircularPatternFeature.cpp
+  features/HoleFeature.cpp
+  features/CombineFeature.cpp
+  features/SplitBodyFeature.cpp
+  features/OffsetFacesFeature.cpp
+  features/MoveFeature.cpp
+  features/DraftFeature.cpp
+  features/ThickenFeature.cpp
+  features/ThreadFeature.cpp
+  features/ScaleFeature.cpp
+  features/PathPatternFeature.cpp
+  features/CoilFeature.cpp
+  features/DeleteFaceFeature.cpp
+  features/ReplaceFaceFeature.cpp
+  features/ReverseNormalFeature.cpp
+  features/Joint.cpp
+  features/SketchFeature.cpp
+  # sketch
+  sketch/Sketch.cpp
+  sketch/SketchSolver.cpp
+  sketch/SketchToShape.cpp
   # ui
   ui/MainWindow.cpp
   ui/Viewport3D.cpp
   ui/FeatureTree.cpp
   ui/TimelinePanel.cpp
   ui/PropertiesPanel.cpp
+  ui/SelectionManager.cpp
+  ui/SketchEditor.cpp
+  ui/MeasureTool.cpp
+  ui/CommandDialog.cpp
 )
 
 target_include_directories(kernelCAD PRIVATE
@@ -33,7 +84,8 @@ target_link_libraries(kernelCAD PRIVATE
   # OCCT modules
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo
   TKTopAlgo TKPrim TKBool TKFillet TKOffset
-  TKMesh TKSTEP TKXSBase TKSTL
+  TKMesh TKSTEP TKIGES TKXSBase TKSTL
+  TKShHealing
 )
 
 # Platform-specific

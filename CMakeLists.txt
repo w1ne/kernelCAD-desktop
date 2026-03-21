@@ -19,7 +19,9 @@ option(KERNELCAD_BUILD_TESTS "Build tests" ON)
 
 # Qt6
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets Gui)
-qt_standard_project_setup()
+if(COMMAND qt_standard_project_setup)
+  qt_standard_project_setup()
+endif()
 
 # OpenCASCADE
 # Set OCCT_DIR or CMAKE_PREFIX_PATH to your OCCT installation

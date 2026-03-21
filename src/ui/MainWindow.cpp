@@ -1,28 +1,149 @@
 #include "MainWindow.h"
 #include "Viewport3D.h"
+#include "SketchEditor.h"
 #include "FeatureTree.h"
 #include "TimelinePanel.h"
 #include "PropertiesPanel.h"
+#include "SelectionManager.h"
+#include "MeasureTool.h"
+#include "CommandDialog.h"
 #include "../document/Document.h"
+#include "../document/InteractiveCommands.h"
+#include "../document/AutoSave.h"
+#include "../document/Timeline.h"
+#include "../document/Commands.h"
+#include "../document/Component.h"
+#include "../document/PreviewEngine.h"
+#include "../features/ExtrudeFeature.h"
+#include "../features/RevolveFeature.h"
+#include "../features/SketchFeature.h"
+#include "../features/ShellFeature.h"
+#include "../features/FilletFeature.h"
+#include "../features/ChamferFeature.h"
+#include "../features/DraftFeature.h"
+#include "../features/MirrorFeature.h"
+#include "../features/CircularPatternFeature.h"
+#include "../features/RectangularPatternFeature.h"
+#include "../features/HoleFeature.h"
+#include "../features/SweepFeature.h"
+#include "../features/LoftFeature.h"
+#include "../features/Joint.h"
+#include "../kernel/BRepModel.h"
+#include "../kernel/BRepQuery.h"
+#include "../kernel/StableReference.h"
+#include <TopoDS_Shape.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <gp_Pnt.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopLoc_Location.hxx>
+#include <sstream>
 
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
+#include <QActionGroup>
 #include <QFileDialog>
 #include <QCloseEvent>
+#include <QKeyEvent>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QStatusBar>
+#include <QToolBar>
+#include <QSlider>
+#include <QApplication>
+#include <QPixmap>
+#include <QIcon>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_document(std::make_unique<document::Document>())
+    , m_selectionMgr(std::make_unique<SelectionManager>())
 {
     setWindowTitle("kernelCAD");
     resize(1440, 900);
     setupUI();
     setupMenuBar();
+    setupToolBar();
     setupDocks();
+    setupSketchToolBar();
+    m_featureTree->setDocument(m_document.get());
+    m_properties->setDocument(m_document.get());
+
+    // Wire up selection manager to viewport and callbacks
+    m_viewport->setSelectionManager(m_selectionMgr.get());
+
+    // Viewport right-click context menu
+    m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_viewport, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        showViewportContextMenu(m_viewport->mapToGlobal(pos));
+    });
+    m_selectionMgr->setOnSelectionChanged([this](const std::vector<SelectionHit>&) {
+        onSelectionChanged();
+    });
+
+    // Create sketch editor
+    m_sketchEditor = new SketchEditor(this);
+    connect(m_sketchEditor, &SketchEditor::editingFinished,
+            this, &MainWindow::onSketchEditingFinished);
+    connect(m_sketchEditor, &SketchEditor::sketchChanged, this, [this]() {
+        m_viewport->update();
+    });
+    connect(m_sketchEditor, &SketchEditor::toolChanged, this, [this](SketchTool tool) {
+        QString toolName;
+        switch (tool) {
+        case SketchTool::None:                toolName = "Select"; break;
+        case SketchTool::DrawLine:            toolName = "Line"; break;
+        case SketchTool::DrawRectangle:       toolName = "Rectangle"; break;
+        case SketchTool::DrawCircle:          toolName = "Circle"; break;
+        case SketchTool::DrawArc:             toolName = "Arc"; break;
+        case SketchTool::DrawSpline:          toolName = "Spline"; break;
+        case SketchTool::DrawEllipse:         toolName = "Ellipse"; break;
+        case SketchTool::DrawPolygon:         toolName = "Polygon"; break;
+        case SketchTool::DrawSlot:            toolName = "Slot"; break;
+        case SketchTool::DrawCircle3Point:    toolName = "3-Point Circle"; break;
+        case SketchTool::DrawArc3Point:       toolName = "3-Point Arc"; break;
+        case SketchTool::DrawRectangleCenter: toolName = "Center Rect"; break;
+        case SketchTool::Trim:                toolName = "Trim"; break;
+        case SketchTool::Extend:              toolName = "Extend"; break;
+        case SketchTool::Offset:              toolName = "Offset"; break;
+        case SketchTool::ProjectEdge:         toolName = "Project Edge"; break;
+        case SketchTool::SketchFillet:        toolName = "Sketch Fillet"; break;
+        case SketchTool::SketchChamfer:       toolName = "Sketch Chamfer"; break;
+        default:                              toolName = "Tool"; break;
+        }
+        statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
+    });
+
+    // Create the measure tool
+    m_measureTool = new MeasureTool(this);
+    m_measureTool->setBRepModel(&m_document->brepModel());
+    connect(m_measureTool, &MeasureTool::measurementReady, this,
+            [this](const MeasureTool::MeasureResult& result) {
+        statusBar()->showMessage(result.description);
+    });
+
+    // Create the preview engine and wire it to the viewport
+    m_previewEngine = std::make_unique<document::PreviewEngine>(*m_document);
+    m_previewEngine->setMeshCallback([this](const std::vector<float>& verts,
+                                             const std::vector<float>& normals,
+                                             const std::vector<uint32_t>& indices) {
+        m_viewport->setPreviewMesh(verts, normals, indices);
+    });
+    m_previewEngine->setClearCallback([this]() {
+        m_viewport->clearPreviewMesh();
+    });
+
+    // Auto-save (5 minute interval)
+    m_autoSave = new document::AutoSave(m_document.get(), this);
+
     connectSignals();
 }
 
@@ -36,6 +157,120 @@ void MainWindow::setupUI()
     statusBar()->showMessage("Ready");
 }
 
+void MainWindow::setupToolBar()
+{
+    m_mainToolBar = addToolBar(tr("Main"));
+    m_mainToolBar->setMovable(false);
+    m_mainToolBar->setIconSize(QSize(24, 24));
+
+    // Helper: create a toolbar action with a status-bar hint on hover.
+    auto addTB = [this](const QString& text, const QString& statusTip,
+                        auto slot) -> QAction* {
+        auto* act = m_mainToolBar->addAction(text, this, slot);
+        act->setStatusTip(statusTip);
+        act->setToolTip(statusTip);
+        return act;
+    };
+
+    // ── File ─────────────────────────────────────────────────────────────
+    addTB(tr("New"),  tr("New (Ctrl+N) \u2014 Create a new empty document"),
+          &MainWindow::onNewDocument);
+    addTB(tr("Open"), tr("Open (Ctrl+O) \u2014 Open an existing document"),
+          &MainWindow::onOpenDocument);
+    addTB(tr("Save"), tr("Save (Ctrl+S) \u2014 Save the current document"),
+          &MainWindow::onSaveDocument);
+    m_mainToolBar->addSeparator();
+
+    // ── Primitives ───────────────────────────────────────────────────────
+    addTB(tr("Box"),      tr("Box \u2014 Create a parametric box primitive"),
+          &MainWindow::onCreateBox);
+    addTB(tr("Cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
+          &MainWindow::onCreateCylinder);
+    addTB(tr("Sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
+          &MainWindow::onCreateSphere);
+    m_mainToolBar->addSeparator();
+
+    // ── Sketch ───────────────────────────────────────────────────────────
+    auto* createSketchAction = addTB(tr("Create Sketch"),
+          tr("Create Sketch (S) \u2014 Start a new 2D sketch on a plane"),
+          &MainWindow::onCreateSketch);
+    createSketchAction->setShortcut(QKeySequence(tr("S")));
+    addTB(tr("Edit Sketch"),   tr("Edit Sketch \u2014 Re-enter an existing sketch for editing"),
+          &MainWindow::onEditSketch);
+    m_mainToolBar->addSeparator();
+
+    // ── Features ─────────────────────────────────────────────────────────
+    m_extrudeAction = addTB(tr("Extrude"), tr("Extrude (E) \u2014 Extrude a sketch profile or face"),
+          &MainWindow::onExtrudeSketch);
+    m_extrudeAction->setShortcut(QKeySequence(tr("E")));
+
+    addTB(tr("Revolve"), tr("Revolve \u2014 Revolve a sketch profile around an axis"),
+          &MainWindow::onRevolveSketch);
+    addTB(tr("Sweep"),   tr("Sweep \u2014 Sweep a profile along a path"),
+          &MainWindow::onSweepSketch);
+    addTB(tr("Loft"),    tr("Loft \u2014 Create a solid between multiple profiles"),
+          &MainWindow::onLoftTest);
+    m_mainToolBar->addSeparator();
+
+    // ── Modify ───────────────────────────────────────────────────────────
+    m_filletAction = addTB(tr("Fillet"), tr("Fillet (F) \u2014 Round selected edges"),
+          &MainWindow::onFillet);
+    m_filletAction->setShortcut(QKeySequence(tr("F")));
+
+    addTB(tr("Chamfer"), tr("Chamfer (C) \u2014 Bevel selected edges"),
+          &MainWindow::onChamfer);
+    addTB(tr("Shell"),   tr("Shell \u2014 Hollow a body by removing faces"),
+          &MainWindow::onShell);
+    addTB(tr("Draft"),   tr("Draft (D) \u2014 Apply a draft angle to selected faces"),
+          &MainWindow::onDraft);
+
+    m_holeAction = addTB(tr("Hole"), tr("Hole (H) \u2014 Create a hole feature on a face"),
+          &MainWindow::onAddHole);
+    m_holeAction->setShortcut(QKeySequence(tr("H")));
+    m_mainToolBar->addSeparator();
+
+    // ── Pattern ──────────────────────────────────────────────────────────
+    addTB(tr("Mirror"),       tr("Mirror \u2014 Mirror the last body across a plane"),
+          &MainWindow::onMirrorLastBody);
+    addTB(tr("Rect Pattern"), tr("Rect Pattern \u2014 Repeat bodies in a rectangular grid"),
+          &MainWindow::onRectangularPattern);
+    addTB(tr("Circ Pattern"), tr("Circ Pattern \u2014 Repeat bodies in a circular array"),
+          &MainWindow::onCircularPattern);
+    m_mainToolBar->addSeparator();
+
+    // ── Assembly ─────────────────────────────────────────────────────────
+    m_jointAction = addTB(tr("Joint"), tr("Joint (J) \u2014 Add a revolute joint between components"),
+          &MainWindow::onAddRevoluteJoint);
+    m_jointAction->setShortcut(QKeySequence(tr("J")));
+
+    addTB(tr("New Component"), tr("New Component \u2014 Create a new component in the assembly"),
+          &MainWindow::onNewComponent);
+    m_mainToolBar->addSeparator();
+
+    // ── Tools ────────────────────────────────────────────────────────────
+    m_measureAction = addTB(tr("Measure"), tr("Measure (M) \u2014 Measure distances between entities"),
+          &MainWindow::onMeasure);
+    m_measureAction->setShortcut(QKeySequence(tr("M")));
+    // I as an alias for Measure
+    auto* measureAliasI = new QAction(this);
+    measureAliasI->setShortcut(QKeySequence(tr("I")));
+    connect(measureAliasI, &QAction::triggered, this, &MainWindow::onMeasure);
+    addAction(measureAliasI);
+
+    // Press/Pull alias (Q = same as Extrude for now)
+    auto* pressPullAction = new QAction(this);
+    pressPullAction->setShortcut(QKeySequence(tr("Q")));
+    connect(pressPullAction, &QAction::triggered, this, &MainWindow::onExtrudeSketch);
+    addAction(pressPullAction);
+
+    // Delete selected feature
+    m_deleteAction = new QAction(tr("Delete"), this);
+    m_deleteAction->setShortcut(QKeySequence::Delete);
+    m_deleteAction->setStatusTip(tr("Delete \u2014 Delete the selected feature"));
+    connect(m_deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSelectedFeature);
+    addAction(m_deleteAction);
+}
+
 void MainWindow::setupMenuBar()
 {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
@@ -43,36 +278,326 @@ void MainWindow::setupMenuBar()
     fileMenu->addAction(tr("&Open"), this, &MainWindow::onOpenDocument, QKeySequence::Open);
     fileMenu->addAction(tr("&Save"), this, &MainWindow::onSaveDocument, QKeySequence::Save);
     fileMenu->addSeparator();
+    fileMenu->addAction(tr("&Import STEP/IGES..."), this, &MainWindow::onImportFile,
+                        QKeySequence(tr("Ctrl+I")));
+    fileMenu->addSeparator();
     fileMenu->addAction(tr("Export STEP..."), this, &MainWindow::onExportSTEP);
+    fileMenu->addAction(tr("Export STL..."),  this, &MainWindow::onExportSTL);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Quit"), qApp, &QApplication::quit, QKeySequence::Quit);
 
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
-    editMenu->addAction(tr("Undo"), [](){}, QKeySequence::Undo);
-    editMenu->addAction(tr("Redo"), [](){}, QKeySequence::Redo);
+    m_undoAction = editMenu->addAction(tr("Undo"), this, &MainWindow::onUndo, QKeySequence::Undo);
+    m_redoAction = editMenu->addAction(tr("Redo"), this, &MainWindow::onRedo, QKeySequence::Redo);
+    m_undoAction->setEnabled(false);
+    m_redoAction->setEnabled(false);
 
-    menuBar()->addMenu(tr("&View"));
-    menuBar()->addMenu(tr("&Sketch"));
-    menuBar()->addMenu(tr("&Model"));
-    menuBar()->addMenu(tr("&Assembly"));
+    // -- View menu with selection filter modes ----------------------------
+    auto* viewMenu = menuBar()->addMenu(tr("&View"));
+    m_filterGroup = new QActionGroup(this);
+    m_filterGroup->setExclusive(true);
+
+    m_selectAllAction = viewMenu->addAction(tr("Select All"));
+    m_selectAllAction->setCheckable(true);
+    m_selectAllAction->setChecked(true);
+    m_selectAllAction->setShortcut(QKeySequence(tr("1")));
+    m_filterGroup->addAction(m_selectAllAction);
+
+    m_selectFacesAction = viewMenu->addAction(tr("Select Faces"));
+    m_selectFacesAction->setCheckable(true);
+    m_selectFacesAction->setShortcut(QKeySequence(tr("2")));
+    m_filterGroup->addAction(m_selectFacesAction);
+
+    m_selectEdgesAction = viewMenu->addAction(tr("Select Edges"));
+    m_selectEdgesAction->setCheckable(true);
+    m_selectEdgesAction->setShortcut(QKeySequence(tr("3")));
+    m_filterGroup->addAction(m_selectEdgesAction);
+
+    m_selectBodiesAction = viewMenu->addAction(tr("Select Bodies"));
+    m_selectBodiesAction->setCheckable(true);
+    m_selectBodiesAction->setShortcut(QKeySequence(tr("4")));
+    m_filterGroup->addAction(m_selectBodiesAction);
+
+    connect(m_selectAllAction, &QAction::triggered, this, [this]() {
+        m_selectionMgr->setFilter(SelectionFilter::All);
+        statusBar()->showMessage(tr("Selection filter: All"));
+    });
+    connect(m_selectFacesAction, &QAction::triggered, this, [this]() {
+        m_selectionMgr->setFilter(SelectionFilter::Faces);
+        statusBar()->showMessage(tr("Selection filter: Faces"));
+    });
+    connect(m_selectEdgesAction, &QAction::triggered, this, [this]() {
+        m_selectionMgr->setFilter(SelectionFilter::Edges);
+        statusBar()->showMessage(tr("Selection filter: Edges"));
+    });
+    connect(m_selectBodiesAction, &QAction::triggered, this, [this]() {
+        m_selectionMgr->setFilter(SelectionFilter::Bodies);
+        statusBar()->showMessage(tr("Selection filter: Bodies"));
+    });
+
+    // -- View mode (render style) ----------------------------------------
+    viewMenu->addSeparator();
+    m_viewModeGroup = new QActionGroup(this);
+    m_viewModeGroup->setExclusive(true);
+
+    m_viewSolidWithEdgesAction = viewMenu->addAction(tr("Solid with Edges"));
+    m_viewSolidWithEdgesAction->setCheckable(true);
+    m_viewSolidWithEdgesAction->setChecked(true);
+    m_viewSolidWithEdgesAction->setShortcut(QKeySequence(tr("Ctrl+1")));
+    m_viewModeGroup->addAction(m_viewSolidWithEdgesAction);
+
+    m_viewSolidAction = viewMenu->addAction(tr("Solid Only"));
+    m_viewSolidAction->setCheckable(true);
+    m_viewSolidAction->setShortcut(QKeySequence(tr("Ctrl+2")));
+    m_viewModeGroup->addAction(m_viewSolidAction);
+
+    m_viewWireframeAction = viewMenu->addAction(tr("Wireframe"));
+    m_viewWireframeAction->setCheckable(true);
+    m_viewWireframeAction->setShortcut(QKeySequence(tr("W")));
+    m_viewModeGroup->addAction(m_viewWireframeAction);
+
+    connect(m_viewSolidWithEdgesAction, &QAction::triggered, this, [this]() {
+        m_viewport->setViewMode(ViewMode::SolidWithEdges);
+        statusBar()->showMessage(tr("View mode: Solid with Edges"));
+    });
+    connect(m_viewSolidAction, &QAction::triggered, this, [this]() {
+        m_viewport->setViewMode(ViewMode::Solid);
+        statusBar()->showMessage(tr("View mode: Solid Only"));
+    });
+    connect(m_viewWireframeAction, &QAction::triggered, this, [this]() {
+        m_viewport->setViewMode(ViewMode::Wireframe);
+        statusBar()->showMessage(tr("View mode: Wireframe"));
+    });
+
+    // -- Show Grid toggle ------------------------------------------------
+    viewMenu->addSeparator();
+    auto* showGridAction = viewMenu->addAction(tr("Show Grid"));
+    showGridAction->setCheckable(true);
+    showGridAction->setChecked(true);
+    showGridAction->setShortcut(QKeySequence(tr("G")));
+    connect(showGridAction, &QAction::toggled, this, [this](bool checked) {
+        m_viewport->setShowGrid(checked);
+        statusBar()->showMessage(checked ? tr("Grid visible") : tr("Grid hidden"));
+    });
+
+    // -- Standard camera views ---------------------------------------------
+    viewMenu->addSeparator();
+    m_viewFrontAction = viewMenu->addAction(tr("Front View"));
+    m_viewFrontAction->setShortcut(QKeySequence(Qt::Key_1 | Qt::KeypadModifier));
+    connect(m_viewFrontAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Front);
+        statusBar()->showMessage(tr("View: Front"));
+    });
+
+    m_viewBackAction = viewMenu->addAction(tr("Back View"));
+    m_viewBackAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1 | Qt::KeypadModifier));
+    connect(m_viewBackAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Back);
+        statusBar()->showMessage(tr("View: Back"));
+    });
+
+    m_viewRightAction = viewMenu->addAction(tr("Right View"));
+    m_viewRightAction->setShortcut(QKeySequence(Qt::Key_3 | Qt::KeypadModifier));
+    connect(m_viewRightAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Right);
+        statusBar()->showMessage(tr("View: Right"));
+    });
+
+    m_viewLeftAction = viewMenu->addAction(tr("Left View"));
+    m_viewLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3 | Qt::KeypadModifier));
+    connect(m_viewLeftAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Left);
+        statusBar()->showMessage(tr("View: Left"));
+    });
+
+    m_viewTopAction = viewMenu->addAction(tr("Top View"));
+    m_viewTopAction->setShortcut(QKeySequence(Qt::Key_7 | Qt::KeypadModifier));
+    connect(m_viewTopAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Top);
+        statusBar()->showMessage(tr("View: Top"));
+    });
+
+    m_viewBottomAction = viewMenu->addAction(tr("Bottom View"));
+    m_viewBottomAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7 | Qt::KeypadModifier));
+    connect(m_viewBottomAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Bottom);
+        statusBar()->showMessage(tr("View: Bottom"));
+    });
+
+    m_viewIsometricAction = viewMenu->addAction(tr("Isometric View"));
+    m_viewIsometricAction->setShortcut(QKeySequence(Qt::Key_0 | Qt::KeypadModifier));
+    connect(m_viewIsometricAction, &QAction::triggered, this, [this]() {
+        m_viewport->setStandardView(StandardView::Isometric);
+        statusBar()->showMessage(tr("View: Isometric"));
+    });
+
+    viewMenu->addSeparator();
+    m_viewFitAllAction = viewMenu->addAction(tr("Fit All"));
+    m_viewFitAllAction->setShortcut(QKeySequence(Qt::Key_Home));
+    connect(m_viewFitAllAction, &QAction::triggered, this, [this]() {
+        m_viewport->fitAll();
+        statusBar()->showMessage(tr("Fit All"));
+    });
+
+    // -- Section view (clipping plane) ------------------------------------
+    viewMenu->addSeparator();
+    m_sectionXAction = viewMenu->addAction(tr("Section View X"), this, &MainWindow::onSectionX);
+    m_sectionXAction->setShortcut(QKeySequence(tr("Shift+X")));
+    m_sectionYAction = viewMenu->addAction(tr("Section View Y"), this, &MainWindow::onSectionY);
+    m_sectionYAction->setShortcut(QKeySequence(tr("Shift+Y")));
+    m_sectionZAction = viewMenu->addAction(tr("Section View Z"), this, &MainWindow::onSectionZ);
+    m_sectionZAction->setShortcut(QKeySequence(tr("Shift+Z")));
+    m_clearSectionAction = viewMenu->addAction(tr("Clear Section"), this, &MainWindow::onClearSection);
+    m_clearSectionAction->setShortcut(QKeySequence(tr("Shift+C")));
+
+    // Section plane slider in the status bar
+    m_sectionSlider = new QSlider(Qt::Horizontal, this);
+    m_sectionSlider->setRange(-1000, 1000);
+    m_sectionSlider->setValue(0);
+    m_sectionSlider->setFixedWidth(200);
+    m_sectionSlider->setToolTip(tr("Section plane position"));
+    m_sectionSlider->setVisible(false);
+    statusBar()->addPermanentWidget(m_sectionSlider);
+    connect(m_sectionSlider, &QSlider::valueChanged,
+            this, &MainWindow::onSectionSliderChanged);
+
+    auto* sketchMenu = menuBar()->addMenu(tr("&Sketch"));
+    sketchMenu->addAction(tr("Create Sketch"), this, &MainWindow::onCreateSketch);
+    sketchMenu->addAction(tr("Edit Sketch"), this, &MainWindow::onEditSketch);
+
+    auto* modelMenu = menuBar()->addMenu(tr("&Model"));
+    modelMenu->addAction(tr("Create Box"), this, &MainWindow::onCreateBox);
+    modelMenu->addAction(tr("Create Cylinder"), this, &MainWindow::onCreateCylinder);
+    modelMenu->addAction(tr("Create Sphere"), this, &MainWindow::onCreateSphere);
+    modelMenu->addSeparator();
+    modelMenu->addAction(tr("Extrude Sketch"), this, &MainWindow::onExtrudeSketch);
+    modelMenu->addAction(tr("Revolve Sketch"), this, &MainWindow::onRevolveSketch);
+    modelMenu->addSeparator();
+    modelMenu->addAction(tr("Add Hole"), this, &MainWindow::onAddHole);
+    modelMenu->addAction(tr("Extrude (Dialog)..."), this, [this]() {
+        executeInteractiveCommand(std::make_unique<document::ExtrudeInteractiveCommand>());
+    });
+    modelMenu->addAction(tr("Hole (Dialog)..."), this, [this]() {
+        executeInteractiveCommand(std::make_unique<document::HoleInteractiveCommand>());
+    });
+    modelMenu->addAction(tr("Shell..."), this, &MainWindow::onShell);
+    modelMenu->addAction(tr("Fillet..."), this, &MainWindow::onFillet);
+    modelMenu->addAction(tr("Chamfer..."), this, &MainWindow::onChamfer);
+    modelMenu->addAction(tr("Draft..."), this, &MainWindow::onDraft);
+    modelMenu->addSeparator();
+    modelMenu->addAction(tr("Mirror Last Body"), this, &MainWindow::onMirrorLastBody);
+    modelMenu->addAction(tr("Circular Pattern"), this, &MainWindow::onCircularPattern);
+    modelMenu->addAction(tr("Rectangular Pattern"), this, &MainWindow::onRectangularPattern);
+    modelMenu->addSeparator();
+    modelMenu->addAction(tr("Sweep (test helix)"), this, &MainWindow::onSweepTest);
+    modelMenu->addAction(tr("Loft (test sections)"), this, &MainWindow::onLoftTest);
+    modelMenu->addAction(tr("Sweep Sketch along Path"), this, &MainWindow::onSweepSketch);
+
+    auto* assemblyMenu = menuBar()->addMenu(tr("&Assembly"));
+    assemblyMenu->addAction(tr("New Component"), this, &MainWindow::onNewComponent);
+    assemblyMenu->addAction(tr("Insert Component..."), this, &MainWindow::onInsertComponent);
+    assemblyMenu->addSeparator();
+    assemblyMenu->addAction(tr("Add Rigid Joint"), this, &MainWindow::onAddRigidJoint);
+    assemblyMenu->addAction(tr("Add Revolute Joint"), this, &MainWindow::onAddRevoluteJoint);
+
+    // ── Tools menu ──────────────────────────────────────────────────────
+    auto* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    toolsMenu->addAction(tr("&Measure"), this, &MainWindow::onMeasure,
+                          QKeySequence(tr("M")));
+
+    // --- Appearance menu (material assignment) ---
+    auto* appearanceMenu = menuBar()->addMenu(tr("A&ppearance"));
+
+    QMenu* setBodyMatMenu = appearanceMenu->addMenu(tr("Set Body Material"));
+    const auto& allMats = kernel::MaterialLibrary::all();
+    for (const auto& mat : allMats) {
+        QString matName = QString::fromStdString(mat.name);
+        QAction* matAction = setBodyMatMenu->addAction(matName);
+
+        // Color swatch icon
+        QPixmap swatch(16, 16);
+        swatch.fill(QColor::fromRgbF(mat.baseR, mat.baseG, mat.baseB));
+        matAction->setIcon(QIcon(swatch));
+
+        connect(matAction, &QAction::triggered, this, [this, matName]() {
+            if (!m_selectionMgr->hasSelection()) return;
+            const auto& hit = m_selectionMgr->selection().front();
+            if (hit.bodyId.empty()) return;
+            const auto* m = kernel::MaterialLibrary::byName(matName.toStdString());
+            if (m) {
+                m_document->appearances().setBodyMaterial(hit.bodyId, *m);
+                m_document->setModified(true);
+                updateViewport();
+                updateWindowTitle();
+                onSelectionChanged();
+            }
+        });
+    }
+
+    QMenu* setFaceMatMenu = appearanceMenu->addMenu(tr("Set Face Material"));
+    for (const auto& mat : allMats) {
+        QString matName = QString::fromStdString(mat.name);
+        QAction* matAction = setFaceMatMenu->addAction(matName);
+
+        QPixmap swatch(16, 16);
+        swatch.fill(QColor::fromRgbF(mat.baseR, mat.baseG, mat.baseB));
+        matAction->setIcon(QIcon(swatch));
+
+        connect(matAction, &QAction::triggered, this, [this, matName]() {
+            if (!m_selectionMgr->hasSelection()) return;
+            const auto& hit = m_selectionMgr->selection().front();
+            if (hit.bodyId.empty() || hit.faceIndex < 0) return;
+            const auto* m = kernel::MaterialLibrary::byName(matName.toStdString());
+            if (m) {
+                m_document->appearances().setFaceMaterial(
+                    hit.bodyId, hit.faceIndex, *m);
+                m_document->setModified(true);
+                updateViewport();
+                updateWindowTitle();
+                onSelectionChanged();
+            }
+        });
+    }
+
+    appearanceMenu->addSeparator();
+    appearanceMenu->addAction(tr("Clear Face Material"), this, [this]() {
+        if (!m_selectionMgr->hasSelection()) return;
+        const auto& hit = m_selectionMgr->selection().front();
+        if (hit.bodyId.empty() || hit.faceIndex < 0) return;
+        m_document->appearances().clearFaceOverride(hit.bodyId, hit.faceIndex);
+        m_document->setModified(true);
+        updateViewport();
+        updateWindowTitle();
+        onSelectionChanged();
+    });
+    appearanceMenu->addAction(tr("Clear Body Material"), this, [this]() {
+        if (!m_selectionMgr->hasSelection()) return;
+        const auto& hit = m_selectionMgr->selection().front();
+        if (hit.bodyId.empty()) return;
+        m_document->appearances().clearBody(hit.bodyId);
+        m_document->setModified(true);
+        updateViewport();
+        updateWindowTitle();
+        onSelectionChanged();
+    });
 }
 
 void MainWindow::setupDocks()
 {
-    // Feature tree — left
+    // Feature tree -- left
     m_featureTree = new FeatureTree(this);
     auto* leftDock = new QDockWidget(tr("Browser"), this);
     leftDock->setWidget(m_featureTree);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
-    // Properties — right
+    // Properties -- right
     m_properties = new PropertiesPanel(this);
     auto* rightDock = new QDockWidget(tr("Properties"), this);
     rightDock->setWidget(m_properties);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
-    // Timeline — bottom
+    // Timeline -- bottom
     m_timeline = new TimelinePanel(this);
     auto* bottomDock = new QDockWidget(tr("Timeline"), this);
     bottomDock->setWidget(m_timeline);
@@ -82,37 +607,2042 @@ void MainWindow::setupDocks()
 
 void MainWindow::connectSignals()
 {
-    // TODO: connect viewport selection → properties panel
-    // TODO: connect timeline marker change → recompute
+    // Timeline marker moved -> roll-back / roll-forward and refresh
+    connect(m_timeline, &TimelinePanel::markerMoved, this, [this](int index) {
+        m_document->timeline().setMarker(static_cast<size_t>(index));
+        m_document->recompute();
+        refreshAllPanels();
+    });
+
+    // Timeline entry double-clicked -> roll back and edit feature
+    connect(m_timeline, &TimelinePanel::entryDoubleClicked,
+            this, &MainWindow::onEditFeature);
+
+    // Timeline drag-reorder -> validate against dependency graph
+    connect(m_timeline, &TimelinePanel::reorderRequested, this, [this](int from, int to) {
+        auto& tl = m_document->timeline();
+        if (!tl.canReorder(static_cast<size_t>(from), static_cast<size_t>(to),
+                           m_document->depGraph())) {
+            statusBar()->showMessage(tr("Cannot reorder: dependency violation"), 3000);
+            return;
+        }
+        tl.reorder(static_cast<size_t>(from), static_cast<size_t>(to), m_document->depGraph());
+        m_document->recompute();
+        refreshAllPanels();
+    });
+
+    // Feature tree item selected -> show in properties
+    connect(m_featureTree, &FeatureTree::featureSelected, this, [this](const QString& featureId) {
+        m_properties->showFeature(featureId);
+    });
+
+    // Feature tree "Edit" context menu -> roll back and edit feature
+    connect(m_featureTree, &FeatureTree::featureEditRequested,
+            this, &MainWindow::onEditFeature);
+
+    // Feature tree delete request -> execute DeleteFeatureCommand
+    connect(m_featureTree, &FeatureTree::featureDeleteRequested, this, [this](const QString& featureId) {
+        m_document->executeCommand(
+            std::make_unique<document::DeleteFeatureCommand>(featureId.toStdString()));
+        m_properties->clear();
+        refreshAllPanels();
+    });
+
+    // Feature tree suppress toggle -> execute SuppressFeatureCommand
+    connect(m_featureTree, &FeatureTree::featureSuppressToggled, this, [this](const QString& featureId) {
+        m_document->executeCommand(
+            std::make_unique<document::SuppressFeatureCommand>(featureId.toStdString()));
+        refreshAllPanels();
+    });
+
+    // Feature tree: create component under a parent component
+    connect(m_featureTree, &FeatureTree::createComponentRequested, this, [this](const QString& parentCompId) {
+        auto& reg = m_document->components();
+        auto* parent = reg.findComponent(parentCompId.toStdString());
+        if (!parent) return;
+
+        std::string newId = reg.createComponent("Component");
+        parent->addOccurrence(newId);
+        m_document->setModified(true);
+        refreshAllPanels();
+        statusBar()->showMessage(tr("Created component: %1").arg(QString::fromStdString(newId)));
+    });
+
+    // Feature tree: activate a component
+    connect(m_featureTree, &FeatureTree::activateComponentRequested, this, [this](const QString& compId) {
+        auto& reg = m_document->components();
+        // Deactivate all components, then activate the requested one
+        for (const auto& id : reg.componentIds()) {
+            auto* c = reg.findComponent(id);
+            if (c) c->setActive(false);
+        }
+        auto* target = reg.findComponent(compId.toStdString());
+        if (target) {
+            target->setActive(true);
+            statusBar()->showMessage(
+                tr("Activated component: %1").arg(QString::fromStdString(target->name())));
+        }
+        refreshAllPanels();
+    });
+
+    // Body visibility toggle from feature tree
+    connect(m_featureTree, &FeatureTree::bodyVisibilityToggled, this,
+            [this](const QString& bodyId, bool visible) {
+        m_document->brepModel().setBodyVisible(bodyId.toStdString(), visible);
+        updateViewport();
+    });
+
+    // Body material assignment from FeatureTree context menu
+    connect(m_featureTree, &FeatureTree::bodyMaterialRequested, this,
+            [this](const QString& bodyId, const QString& materialName) {
+        const auto* mat = kernel::MaterialLibrary::byName(materialName.toStdString());
+        if (mat) {
+            m_document->appearances().setBodyMaterial(bodyId.toStdString(), *mat);
+            m_document->setModified(true);
+            updateViewport();
+            updateWindowTitle();
+            // Refresh properties if this body is currently selected
+            if (m_selectionMgr->hasSelection() &&
+                !m_selectionMgr->selection().empty() &&
+                m_selectionMgr->selection().front().bodyId == bodyId.toStdString()) {
+                onSelectionChanged();
+            }
+        }
+    });
+
+    // Material dropdown in properties panel -> update body material
+    connect(m_properties, &PropertiesPanel::materialChanged, this,
+            [this](const QString& bodyId, const QString& materialName) {
+        const auto* mat = kernel::MaterialLibrary::byName(materialName.toStdString());
+        if (mat) {
+            m_document->appearances().setBodyMaterial(bodyId.toStdString(), *mat);
+        } else {
+            // "Default" — clear the assignment
+            m_document->appearances().clearBody(bodyId.toStdString());
+        }
+        m_document->setModified(true);
+        updateViewport();
+        updateWindowTitle();
+    });
+
+    // Property panel edits -> update feature params and trigger preview
+    connect(m_properties, &PropertiesPanel::propertyChanged,
+            this, &MainWindow::onPropertyChanged);
+
+    // Commit preview when Enter is pressed or focus leaves the panel
+    connect(m_properties, &PropertiesPanel::editingCommitted,
+            this, &MainWindow::onEditingCommitted);
+
+    // Cancel preview when Escape is pressed
+    connect(m_properties, &PropertiesPanel::editingCancelled,
+            this, &MainWindow::onEditingCancelled);
+}
+
+void MainWindow::onPropertyChanged(const QString& featureId,
+                                   const QString& propertyName,
+                                   const QVariant& newValue)
+{
+    auto& tl = m_document->timeline();
+    features::Feature* feat = nullptr;
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.id == featureId.toStdString() ||
+            (entry.feature && entry.feature->id() == featureId.toStdString()))
+        {
+            feat = entry.feature.get();
+            break;
+        }
+    }
+    if (!feat)
+        return;
+
+    using FT = features::FeatureType;
+    switch (feat->type()) {
+    case FT::Extrude: {
+        auto* ef = static_cast<features::ExtrudeFeature*>(feat);
+        auto& p = ef->params();
+        if (propertyName == QLatin1String("Distance")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " mm";
+            p.distanceExpr = oss.str();
+        } else if (propertyName == QLatin1String("ExtentType")) {
+            QString txt = newValue.toString();
+            if (txt == QLatin1String("Distance"))    p.extentType = features::ExtentType::Distance;
+            else if (txt == QLatin1String("ThroughAll"))  p.extentType = features::ExtentType::ThroughAll;
+            else if (txt == QLatin1String("ToEntity"))    p.extentType = features::ExtentType::ToEntity;
+            else if (txt == QLatin1String("Symmetric"))   p.extentType = features::ExtentType::Symmetric;
+        } else if (propertyName == QLatin1String("Operation")) {
+            QString txt = newValue.toString();
+            if (txt == QLatin1String("NewBody"))      p.operation = features::FeatureOperation::NewBody;
+            else if (txt == QLatin1String("Join"))    p.operation = features::FeatureOperation::Join;
+            else if (txt == QLatin1String("Cut"))     p.operation = features::FeatureOperation::Cut;
+            else if (txt == QLatin1String("Intersect")) p.operation = features::FeatureOperation::Intersect;
+        } else if (propertyName == QLatin1String("TaperAngle")) {
+            p.taperAngleDeg = newValue.toDouble();
+        } else if (propertyName == QLatin1String("Symmetric")) {
+            p.isSymmetric = newValue.toBool();
+        }
+        break;
+    }
+    case FT::Revolve: {
+        auto* rf = static_cast<features::RevolveFeature*>(feat);
+        auto& p = rf->params();
+        if (propertyName == QLatin1String("Angle")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " deg";
+            p.angleExpr = oss.str();
+        } else if (propertyName == QLatin1String("AxisType")) {
+            QString txt = newValue.toString();
+            if (txt == QLatin1String("XAxis"))       p.axisType = features::AxisType::XAxis;
+            else if (txt == QLatin1String("YAxis"))  p.axisType = features::AxisType::YAxis;
+            else if (txt == QLatin1String("ZAxis"))  p.axisType = features::AxisType::ZAxis;
+            else if (txt == QLatin1String("Custom")) p.axisType = features::AxisType::Custom;
+        } else if (propertyName == QLatin1String("FullRevolution")) {
+            p.isFullRevolution = newValue.toBool();
+        }
+        break;
+    }
+    case FT::Fillet: {
+        auto* ff = static_cast<features::FilletFeature*>(feat);
+        auto& p = ff->params();
+        if (propertyName == QLatin1String("Radius")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " mm";
+            p.radiusExpr = oss.str();
+        }
+        break;
+    }
+    case FT::Chamfer: {
+        auto* cf = static_cast<features::ChamferFeature*>(feat);
+        auto& p = cf->params();
+        if (propertyName == QLatin1String("Distance")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " mm";
+            p.distanceExpr = oss.str();
+        } else if (propertyName == QLatin1String("ChamferType")) {
+            QString txt = newValue.toString();
+            if (txt == QLatin1String("EqualDistance"))      p.chamferType = features::ChamferType::EqualDistance;
+            else if (txt == QLatin1String("TwoDistances"))  p.chamferType = features::ChamferType::TwoDistances;
+            else if (txt == QLatin1String("DistanceAndAngle")) p.chamferType = features::ChamferType::DistanceAndAngle;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    std::string fid = featureId.toStdString();
+
+    if (!m_editingFeatureId.isEmpty()) {
+        // During edit mode, use incremental recompute from the edited feature
+        // for better performance -- only downstream features are recalculated.
+        m_document->recomputeFrom(fid);
+        updateViewport();
+    } else {
+        // Use the preview engine for live geometry updates instead of full recompute.
+        // beginPreview saves the original params; updatePreview re-executes just
+        // this feature and pushes a semi-transparent mesh to the viewport.
+        if (!m_previewEngine->isActive() || m_previewEngine->activeFeatureId() != fid)
+            m_previewEngine->beginPreview(fid);
+        m_previewEngine->updatePreview();
+    }
+}
+
+void MainWindow::onEditingCommitted(const QString& /*featureId*/)
+{
+    if (m_previewEngine->isActive()) {
+        m_previewEngine->commitPreview();
+    }
+    // If we were editing a feature (rolled back), restore the timeline marker
+    // and recompute incrementally from the edited feature forward.
+    if (!m_editingFeatureId.isEmpty()) {
+        QString editedId = m_editingFeatureId;
+        m_editingFeatureId.clear();
+
+        auto& tl = m_document->timeline();
+        // Restore to original marker position (or end if it was at end)
+        tl.setMarker(std::min(m_editOriginalMarkerPos, tl.count()));
+        m_document->recomputeFrom(editedId.toStdString());
+
+        m_properties->setEditMode(false);
+        m_timeline->setEditingFeatureId(QString());
+        refreshAllPanels();
+
+        statusBar()->showMessage(
+            tr("Applied changes to %1").arg(editedId), 3000);
+    } else {
+        refreshAllPanels();
+    }
+}
+
+void MainWindow::onEditingCancelled(const QString& featureId)
+{
+    if (m_previewEngine->isActive()) {
+        m_previewEngine->cancelPreview();
+        // Restore the properties panel to show the original values
+        m_properties->showFeature(featureId);
+    }
+    // If we were editing a feature (rolled back), restore the original marker
+    // position and recompute to get back to the pre-edit state.
+    if (!m_editingFeatureId.isEmpty()) {
+        m_editingFeatureId.clear();
+
+        auto& tl = m_document->timeline();
+        tl.setMarker(std::min(m_editOriginalMarkerPos, tl.count()));
+        m_document->recompute();
+
+        m_properties->setEditMode(false);
+        m_timeline->setEditingFeatureId(QString());
+        refreshAllPanels();
+
+        statusBar()->showMessage(tr("Edit cancelled"), 3000);
+    }
+}
+
+void MainWindow::onEditFeature(const QString& featureId)
+{
+    // If already editing a different feature, finish that first
+    if (!m_editingFeatureId.isEmpty() && m_editingFeatureId != featureId) {
+        onFinishEditing();
+    }
+
+    // Find the feature's index in the timeline
+    auto& tl = m_document->timeline();
+    for (size_t i = 0; i < tl.count(); ++i) {
+        if (tl.entry(i).id == featureId.toStdString()) {
+            // Save original marker position so cancel can restore it
+            m_editOriginalMarkerPos = tl.markerPosition();
+
+            // Roll back to just after this feature so it and everything before are active
+            tl.setMarker(i + 1);
+            m_document->recompute();
+
+            m_editingFeatureId = featureId;
+            m_properties->showFeature(featureId);
+            m_properties->setEditMode(true);
+            m_timeline->setEditingFeatureId(featureId);
+            refreshAllPanels();
+
+            statusBar()->showMessage(tr("Editing: %1 — press Enter to commit, Escape to cancel")
+                .arg(QString::fromStdString(tl.entry(i).name)));
+            return;
+        }
+    }
+}
+
+void MainWindow::onFinishEditing()
+{
+    m_editingFeatureId.clear();
+
+    auto& tl = m_document->timeline();
+    // Restore to original marker position (or end if it was at end)
+    tl.setMarker(std::min(m_editOriginalMarkerPos, tl.count()));
+    m_document->recompute();
+
+    m_properties->setEditMode(false);
+    m_timeline->setEditingFeatureId(QString());
+    refreshAllPanels();
+
+    statusBar()->showMessage(tr("Ready"));
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event)
+{
+    if (!m_editingFeatureId.isEmpty()) {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            onEditingCommitted(m_editingFeatureId);
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            onEditingCancelled(m_editingFeatureId);
+            return;
+        }
+    }
+
+    // Pending selection-driven command: Enter commits, Escape cancels
+    if (m_pendingCommand != PendingCommand::None) {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            onCommitPendingCommand();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            onCancelPendingCommand();
+            return;
+        }
+    }
+
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::onNewDocument()
 {
+    if (m_previewEngine->isActive())
+        m_previewEngine->cancelPreview();
     m_document->newDocument();
     setWindowTitle("kernelCAD — Untitled");
+    m_featureTree->setDocument(m_document.get());
+    m_properties->clear();
+    m_selectionMgr->clearSelection();
+    m_selectionMgr->clearPreSelection();
+    refreshAllPanels();
 }
 
 void MainWindow::onOpenDocument()
 {
+    if (m_previewEngine->isActive())
+        m_previewEngine->cancelPreview();
     QString path = QFileDialog::getOpenFileName(this, tr("Open"), {}, tr("kernelCAD Files (*.kcd)"));
     if (!path.isEmpty()) {
-        m_document->load(path.toStdString());
-        setWindowTitle("kernelCAD — " + QFileInfo(path).baseName());
+        if (m_document->load(path.toStdString())) {
+            m_featureTree->setDocument(m_document.get());
+            m_properties->clear();
+            refreshAllPanels();
+            statusBar()->showMessage(tr("Opened: %1").arg(path));
+        } else {
+            QMessageBox::warning(this, tr("Open Failed"),
+                tr("Could not open file: %1").arg(path));
+        }
     }
 }
 
 void MainWindow::onSaveDocument()
 {
     QString path = QFileDialog::getSaveFileName(this, tr("Save"), {}, tr("kernelCAD Files (*.kcd)"));
-    if (!path.isEmpty())
-        m_document->save(path.toStdString());
+    if (!path.isEmpty()) {
+        if (m_document->save(path.toStdString())) {
+            updateWindowTitle();
+            statusBar()->showMessage(tr("Saved: %1").arg(path));
+        } else {
+            QMessageBox::warning(this, tr("Save Failed"),
+                tr("Could not save file: %1").arg(path));
+        }
+    }
+}
+
+void MainWindow::onImportFile()
+{
+    QString path = QFileDialog::getOpenFileName(this, tr("Import CAD File"), {},
+        tr("CAD Files (*.step *.stp *.igs *.iges);;STEP Files (*.step *.stp);;IGES Files (*.igs *.iges)"));
+    if (path.isEmpty())
+        return;
+
+    try {
+        int count = m_document->importFile(path.toStdString());
+        statusBar()->showMessage(
+            tr("Imported %1 body(s) from %2").arg(count).arg(QFileInfo(path).fileName()));
+        m_viewport->fitAll();
+        refreshAllPanels();
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Import Failed"),
+            tr("Could not import file:\n%1").arg(e.what()));
+    }
 }
 
 void MainWindow::onExportSTEP()
 {
     QString path = QFileDialog::getSaveFileName(this, tr("Export STEP"), {}, tr("STEP Files (*.step *.stp)"));
-    if (!path.isEmpty())
-        statusBar()->showMessage(tr("Exported: %1").arg(path));
+    if (path.isEmpty()) return;
+
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        statusBar()->showMessage(tr("Nothing to export"));
+        return;
+    }
+
+    // Combine all bodies into a compound shape for export
+    TopoDS_Compound compound;
+    BRep_Builder builder;
+    builder.MakeCompound(compound);
+    for (const auto& id : ids)
+        builder.Add(compound, brep.getShape(id));
+
+    bool ok = m_document->kernel().exportSTEP(compound, path.toStdString());
+    statusBar()->showMessage(ok ? tr("Exported: %1").arg(path) : tr("Export failed"));
+}
+
+void MainWindow::onExportSTL()
+{
+    QString path = QFileDialog::getSaveFileName(this, tr("Export STL"), {}, tr("STL Files (*.stl)"));
+    if (path.isEmpty()) return;
+
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        statusBar()->showMessage(tr("Nothing to export"));
+        return;
+    }
+
+    // Combine all bodies into a compound shape for export
+    TopoDS_Compound compound;
+    BRep_Builder builder;
+    builder.MakeCompound(compound);
+    for (const auto& id : ids)
+        builder.Add(compound, brep.getShape(id));
+
+    bool ok = m_document->kernel().exportSTL(compound, path.toStdString());
+    statusBar()->showMessage(ok ? tr("Exported: %1").arg(path) : tr("Export failed"));
+}
+
+void MainWindow::onCreateBox()
+{
+    features::ExtrudeParams params;
+    params.profileId    = "";           // empty = base-feature shortcut (makeBox)
+    params.distanceExpr = "50 mm";
+    params.extentType   = features::ExtentType::Distance;
+    params.operation    = features::FeatureOperation::NewBody;
+
+    m_document->executeCommand(
+        std::make_unique<document::AddExtrudeCommand>(std::move(params)));
+    statusBar()->showMessage(tr("Created box"));
+    refreshAllPanels();
+}
+
+void MainWindow::onCreateCylinder()
+{
+    features::RevolveParams params;
+    params.profileId       = "";          // empty = base-feature shortcut (makeCylinder)
+    params.angleExpr       = "360 deg";
+    params.isFullRevolution = true;
+    params.operation       = features::FeatureOperation::NewBody;
+
+    m_document->executeCommand(
+        std::make_unique<document::AddRevolveCommand>(std::move(params)));
+    statusBar()->showMessage(tr("Created cylinder"));
+    refreshAllPanels();
+}
+
+void MainWindow::onCreateSphere()
+{
+    m_document->executeCommand(
+        std::make_unique<document::AddSphereCommand>(25.0));
+    statusBar()->showMessage(tr("Created sphere"));
+    refreshAllPanels();
+}
+
+void MainWindow::onCreateSketch()
+{
+    // If already editing a sketch, finish first
+    if (m_sketchEditor->isEditing())
+        m_sketchEditor->finishEditing();
+
+    // Create a sketch on the XY plane at the origin (empty -- user draws interactively)
+    features::SketchParams skParams;
+    skParams.planeId = "XY";
+    skParams.originX = 0; skParams.originY = 0; skParams.originZ = 0;
+    skParams.xDirX = 1; skParams.xDirY = 0; skParams.xDirZ = 0;
+    skParams.yDirX = 0; skParams.yDirY = 1; skParams.yDirZ = 0;
+
+    m_document->executeCommand(
+        std::make_unique<document::AddSketchCommand>(std::move(skParams)));
+    refreshAllPanels();
+
+    // Find the newly created sketch feature and enter editing mode
+    auto& tl = m_document->timeline();
+    for (size_t i = tl.count(); i > 0; --i) {
+        auto& entry = tl.entry(i - 1);
+        if (entry.feature &&
+            entry.feature->type() == features::FeatureType::Sketch &&
+            !entry.isSuppressed && !entry.isRolledBack) {
+            auto* skFeat = static_cast<features::SketchFeature*>(entry.feature.get());
+            beginSketchEditing(skFeat);
+            break;
+        }
+    }
+}
+
+void MainWindow::onEditSketch()
+{
+    // If already editing, finish first
+    if (m_sketchEditor->isEditing())
+        m_sketchEditor->finishEditing();
+
+    // Find the last (or selected) sketch feature in the timeline
+    auto& tl = m_document->timeline();
+    features::SketchFeature* targetSketch = nullptr;
+
+    for (size_t i = tl.count(); i > 0; --i) {
+        auto& entry = tl.entry(i - 1);
+        if (entry.feature &&
+            entry.feature->type() == features::FeatureType::Sketch &&
+            !entry.isSuppressed && !entry.isRolledBack) {
+            targetSketch = static_cast<features::SketchFeature*>(entry.feature.get());
+            break;
+        }
+    }
+
+    if (!targetSketch) {
+        QMessageBox::information(this, tr("Edit Sketch"),
+            tr("No sketch found. Create a sketch first."));
+        return;
+    }
+
+    beginSketchEditing(targetSketch);
+}
+
+void MainWindow::onExtrudeSketch()
+{
+    // Find the last sketch feature in the timeline
+    auto& tl = m_document->timeline();
+    features::SketchFeature* lastSketch = nullptr;
+    std::string lastSketchId;
+
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.feature &&
+            entry.feature->type() == features::FeatureType::Sketch &&
+            !entry.isSuppressed && !entry.isRolledBack) {
+            lastSketch = static_cast<features::SketchFeature*>(entry.feature.get());
+            lastSketchId = entry.feature->id();
+        }
+    }
+
+    if (!lastSketch) {
+        QMessageBox::information(this, tr("Extrude Sketch"),
+            tr("No sketch found. Create a sketch first."));
+        return;
+    }
+
+    // Detect profiles in the sketch
+    auto profiles = lastSketch->sketch().detectProfiles();
+    if (profiles.empty()) {
+        QMessageBox::information(this, tr("Extrude Sketch"),
+            tr("No closed profiles found in the sketch."));
+        return;
+    }
+
+    // Build a profileId string from the first detected profile
+    std::string profileId;
+    for (size_t i = 0; i < profiles[0].size(); ++i) {
+        if (i > 0) profileId += ",";
+        profileId += profiles[0][i];
+    }
+
+    // Create an extrude feature referencing this sketch
+    features::ExtrudeParams params;
+    params.profileId    = profileId;
+    params.sketchId     = lastSketchId;
+    params.distanceExpr = "20 mm";
+    params.extentType   = features::ExtentType::Distance;
+    params.operation    = features::FeatureOperation::NewBody;
+
+    m_document->executeCommand(
+        std::make_unique<document::AddExtrudeCommand>(std::move(params)));
+    statusBar()->showMessage(tr("Extruded sketch"));
+    refreshAllPanels();
+}
+
+void MainWindow::onRevolveSketch()
+{
+    // Find the last non-suppressed sketch in the timeline
+    auto& tl = m_document->timeline();
+    features::SketchFeature* lastSketch = nullptr;
+    std::string lastSketchId;
+
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.feature &&
+            entry.feature->type() == features::FeatureType::Sketch &&
+            !entry.isSuppressed && !entry.isRolledBack) {
+            lastSketch = static_cast<features::SketchFeature*>(entry.feature.get());
+            lastSketchId = entry.feature->id();
+        }
+    }
+
+    if (!lastSketch) {
+        QMessageBox::information(this, tr("Revolve Sketch"),
+            tr("No sketch found. Create a sketch first."));
+        return;
+    }
+
+    // Detect profiles in the sketch
+    auto profiles = lastSketch->sketch().detectProfiles();
+    if (profiles.empty()) {
+        QMessageBox::information(this, tr("Revolve Sketch"),
+            tr("No closed profiles found in the sketch."));
+        return;
+    }
+
+    // Build a profileId string from the first detected profile
+    std::string profileId;
+    for (size_t i = 0; i < profiles[0].size(); ++i) {
+        if (i > 0) profileId += ",";
+        profileId += profiles[0][i];
+    }
+
+    // Create a revolve feature referencing this sketch
+    features::RevolveParams params;
+    params.profileId        = profileId;
+    params.sketchId         = lastSketchId;
+    params.axisType         = features::AxisType::ZAxis;
+    params.angleExpr        = "360 deg";
+    params.isFullRevolution = true;
+    params.operation        = features::FeatureOperation::NewBody;
+
+    m_document->executeCommand(
+        std::make_unique<document::AddRevolveCommand>(std::move(params)));
+    statusBar()->showMessage(tr("Revolved sketch"));
+    refreshAllPanels();
+}
+
+void MainWindow::onAddHole()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Add Hole"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    // Add a 10mm diameter, 20mm deep hole at center of the top face of the last body.
+    // Determine the top face center by finding the face with the highest average Z.
+    std::string lastBodyId = ids.back();
+    const TopoDS_Shape& shape = brep.getShape(lastBodyId);
+
+    // Find the top face (highest average Z among vertices)
+    double bestAvgZ = -1e30;
+    double holePosX = 0, holePosY = 0, holePosZ = 0;
+
+    TopExp_Explorer faceEx(shape, TopAbs_FACE);
+    for (; faceEx.More(); faceEx.Next()) {
+        const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
+        double sumX = 0, sumY = 0, sumZ = 0;
+        int count = 0;
+        TopExp_Explorer vertEx(face, TopAbs_VERTEX);
+        for (; vertEx.More(); vertEx.Next()) {
+            gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertEx.Current()));
+            sumX += p.X();
+            sumY += p.Y();
+            sumZ += p.Z();
+            count++;
+        }
+        if (count > 0) {
+            double avgZ = sumZ / count;
+            if (avgZ > bestAvgZ) {
+                bestAvgZ = avgZ;
+                holePosX = sumX / count;
+                holePosY = sumY / count;
+                holePosZ = sumZ / count;
+            }
+        }
+    }
+
+    features::HoleParams params;
+    params.targetBodyId = lastBodyId;
+    params.holeType     = features::HoleType::Simple;
+    params.posX = holePosX;
+    params.posY = holePosY;
+    params.posZ = holePosZ;
+    params.dirX = 0;
+    params.dirY = 0;
+    params.dirZ = -1;   // drill downward into the top face
+    params.diameterExpr = "10 mm";
+    params.depthExpr    = "20 mm";
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddHoleCommand>(std::move(params)));
+        statusBar()->showMessage(
+            tr("Added hole (10 mm dia, 20 mm deep)"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Hole Failed"),
+            tr("Could not create hole: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+// ---------------------------------------------------------------------------
+// Helper: collect selected edge indices from the current selection.
+// Only edges belonging to the first body encountered are collected.
+// ---------------------------------------------------------------------------
+std::vector<int> MainWindow::collectSelectedEdges(std::string& bodyIdOut) const
+{
+    const auto& sel = m_selectionMgr->selection();
+    std::vector<int> edges;
+    bodyIdOut.clear();
+
+    for (const auto& hit : sel) {
+        if (hit.bodyId.empty())
+            continue;
+        if (bodyIdOut.empty())
+            bodyIdOut = hit.bodyId;
+        if (hit.bodyId == bodyIdOut && hit.edgeIndex >= 0)
+            edges.push_back(hit.edgeIndex);
+    }
+
+    // If no edges found but we have a body from a face hit, use that body id
+    if (bodyIdOut.empty() && !sel.empty())
+        bodyIdOut = sel.front().bodyId;
+
+    return edges;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: collect selected face indices from the current selection.
+// ---------------------------------------------------------------------------
+std::vector<int> MainWindow::collectSelectedFaces(std::string& bodyIdOut) const
+{
+    const auto& sel = m_selectionMgr->selection();
+    std::vector<int> faces;
+    bodyIdOut.clear();
+
+    for (const auto& hit : sel) {
+        if (hit.bodyId.empty())
+            continue;
+        if (bodyIdOut.empty())
+            bodyIdOut = hit.bodyId;
+        if (hit.bodyId == bodyIdOut && hit.faceIndex >= 0)
+            faces.push_back(hit.faceIndex);
+    }
+
+    if (bodyIdOut.empty() && !sel.empty())
+        bodyIdOut = sel.front().bodyId;
+
+    return faces;
+}
+
+// ---------------------------------------------------------------------------
+// Fillet -- selection-aware: uses selected edges, or enters pending mode,
+// or falls back to all edges of the last body.
+// ---------------------------------------------------------------------------
+void MainWindow::onFillet()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Fillet"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+
+    // If no selection at all, enter pending mode so user can pick edges
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::Fillet;
+        m_selectionMgr->setFilter(SelectionFilter::Edges);
+        if (m_selectEdgesAction)
+            m_selectEdgesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select edges to fillet, then press Enter to confirm (Esc to cancel)"));
+        return;
+    }
+
+    // Collect edges from selection
+    std::string bodyId;
+    std::vector<int> edgeIndices = collectSelectedEdges(bodyId);
+
+    // If selection has no body, fall back to last body
+    if (bodyId.empty())
+        bodyId = ids.back();
+
+    features::FilletParams params;
+    params.targetBodyId = bodyId;
+    params.edgeIds      = edgeIndices;  // empty = fillet all edges (fallback)
+    params.radiusExpr   = "3 mm";
+
+    // Capture stable edge signatures for topology persistence
+    if (!edgeIndices.empty()) {
+        try {
+            const TopoDS_Shape& shape = brep.getShape(bodyId);
+            for (int idx : edgeIndices)
+                params.edgeSignatures.push_back(
+                    kernel::StableReference::computeEdgeSignature(shape, idx));
+        } catch (...) {
+            // If signature capture fails, proceed without them
+        }
+    }
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddFilletCommand>(std::move(params)));
+        QString msg = edgeIndices.empty()
+            ? tr("Filleted all edges of %1 (3 mm)").arg(QString::fromStdString(bodyId))
+            : tr("Filleted %1 edge(s) on %2 (3 mm)")
+                  .arg(edgeIndices.size())
+                  .arg(QString::fromStdString(bodyId));
+        statusBar()->showMessage(msg);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Fillet Failed"),
+            tr("Could not fillet: %1").arg(e.what()));
+    }
+
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
+    refreshAllPanels();
+}
+
+// ---------------------------------------------------------------------------
+// Chamfer -- selection-aware (same pattern as Fillet)
+// ---------------------------------------------------------------------------
+void MainWindow::onChamfer()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Chamfer"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::Chamfer;
+        m_selectionMgr->setFilter(SelectionFilter::Edges);
+        if (m_selectEdgesAction)
+            m_selectEdgesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select edges to chamfer, then press Enter to confirm (Esc to cancel)"));
+        return;
+    }
+
+    std::string bodyId;
+    std::vector<int> edgeIndices = collectSelectedEdges(bodyId);
+
+    if (bodyId.empty())
+        bodyId = ids.back();
+
+    features::ChamferParams params;
+    params.targetBodyId = bodyId;
+    params.edgeIds      = edgeIndices;  // empty = chamfer all edges
+    params.distanceExpr = "2 mm";
+
+    if (!edgeIndices.empty()) {
+        try {
+            const TopoDS_Shape& shape = brep.getShape(bodyId);
+            for (int idx : edgeIndices)
+                params.edgeSignatures.push_back(
+                    kernel::StableReference::computeEdgeSignature(shape, idx));
+        } catch (...) {}
+    }
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddChamferCommand>(std::move(params)));
+        QString msg = edgeIndices.empty()
+            ? tr("Chamfered all edges of %1 (2 mm)").arg(QString::fromStdString(bodyId))
+            : tr("Chamfered %1 edge(s) on %2 (2 mm)")
+                  .arg(edgeIndices.size())
+                  .arg(QString::fromStdString(bodyId));
+        statusBar()->showMessage(msg);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Chamfer Failed"),
+            tr("Could not chamfer: %1").arg(e.what()));
+    }
+
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
+    refreshAllPanels();
+}
+
+// ---------------------------------------------------------------------------
+// Shell -- selection-aware: uses selected faces as removed faces.
+// ---------------------------------------------------------------------------
+void MainWindow::onShell()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Shell"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::Shell;
+        m_selectionMgr->setFilter(SelectionFilter::Faces);
+        if (m_selectFacesAction)
+            m_selectFacesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select faces to remove for shell, then press Enter (Esc to cancel)"));
+        return;
+    }
+
+    std::string bodyId;
+    std::vector<int> faceIndices = collectSelectedFaces(bodyId);
+
+    if (bodyId.empty())
+        bodyId = ids.back();
+
+    features::ShellParams params;
+    params.targetBodyId   = bodyId;
+    params.thicknessExpr  = 2.0;
+    params.removedFaceIds = faceIndices;  // empty = auto-detect top face
+
+    // Capture stable face signatures
+    if (!faceIndices.empty()) {
+        try {
+            const TopoDS_Shape& shape = brep.getShape(bodyId);
+            for (int idx : faceIndices)
+                params.faceSignatures.push_back(
+                    kernel::StableReference::computeFaceSignature(shape, idx));
+        } catch (...) {}
+    }
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddShellCommand>(std::move(params)));
+        QString msg = faceIndices.empty()
+            ? tr("Shelled %1 (2 mm wall, auto face)").arg(QString::fromStdString(bodyId))
+            : tr("Shelled %1 removing %2 face(s) (2 mm wall)")
+                  .arg(QString::fromStdString(bodyId))
+                  .arg(faceIndices.size());
+        statusBar()->showMessage(msg);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Shell Failed"),
+            tr("Could not shell body: %1").arg(e.what()));
+    }
+
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
+    refreshAllPanels();
+}
+
+// ---------------------------------------------------------------------------
+// Draft -- selection-aware: uses selected faces for draft angle.
+// ---------------------------------------------------------------------------
+void MainWindow::onDraft()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Draft"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::Draft;
+        m_selectionMgr->setFilter(SelectionFilter::Faces);
+        if (m_selectFacesAction)
+            m_selectFacesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select faces to draft, then press Enter (Esc to cancel)"));
+        return;
+    }
+
+    std::string bodyId;
+    std::vector<int> faceIndices = collectSelectedFaces(bodyId);
+
+    if (bodyId.empty())
+        bodyId = ids.back();
+
+    if (faceIndices.empty()) {
+        QMessageBox::information(this, tr("Draft"),
+            tr("Please select at least one face to draft."));
+        return;
+    }
+
+    features::DraftParams params;
+    params.targetBodyId = bodyId;
+    params.faceIndices  = faceIndices;
+    params.angleExpr    = "3 deg";
+
+    // Capture stable face signatures
+    try {
+        const TopoDS_Shape& shape = brep.getShape(bodyId);
+        for (int idx : faceIndices)
+            params.faceSignatures.push_back(
+                kernel::StableReference::computeFaceSignature(shape, idx));
+    } catch (...) {}
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddDraftCommand>(std::move(params)));
+        statusBar()->showMessage(
+            tr("Drafted %1 face(s) on %2 (3 deg)")
+                .arg(faceIndices.size())
+                .arg(QString::fromStdString(bodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Draft Failed"),
+            tr("Could not draft: %1").arg(e.what()));
+    }
+
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
+    refreshAllPanels();
+}
+
+// ---------------------------------------------------------------------------
+// Pending command: commit / cancel
+// ---------------------------------------------------------------------------
+void MainWindow::onCommitPendingCommand()
+{
+    PendingCommand cmd = m_pendingCommand;
+    m_pendingCommand = PendingCommand::None;
+
+    switch (cmd) {
+    case PendingCommand::Fillet:  onFillet();  break;
+    case PendingCommand::Chamfer: onChamfer(); break;
+    case PendingCommand::Shell:   onShell();   break;
+    case PendingCommand::Draft:   onDraft();   break;
+    case PendingCommand::Hole:    onAddHole(); break;
+    case PendingCommand::None:    break;
+    }
+}
+
+void MainWindow::onCancelPendingCommand()
+{
+    if (m_pendingCommand != PendingCommand::None) {
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        m_selectionMgr->setFilter(SelectionFilter::All);
+        if (m_selectAllAction)
+            m_selectAllAction->setChecked(true);
+        statusBar()->showMessage(tr("Command cancelled"));
+    }
+}
+
+void MainWindow::onMirrorLastBody()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Mirror"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    // Mirror the most recent body about the YZ plane (X=0)
+    std::string lastBodyId = ids.back();
+
+    features::MirrorParams params;
+    params.targetBodyId = lastBodyId;
+    params.planeOx = 0; params.planeOy = 0; params.planeOz = 0;
+    params.planeNx = 1; params.planeNy = 0; params.planeNz = 0;  // YZ plane
+    params.isCombine = true;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddMirrorCommand>(std::move(params)));
+        statusBar()->showMessage(
+            tr("Mirrored body: %1 about YZ plane").arg(QString::fromStdString(lastBodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Mirror Failed"),
+            tr("Could not mirror body: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onCircularPattern()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Circular Pattern"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    // Create 6 copies of the most recent body around the Z axis (full 360 degrees)
+    std::string lastBodyId = ids.back();
+
+    features::CircularPatternParams params;
+    params.targetBodyId = lastBodyId;
+    params.axisOx = 0; params.axisOy = 0; params.axisOz = 0;
+    params.axisDx = 0; params.axisDy = 0; params.axisDz = 1;  // Z axis
+    params.count = 6;
+    params.totalAngleDeg = 360.0;
+    params.operation = features::FeatureOperation::Join;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddCircularPatternCommand>(std::move(params)));
+        statusBar()->showMessage(
+            tr("Circular pattern: %1 (6 copies around Z)").arg(QString::fromStdString(lastBodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Circular Pattern Failed"),
+            tr("Could not create circular pattern: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onRectangularPattern()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        QMessageBox::information(this, tr("Rectangular Pattern"),
+            tr("No bodies found. Create a body first."));
+        return;
+    }
+
+    std::string lastBodyId = ids.back();
+
+    features::RectangularPatternParams params;
+    params.targetBodyId = lastBodyId;
+    params.dir1X = 1; params.dir1Y = 0; params.dir1Z = 0;  // X direction
+    params.spacing1Expr = "30 mm";
+    params.count1 = 3;
+    params.dir2X = 0; params.dir2Y = 1; params.dir2Z = 0;  // Y direction
+    params.spacing2Expr = "30 mm";
+    params.count2 = 2;
+    params.operation = features::FeatureOperation::Join;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddRectangularPatternCommand>(std::move(params)));
+        statusBar()->showMessage(
+            tr("Rectangular pattern: %1 (3x2, 30 mm spacing)").arg(QString::fromStdString(lastBodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Rectangular Pattern Failed"),
+            tr("Could not create rectangular pattern: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onSweepTest()
+{
+    features::SweepParams params;
+    // Empty profileId/pathId triggers the test helix sweep
+    params.operation = features::FeatureOperation::NewBody;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddSweepCommand>(std::move(params)));
+        statusBar()->showMessage(tr("Created sweep (test helix)"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Sweep Failed"),
+            tr("Could not create sweep: %1").arg(e.what()));
+    }
+    refreshAllPanels();
+}
+
+void MainWindow::onLoftTest()
+{
+    features::LoftParams params;
+    // Empty sectionIds triggers the test circle-to-square loft
+    params.operation = features::FeatureOperation::NewBody;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddLoftCommand>(std::move(params)));
+        statusBar()->showMessage(tr("Created loft (test sections)"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Loft Failed"),
+            tr("Could not create loft: %1").arg(e.what()));
+    }
+    refreshAllPanels();
+}
+
+void MainWindow::onSweepSketch()
+{
+    // Find the last two sketch features: first = profile, second = path
+    auto& tl = m_document->timeline();
+    std::vector<std::pair<std::string, features::SketchFeature*>> sketches;
+
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.feature &&
+            entry.feature->type() == features::FeatureType::Sketch &&
+            !entry.isSuppressed && !entry.isRolledBack) {
+            auto* sf = static_cast<features::SketchFeature*>(entry.feature.get());
+            sketches.push_back({entry.feature->id(), sf});
+        }
+    }
+
+    if (sketches.size() < 2) {
+        QMessageBox::information(this, tr("Sweep Sketch"),
+            tr("Need at least two sketches (profile + path). Create them first."));
+        return;
+    }
+
+    // Use second-to-last as profile, last as path
+    auto& [profileSketchId, profileSketch] = sketches[sketches.size() - 2];
+    auto& [pathSketchId, pathSketch] = sketches[sketches.size() - 1];
+
+    // Detect profiles in the profile sketch
+    auto profiles = profileSketch->sketch().detectProfiles();
+    if (profiles.empty()) {
+        QMessageBox::information(this, tr("Sweep Sketch"),
+            tr("No closed profiles found in the profile sketch."));
+        return;
+    }
+
+    // Build profileId from first detected profile
+    std::string profileId;
+    for (size_t i = 0; i < profiles[0].size(); ++i) {
+        if (i > 0) profileId += ",";
+        profileId += profiles[0][i];
+    }
+
+    // Detect profiles in the path sketch to get path curves
+    auto pathProfiles = pathSketch->sketch().detectProfiles();
+    if (pathProfiles.empty()) {
+        QMessageBox::information(this, tr("Sweep Sketch"),
+            tr("No profiles found in the path sketch."));
+        return;
+    }
+
+    std::string pathId;
+    for (size_t i = 0; i < pathProfiles[0].size(); ++i) {
+        if (i > 0) pathId += ",";
+        pathId += pathProfiles[0][i];
+    }
+
+    features::SweepParams params;
+    params.profileId   = profileId;
+    params.sketchId    = profileSketchId;
+    params.pathId      = pathId;
+    params.pathSketchId = pathSketchId;
+    params.operation   = features::FeatureOperation::NewBody;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddSweepCommand>(std::move(params)));
+        statusBar()->showMessage(tr("Swept sketch along path"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Sweep Failed"),
+            tr("Could not sweep sketch: %1").arg(e.what()));
+    }
+    refreshAllPanels();
+}
+
+void MainWindow::onNewComponent()
+{
+    auto& reg = m_document->components();
+
+    // Find the currently active component (or root)
+    document::Component* active = nullptr;
+    for (const auto& id : reg.componentIds()) {
+        auto* c = reg.findComponent(id);
+        if (c && c->isActive()) {
+            active = c;
+            break;
+        }
+    }
+    if (!active)
+        active = &reg.rootComponent();
+
+    // Create a new child component and add an occurrence to the active component
+    std::string newId = reg.createComponent("Component");
+    std::string occId = active->addOccurrence(newId);
+    m_document->setModified(true);
+
+    statusBar()->showMessage(
+        tr("New component created under %1").arg(QString::fromStdString(active->name())));
+    refreshAllPanels();
+}
+
+void MainWindow::onInsertComponent()
+{
+    auto& reg = m_document->components();
+    auto allIds = reg.componentIds();
+
+    // Need at least 2 components (root + one other) to insert an occurrence
+    if (allIds.size() < 2) {
+        QMessageBox::information(this, tr("Insert Component"),
+            tr("No additional components to insert. Create a component first."));
+        return;
+    }
+
+    // Find the active component
+    document::Component* active = nullptr;
+    for (const auto& id : allIds) {
+        auto* c = reg.findComponent(id);
+        if (c && c->isActive()) {
+            active = c;
+            break;
+        }
+    }
+    if (!active)
+        active = &reg.rootComponent();
+
+    // Insert the first non-root, non-active component as a placeholder
+    for (const auto& id : allIds) {
+        if (id == active->id() || id == reg.rootComponent().id())
+            continue;
+        active->addOccurrence(id);
+        m_document->setModified(true);
+        statusBar()->showMessage(
+            tr("Inserted occurrence of component %1").arg(QString::fromStdString(id)));
+        break;
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onAddRigidJoint()
+{
+    auto& reg = m_document->components();
+    auto& root = reg.rootComponent();
+    const auto& occs = root.occurrences();
+
+    if (occs.size() < 2) {
+        QMessageBox::information(this, tr("Add Rigid Joint"),
+            tr("Need at least two component occurrences in the root component. "
+               "Create components first."));
+        return;
+    }
+
+    // Create a rigid joint between the first two occurrences
+    features::JointParams params;
+    params.occurrenceOneId = occs[0].id;
+    params.occurrenceTwoId = occs[1].id;
+    params.jointType = features::JointType::Rigid;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddJointCommand>(std::move(params)));
+        statusBar()->showMessage(tr("Added rigid joint between %1 and %2")
+            .arg(QString::fromStdString(occs[0].name))
+            .arg(QString::fromStdString(occs[1].name)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Joint Failed"),
+            tr("Could not create joint: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onAddRevoluteJoint()
+{
+    auto& reg = m_document->components();
+    auto& root = reg.rootComponent();
+    const auto& occs = root.occurrences();
+
+    if (occs.size() < 2) {
+        QMessageBox::information(this, tr("Add Revolute Joint"),
+            tr("Need at least two component occurrences in the root component. "
+               "Create components first."));
+        return;
+    }
+
+    // Create a revolute (hinge) joint between the first two occurrences
+    // rotating around the Z axis at the origin
+    features::JointParams params;
+    params.occurrenceOneId = occs[0].id;
+    params.occurrenceTwoId = occs[1].id;
+    params.jointType = features::JointType::Revolute;
+    // Default geometry: joint at origin, rotating around Z
+    params.geometryOne.originX = 0;
+    params.geometryOne.originY = 0;
+    params.geometryOne.originZ = 0;
+    params.geometryOne.primaryAxisX = 0;
+    params.geometryOne.primaryAxisY = 0;
+    params.geometryOne.primaryAxisZ = 1;
+    params.geometryTwo = params.geometryOne;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddJointCommand>(std::move(params)));
+        statusBar()->showMessage(tr("Added revolute joint between %1 and %2")
+            .arg(QString::fromStdString(occs[0].name))
+            .arg(QString::fromStdString(occs[1].name)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Joint Failed"),
+            tr("Could not create joint: %1").arg(e.what()));
+    }
+
+    refreshAllPanels();
+}
+
+void MainWindow::onUndo()
+{
+    if (m_document->history().canUndo()) {
+        std::string desc = m_document->history().undoDescription();
+        m_document->history().undo(*m_document);
+        statusBar()->showMessage(
+            tr("Undo: %1").arg(QString::fromStdString(desc)));
+        refreshAllPanels();
+    }
+}
+
+void MainWindow::onRedo()
+{
+    if (m_document->history().canRedo()) {
+        std::string desc = m_document->history().redoDescription();
+        m_document->history().redo(*m_document);
+        statusBar()->showMessage(
+            tr("Redo: %1").arg(QString::fromStdString(desc)));
+        refreshAllPanels();
+    }
+}
+
+void MainWindow::updateWindowTitle()
+{
+    QString title = "kernelCAD";
+    if (!m_document->name().empty())
+        title += " — " + QString::fromStdString(m_document->name());
+    if (m_document->isModified())
+        title += " *";
+    setWindowTitle(title);
+}
+
+void MainWindow::updateUndoRedoActions()
+{
+    auto& hist = m_document->history();
+
+    if (m_undoAction) {
+        m_undoAction->setEnabled(hist.canUndo());
+        if (hist.canUndo())
+            m_undoAction->setText(tr("Undo %1").arg(
+                QString::fromStdString(hist.undoDescription())));
+        else
+            m_undoAction->setText(tr("Undo"));
+    }
+
+    if (m_redoAction) {
+        m_redoAction->setEnabled(hist.canRedo());
+        if (hist.canRedo())
+            m_redoAction->setText(tr("Redo %1").arg(
+                QString::fromStdString(hist.redoDescription())));
+        else
+            m_redoAction->setText(tr("Redo"));
+    }
+}
+
+// =============================================================================
+// Section plane handlers
+// =============================================================================
+
+void MainWindow::onSectionX()
+{
+    m_sectionAxis = 0;
+    m_sectionSlider->setVisible(true);
+    m_sectionSlider->setValue(0);
+    m_viewport->setSectionPlane(true, 1.0f, 0.0f, 0.0f, 0.0f);
+    statusBar()->showMessage(tr("Section View: X axis"));
+}
+
+void MainWindow::onSectionY()
+{
+    m_sectionAxis = 1;
+    m_sectionSlider->setVisible(true);
+    m_sectionSlider->setValue(0);
+    m_viewport->setSectionPlane(true, 0.0f, 1.0f, 0.0f, 0.0f);
+    statusBar()->showMessage(tr("Section View: Y axis"));
+}
+
+void MainWindow::onSectionZ()
+{
+    m_sectionAxis = 2;
+    m_sectionSlider->setVisible(true);
+    m_sectionSlider->setValue(0);
+    m_viewport->setSectionPlane(true, 0.0f, 0.0f, 1.0f, 0.0f);
+    statusBar()->showMessage(tr("Section View: Z axis"));
+}
+
+void MainWindow::onClearSection()
+{
+    m_sectionAxis = -1;
+    m_sectionSlider->setVisible(false);
+    m_viewport->setSectionPlane(false);
+    statusBar()->showMessage(tr("Section cleared"));
+}
+
+void MainWindow::onSectionSliderChanged(int value)
+{
+    if (m_sectionAxis < 0) return;
+
+    // Map slider range [-1000, 1000] to a world-space offset.
+    // Use the bounding box extent to determine the range.
+    float scale = 100.0f;  // default total range = +/- 100 mm
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (!ids.empty()) {
+        // Compute overall bounding box to size the slider range
+        float minVal = 1e9f, maxVal = -1e9f;
+        for (const auto& id : ids) {
+            auto props = brep.getProperties(id);
+            float lo = 0, hi = 0;
+            switch (m_sectionAxis) {
+            case 0: lo = static_cast<float>(props.bboxMinX); hi = static_cast<float>(props.bboxMaxX); break;
+            case 1: lo = static_cast<float>(props.bboxMinY); hi = static_cast<float>(props.bboxMaxY); break;
+            case 2: lo = static_cast<float>(props.bboxMinZ); hi = static_cast<float>(props.bboxMaxZ); break;
+            }
+            if (lo < minVal) minVal = lo;
+            if (hi > maxVal) maxVal = hi;
+        }
+        scale = (maxVal - minVal) * 0.6f;
+        if (scale < 1.0f) scale = 1.0f;
+    }
+
+    float d = -static_cast<float>(value) / 1000.0f * scale;
+    float nx = (m_sectionAxis == 0) ? 1.0f : 0.0f;
+    float ny = (m_sectionAxis == 1) ? 1.0f : 0.0f;
+    float nz = (m_sectionAxis == 2) ? 1.0f : 0.0f;
+    m_viewport->setSectionPlane(true, nx, ny, nz, d);
+}
+
+void MainWindow::onSelectionChanged()
+{
+    if (!m_selectionMgr->hasSelection()) {
+        m_properties->clear();
+        statusBar()->showMessage(tr("Selection cleared"));
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+    const auto& hit = sel.front();
+
+    // Build a properties display for the selected entity
+    std::vector<std::tuple<QString, QString, QVariant>> props;
+
+    if (!hit.bodyId.empty()) {
+        props.emplace_back(tr("Body ID"), QStringLiteral("string"),
+                           QString::fromStdString(hit.bodyId));
+
+        // Show body material
+        const auto& bodyMat = m_document->appearances().bodyMaterial(hit.bodyId);
+        props.emplace_back(tr("Body Material"), QStringLiteral("string"),
+                           QString::fromStdString(bodyMat.name));
+    }
+
+    if (hit.faceIndex >= 0) {
+        props.emplace_back(tr("Face Index"), QStringLiteral("int"),
+                           hit.faceIndex);
+
+        // Show face material (override or inherited)
+        if (!hit.bodyId.empty()) {
+            const auto& faceMat = m_document->appearances().faceMaterial(
+                hit.bodyId, hit.faceIndex);
+            bool hasOverride = m_document->appearances().hasFaceOverride(
+                hit.bodyId, hit.faceIndex);
+            QString matLabel = QString::fromStdString(faceMat.name);
+            if (hasOverride)
+                matLabel += QStringLiteral(" (override)");
+            props.emplace_back(tr("Face Material"), QStringLiteral("string"),
+                               matLabel);
+        }
+    }
+
+    if (hit.edgeIndex >= 0) {
+        props.emplace_back(tr("Edge Index"), QStringLiteral("int"),
+                           hit.edgeIndex);
+    }
+
+    props.emplace_back(tr("World X"), QStringLiteral("double"),
+                       static_cast<double>(hit.worldX));
+    props.emplace_back(tr("World Y"), QStringLiteral("double"),
+                       static_cast<double>(hit.worldY));
+    props.emplace_back(tr("World Z"), QStringLiteral("double"),
+                       static_cast<double>(hit.worldZ));
+    props.emplace_back(tr("Depth"), QStringLiteral("double"),
+                       static_cast<double>(hit.depth));
+
+    // --- B-Rep topology info via BRepQuery ---
+    if (!hit.bodyId.empty()) {
+        auto& brep = m_document->brepModel();
+        if (brep.hasBody(hit.bodyId)) {
+            try {
+                kernel::BRepQuery bq = brep.query(hit.bodyId);
+
+                // Face-level topology info
+                if (hit.faceIndex >= 0 && hit.faceIndex < bq.faceCount()) {
+                    kernel::FaceInfo fi = bq.faceInfo(hit.faceIndex);
+
+                    props.emplace_back(tr("--- Face Topology ---"), QStringLiteral("label"),
+                                       QString());
+                    props.emplace_back(tr("Surface Type"), QStringLiteral("string"),
+                                       QString::fromLatin1(kernel::surfaceTypeName(fi.surfaceType)));
+                    props.emplace_back(tr("Face Area"), QStringLiteral("string"),
+                                       QString::number(fi.area, 'f', 4) + QStringLiteral(" mm2"));
+                    props.emplace_back(tr("Normal"), QStringLiteral("string"),
+                                       QStringLiteral("(%1, %2, %3)")
+                                           .arg(fi.normalX, 0, 'f', 4)
+                                           .arg(fi.normalY, 0, 'f', 4)
+                                           .arg(fi.normalZ, 0, 'f', 4));
+                    props.emplace_back(tr("Centroid"), QStringLiteral("string"),
+                                       QStringLiteral("(%1, %2, %3)")
+                                           .arg(fi.centroidX, 0, 'f', 4)
+                                           .arg(fi.centroidY, 0, 'f', 4)
+                                           .arg(fi.centroidZ, 0, 'f', 4));
+                    props.emplace_back(tr("Edge Count"), QStringLiteral("int"),
+                                       fi.edgeCount);
+                    props.emplace_back(tr("Loop Count"), QStringLiteral("int"),
+                                       fi.loopCount);
+                    props.emplace_back(tr("Reversed"), QStringLiteral("string"),
+                                       fi.isReversed ? QStringLiteral("Yes") : QStringLiteral("No"));
+
+                    // Adjacent faces
+                    auto adj = bq.adjacentFaces(hit.faceIndex);
+                    if (!adj.empty()) {
+                        QStringList adjList;
+                        for (int idx : adj) adjList.append(QString::number(idx));
+                        props.emplace_back(tr("Adjacent Faces"), QStringLiteral("string"),
+                                           adjList.join(QStringLiteral(", ")));
+                    }
+                }
+
+                // Edge-level topology info
+                if (hit.edgeIndex >= 0 && hit.edgeIndex < bq.edgeCount()) {
+                    kernel::EdgeInfo ei = bq.edgeInfo(hit.edgeIndex);
+
+                    props.emplace_back(tr("--- Edge Topology ---"), QStringLiteral("label"),
+                                       QString());
+                    props.emplace_back(tr("Curve Type"), QStringLiteral("string"),
+                                       QString::fromLatin1(kernel::curveTypeName(ei.curveType)));
+                    props.emplace_back(tr("Edge Length"), QStringLiteral("string"),
+                                       QString::number(ei.length, 'f', 4) + QStringLiteral(" mm"));
+                    props.emplace_back(tr("Convexity"), QStringLiteral("string"),
+                                       QString::fromLatin1(kernel::edgeConvexityName(ei.convexity)));
+                    props.emplace_back(tr("Start"), QStringLiteral("string"),
+                                       QStringLiteral("(%1, %2, %3)")
+                                           .arg(ei.startX, 0, 'f', 4)
+                                           .arg(ei.startY, 0, 'f', 4)
+                                           .arg(ei.startZ, 0, 'f', 4));
+                    props.emplace_back(tr("End"), QStringLiteral("string"),
+                                       QStringLiteral("(%1, %2, %3)")
+                                           .arg(ei.endX, 0, 'f', 4)
+                                           .arg(ei.endY, 0, 'f', 4)
+                                           .arg(ei.endZ, 0, 'f', 4));
+                    if (ei.adjacentFace1 >= 0)
+                        props.emplace_back(tr("Adj. Face 1"), QStringLiteral("int"),
+                                           ei.adjacentFace1);
+                    if (ei.adjacentFace2 >= 0)
+                        props.emplace_back(tr("Adj. Face 2"), QStringLiteral("int"),
+                                           ei.adjacentFace2);
+                    if (ei.isSeam)
+                        props.emplace_back(tr("Seam Edge"), QStringLiteral("string"),
+                                           QStringLiteral("Yes"));
+                    if (ei.isDegenerate)
+                        props.emplace_back(tr("Degenerate"), QStringLiteral("string"),
+                                           QStringLiteral("Yes"));
+                }
+            } catch (...) {
+                // BRepQuery may throw on degenerate shapes; silently skip topology info
+            }
+
+            // Physical properties for the selected body
+            auto phys = brep.getProperties(hit.bodyId);
+
+            props.emplace_back(tr("--- Physical Properties ---"), QStringLiteral("label"),
+                               QString());
+
+            props.emplace_back(tr("Volume"), QStringLiteral("string"),
+                               QString::number(phys.volume, 'f', 4) + QStringLiteral(" mm3"));
+            props.emplace_back(tr("Surface Area"), QStringLiteral("string"),
+                               QString::number(phys.surfaceArea, 'f', 4) + QStringLiteral(" mm2"));
+            props.emplace_back(tr("Mass (steel)"), QStringLiteral("string"),
+                               QString::number(phys.mass, 'f', 4) + QStringLiteral(" g"));
+            props.emplace_back(tr("CoG X"), QStringLiteral("string"),
+                               QString::number(phys.cogX, 'f', 4) + QStringLiteral(" mm"));
+            props.emplace_back(tr("CoG Y"), QStringLiteral("string"),
+                               QString::number(phys.cogY, 'f', 4) + QStringLiteral(" mm"));
+            props.emplace_back(tr("CoG Z"), QStringLiteral("string"),
+                               QString::number(phys.cogZ, 'f', 4) + QStringLiteral(" mm"));
+            props.emplace_back(tr("Bbox Width (X)"), QStringLiteral("string"),
+                               QString::number(phys.bboxMaxX - phys.bboxMinX, 'f', 4) + QStringLiteral(" mm"));
+            props.emplace_back(tr("Bbox Height (Y)"), QStringLiteral("string"),
+                               QString::number(phys.bboxMaxY - phys.bboxMinY, 'f', 4) + QStringLiteral(" mm"));
+            props.emplace_back(tr("Bbox Depth (Z)"), QStringLiteral("string"),
+                               QString::number(phys.bboxMaxZ - phys.bboxMinZ, 'f', 4) + QStringLiteral(" mm"));
+        }
+    }
+
+    m_properties->setProperties(props);
+
+    // Add material dropdown when a body is selected
+    if (!hit.bodyId.empty()) {
+        const auto& bodyMat = m_document->appearances().bodyMaterial(hit.bodyId);
+        m_properties->addMaterialDropdown(
+            QString::fromStdString(hit.bodyId),
+            QString::fromStdString(bodyMat.name));
+    }
+
+    // Status bar
+    QString msg;
+    if (sel.size() == 1) {
+        if (hit.edgeIndex >= 0) {
+            msg = tr("Selected edge %1").arg(hit.edgeIndex);
+        } else {
+            msg = tr("Selected face %1").arg(hit.faceIndex);
+        }
+        if (!hit.bodyId.empty())
+            msg += tr(" on body %1").arg(QString::fromStdString(hit.bodyId));
+    } else {
+        msg = tr("Selected %1 entities").arg(sel.size());
+    }
+    statusBar()->showMessage(msg);
+}
+
+void MainWindow::refreshAllPanels()
+{
+    // Refresh the feature tree
+    m_featureTree->refresh();
+
+    // Rebuild timeline entries from the document
+    auto& tl = m_document->timeline();
+    std::vector<std::pair<QString, QString>> entries;
+    entries.reserve(tl.count());
+    for (size_t i = 0; i < tl.count(); ++i) {
+        const auto& e = tl.entry(i);
+        entries.emplace_back(QString::fromStdString(e.id),
+                             QString::fromStdString(e.name));
+    }
+    m_timeline->setEntries(entries);
+    m_timeline->setMarkerPosition(static_cast<int>(tl.markerPosition()));
+    m_timeline->setEditingFeatureId(m_editingFeatureId);
+
+    // Refresh the 3D viewport
+    updateViewport();
+
+    // If the properties panel is showing a feature, re-read its params
+    // (covers undo/redo and any external mutation)
+    QString currentFeatId = m_properties->currentFeatureId();
+    if (!currentFeatId.isEmpty())
+        m_properties->showFeature(currentFeatId);
+
+    // Update undo/redo menu items and window title
+    updateUndoRedoActions();
+    updateWindowTitle();
+
+    // Notify auto-save that the document changed
+    if (m_autoSave)
+        m_autoSave->documentChanged();
+}
+
+void MainWindow::updateViewport()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty())
+        return;
+
+    // Fallback per-body color palette (used when no material is assigned)
+    static const float kBodyColors[][3] = {
+        {0.6f, 0.65f, 0.7f},   // steel blue-gray (default)
+        {0.7f, 0.5f, 0.3f},    // bronze
+        {0.3f, 0.7f, 0.4f},    // green
+        {0.7f, 0.3f, 0.3f},    // red
+        {0.4f, 0.4f, 0.7f},    // purple
+        {0.7f, 0.7f, 0.3f},    // gold
+    };
+    static constexpr size_t kNumBodyColors = sizeof(kBodyColors) / sizeof(kBodyColors[0]);
+    const auto& appearances = m_document->appearances();
+
+    std::vector<BodyRenderData> bodies;
+    bodies.reserve(ids.size());
+
+    for (size_t bi = 0; bi < ids.size(); ++bi) {
+        const auto& id = ids[bi];
+        auto mesh = brep.getMesh(id, 0.1);
+        auto edgeMesh = brep.getEdgeMesh(id, 0.1);
+
+        BodyRenderData body;
+        body.bodyId = id;
+        body.vertices = std::move(mesh.vertices);
+        body.normals = std::move(mesh.normals);
+        body.indices = std::move(mesh.indices);
+        body.edgeVertices = std::move(edgeMesh.vertices);
+        body.edgeIndices = std::move(edgeMesh.indices);
+
+        // Use material color from AppearanceManager if assigned, otherwise palette
+        const auto& mat = appearances.bodyMaterial(id);
+        if (appearances.bodyMaterials().count(id)) {
+            body.colorR = mat.baseR;
+            body.colorG = mat.baseG;
+            body.colorB = mat.baseB;
+        } else {
+            body.colorR = kBodyColors[bi % kNumBodyColors][0];
+            body.colorG = kBodyColors[bi % kNumBodyColors][1];
+            body.colorB = kBodyColors[bi % kNumBodyColors][2];
+        }
+
+        // Visibility from BRepModel
+        body.isVisible = brep.isBodyVisible(id);
+
+        // Build per-face triangle IDs by walking OCCT face explorer
+        const TopoDS_Shape& shape = brep.getShape(id);
+        TopExp_Explorer faceEx(shape, TopAbs_FACE);
+        uint32_t localFaceIndex = 0;
+        for (; faceEx.More(); faceEx.Next()) {
+            const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
+            TopLoc_Location loc;
+            auto tri = BRep_Tool::Triangulation(face, loc);
+            if (tri.IsNull()) continue;
+
+            int faceTris = tri->NbTriangles();
+            for (int t = 0; t < faceTris; ++t) {
+                body.faceIds.push_back(localFaceIndex);
+            }
+            ++localFaceIndex;
+        }
+
+        bodies.push_back(std::move(body));
+    }
+
+    m_viewport->setBodies(bodies);
+}
+
+// =============================================================================
+// Sketch editing support
+// =============================================================================
+
+void MainWindow::setupSketchToolBar()
+{
+    m_sketchToolBar = new QToolBar(tr("Sketch Tools"), this);
+    m_sketchToolBar->setObjectName("SketchToolBar");
+
+    auto* lineAction = m_sketchToolBar->addAction(tr("Line (L)"));
+    connect(lineAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawLine);
+    });
+
+    auto* rectAction = m_sketchToolBar->addAction(tr("Rectangle (R)"));
+    connect(rectAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawRectangle);
+    });
+
+    auto* circleAction = m_sketchToolBar->addAction(tr("Circle (C)"));
+    connect(circleAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawCircle);
+    });
+
+    auto* arcAction = m_sketchToolBar->addAction(tr("Arc (A)"));
+    connect(arcAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawArc);
+    });
+
+    auto* ellipseAction = m_sketchToolBar->addAction(tr("Ellipse"));
+    connect(ellipseAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawEllipse);
+    });
+
+    auto* polygonAction = m_sketchToolBar->addAction(tr("Polygon"));
+    connect(polygonAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawPolygon);
+    });
+
+    auto* slotAction = m_sketchToolBar->addAction(tr("Slot"));
+    connect(slotAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawSlot);
+    });
+
+    auto* circle3PtAction = m_sketchToolBar->addAction(tr("3pt Circle"));
+    connect(circle3PtAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawCircle3Point);
+    });
+
+    auto* arc3PtAction = m_sketchToolBar->addAction(tr("3pt Arc"));
+    connect(arc3PtAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawArc3Point);
+    });
+
+    auto* centerRectAction = m_sketchToolBar->addAction(tr("Center Rect"));
+    connect(centerRectAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::DrawRectangleCenter);
+    });
+
+    m_sketchToolBar->addSeparator();
+
+    auto* constructionAction = m_sketchToolBar->addAction(tr("Construction (X)"));
+    constructionAction->setCheckable(true);
+    connect(constructionAction, &QAction::toggled, this, [this](bool checked) {
+        m_sketchEditor->setConstructionMode(checked);
+    });
+
+    m_sketchToolBar->addSeparator();
+
+    auto* trimAction = m_sketchToolBar->addAction(tr("Trim (T)"));
+    connect(trimAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::Trim);
+    });
+
+    auto* extendAction = m_sketchToolBar->addAction(tr("Extend (E)"));
+    connect(extendAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::Extend);
+    });
+
+    auto* offsetAction = m_sketchToolBar->addAction(tr("Offset (O)"));
+    connect(offsetAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::Offset);
+    });
+
+    auto* projectEdgeAction = m_sketchToolBar->addAction(tr("Project Edge (P)"));
+    connect(projectEdgeAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::ProjectEdge);
+    });
+
+    m_sketchToolBar->addSeparator();
+
+    auto* filletAction = m_sketchToolBar->addAction(tr("Fillet (F)"));
+    connect(filletAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::SketchFillet);
+    });
+
+    auto* chamferAction = m_sketchToolBar->addAction(tr("Chamfer (G)"));
+    connect(chamferAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::SketchChamfer);
+    });
+
+    m_sketchToolBar->addSeparator();
+
+    auto* selectAction = m_sketchToolBar->addAction(tr("Select"));
+    connect(selectAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->setTool(SketchTool::None);
+    });
+
+    m_sketchToolBar->addSeparator();
+
+    auto* finishAction = m_sketchToolBar->addAction(tr("Finish Sketch"));
+    connect(finishAction, &QAction::triggered, this, [this]() {
+        m_sketchEditor->finishEditing();
+    });
+
+    addToolBar(Qt::TopToolBarArea, m_sketchToolBar);
+    m_sketchToolBar->setVisible(false);
+}
+
+void MainWindow::showSketchToolBar(bool visible)
+{
+    if (m_sketchToolBar)
+        m_sketchToolBar->setVisible(visible);
+}
+
+void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
+{
+    if (!sketchFeat)
+        return;
+
+    m_activeSketchFeature = sketchFeat;
+    m_sketchEditor->beginEditing(&sketchFeat->sketch(), m_viewport);
+    m_sketchEditor->setTool(SketchTool::DrawLine);  // default to line tool
+
+    // Disable feature shortcuts that conflict with sketch tool keys
+    // (E=extend, F=fillet, S=spline, C=circle, etc.)
+    if (m_extrudeAction)  m_extrudeAction->setEnabled(false);
+    if (m_filletAction)   m_filletAction->setEnabled(false);
+    if (m_holeAction)     m_holeAction->setEnabled(false);
+    if (m_jointAction)    m_jointAction->setEnabled(false);
+    if (m_measureAction)  m_measureAction->setEnabled(false);
+    if (m_deleteAction)   m_deleteAction->setEnabled(false);
+
+    showSketchToolBar(true);
+    statusBar()->showMessage(tr("Editing sketch -- L=Line, R=Rect, C=Circle, A=Arc, X=Construction, T=Trim, E=Extend, O=Offset, Esc=Finish"));
+}
+
+void MainWindow::onSketchEditingFinished()
+{
+    showSketchToolBar(false);
+
+    // Re-enable feature shortcuts that were disabled during sketch editing
+    if (m_extrudeAction)  m_extrudeAction->setEnabled(true);
+    if (m_filletAction)   m_filletAction->setEnabled(true);
+    if (m_holeAction)     m_holeAction->setEnabled(true);
+    if (m_jointAction)    m_jointAction->setEnabled(true);
+    if (m_measureAction)  m_measureAction->setEnabled(true);
+    if (m_deleteAction)   m_deleteAction->setEnabled(true);
+
+    if (m_activeSketchFeature) {
+        // Solve the sketch one final time
+        m_activeSketchFeature->sketch().solve();
+        m_activeSketchFeature = nullptr;
+    }
+
+    statusBar()->showMessage(tr("Sketch editing finished"));
+    refreshAllPanels();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -125,4 +2655,195 @@ void MainWindow::closeEvent(QCloseEvent* event)
         if (ret == QMessageBox::Save) onSaveDocument();
     }
     event->accept();
+}
+
+// =============================================================================
+// Measure tool
+// =============================================================================
+
+void MainWindow::onMeasure()
+{
+    if (m_measureActive) {
+        // Toggle off
+        m_measureActive = false;
+        m_measureTool->reset();
+        statusBar()->showMessage(tr("Measure tool deactivated"));
+        return;
+    }
+
+    m_measureActive = true;
+    m_measureTool->reset();
+    m_measureTool->setMode(MeasureTool::MeasureMode::PointToPoint);
+
+    // Wire up selection clicks to the measure tool while active
+    m_selectionMgr->setOnSelectionChanged([this](const std::vector<SelectionHit>& sel) {
+        if (!m_measureActive || sel.empty()) {
+            onSelectionChanged();
+            return;
+        }
+
+        const auto& hit = sel.front();
+
+        if (!m_measureTool->hasFirstEntity()) {
+            m_measureTool->setFirstEntity(hit);
+            statusBar()->showMessage(tr("Measure: pick second point (M to cancel)"));
+        } else {
+            m_measureTool->setSecondEntity(hit);
+            // Result is emitted via measurementReady signal
+            // Reset for next measurement
+            m_measureTool->reset();
+            statusBar()->showMessage(tr("Measure: pick first point (M to cancel)"));
+        }
+    });
+
+    statusBar()->showMessage(tr("Measure: pick first point (M to cancel)"));
+}
+
+void MainWindow::executeInteractiveCommand(std::unique_ptr<document::InteractiveCommand> cmd)
+{
+    CommandDialog dlg(cmd.get(), m_document.get(), this);
+    if (dlg.exec() == QDialog::Accepted) {
+        cmd->setInputValues(dlg.values());
+        m_document->executeCommand(std::move(cmd));
+        refreshAllPanels();
+    }
+}
+
+// =============================================================================
+// Delete selected feature
+// =============================================================================
+
+void MainWindow::onDeleteSelectedFeature()
+{
+    // If something is selected in the viewport, try to find the corresponding feature.
+    // For now, delete the last feature in the timeline (most common workflow).
+    if (!m_selectionMgr->hasSelection()) {
+        statusBar()->showMessage(tr("Nothing selected to delete"), 3000);
+        return;
+    }
+
+    // Try to find a body-level feature from the selection
+    const auto& hit = m_selectionMgr->selection().front();
+    if (hit.bodyId.empty()) {
+        statusBar()->showMessage(tr("No feature associated with selection"), 3000);
+        return;
+    }
+
+    // The bodyId often corresponds to a feature id in the timeline
+    QString featureId = QString::fromStdString(hit.bodyId);
+    m_document->executeCommand(
+        std::make_unique<document::DeleteFeatureCommand>(featureId.toStdString()));
+    m_selectionMgr->clearSelection();
+    m_properties->clear();
+    refreshAllPanels();
+    statusBar()->showMessage(tr("Feature deleted"));
+}
+
+// =============================================================================
+// Viewport right-click context menu
+// =============================================================================
+
+void MainWindow::showViewportContextMenu(const QPoint& globalPos)
+{
+    QMenu menu(this);
+
+    if (!m_selectionMgr->hasSelection()) {
+        // Nothing selected -- viewport-level actions
+        menu.addAction(tr("Fit All"), this, [this]() {
+            m_viewport->fitAll();
+            statusBar()->showMessage(tr("Fit All"));
+        });
+
+        // Standard Views submenu
+        auto* viewsMenu = menu.addMenu(tr("Standard Views"));
+        viewsMenu->addAction(tr("Front"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Front);
+        });
+        viewsMenu->addAction(tr("Top"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Top);
+        });
+        viewsMenu->addAction(tr("Right"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Right);
+        });
+        viewsMenu->addAction(tr("Isometric"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Isometric);
+        });
+
+        menu.addSeparator();
+
+        // Toggle Grid
+        auto* gridAction = menu.addAction(tr("Toggle Grid"));
+        gridAction->setCheckable(true);
+        gridAction->setChecked(m_viewport->showGrid());
+        connect(gridAction, &QAction::toggled, this, [this](bool checked) {
+            m_viewport->setShowGrid(checked);
+            statusBar()->showMessage(checked ? tr("Grid visible") : tr("Grid hidden"));
+        });
+
+        // View Mode submenu
+        auto* viewModeMenu = menu.addMenu(tr("View Mode"));
+        auto* solidEdgesAct = viewModeMenu->addAction(tr("Solid with Edges"));
+        solidEdgesAct->setCheckable(true);
+        solidEdgesAct->setChecked(m_viewport->viewMode() == ViewMode::SolidWithEdges);
+        connect(solidEdgesAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::SolidWithEdges);
+        });
+        auto* solidAct = viewModeMenu->addAction(tr("Solid Only"));
+        solidAct->setCheckable(true);
+        solidAct->setChecked(m_viewport->viewMode() == ViewMode::Solid);
+        connect(solidAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::Solid);
+        });
+        auto* wireAct = viewModeMenu->addAction(tr("Wireframe"));
+        wireAct->setCheckable(true);
+        wireAct->setChecked(m_viewport->viewMode() == ViewMode::Wireframe);
+        connect(wireAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::Wireframe);
+        });
+
+        menu.addSeparator();
+        menu.addAction(tr("Create Sketch"), this, &MainWindow::onCreateSketch);
+        menu.addAction(tr("Create Box"),    this, &MainWindow::onCreateBox);
+        menu.addAction(tr("Measure"),       this, &MainWindow::onMeasure);
+
+        menu.exec(globalPos);
+        return;
+    }
+
+    const auto& hit = m_selectionMgr->selection().front();
+    bool hasFace = (hit.faceIndex >= 0);
+    bool hasEdge = (hit.edgeIndex >= 0);
+    bool hasBody = !hit.bodyId.empty();
+
+    if (hasFace) {
+        // Face selected
+        menu.addAction(tr("Extrude from Face"),      this, &MainWindow::onExtrudeSketch);
+        menu.addAction(tr("Create Sketch on Face"),   this, &MainWindow::onCreateSketch);
+        menu.addSeparator();
+        menu.addAction(tr("Fillet Adjacent Edges"),   this, &MainWindow::onFillet);
+        menu.addAction(tr("Chamfer Adjacent Edges"),  this, &MainWindow::onChamfer);
+        menu.addAction(tr("Shell (remove this face)"),this, &MainWindow::onShell);
+        menu.addAction(tr("Draft"),                   this, &MainWindow::onDraft);
+        menu.addAction(tr("Hole"),                    this, &MainWindow::onAddHole);
+    } else if (hasEdge) {
+        // Edge selected
+        menu.addAction(tr("Fillet this Edge"),  this, &MainWindow::onFillet);
+        menu.addAction(tr("Chamfer this Edge"), this, &MainWindow::onChamfer);
+    } else if (hasBody) {
+        // Body selected (no specific sub-entity)
+        menu.addAction(tr("Mirror"),       this, &MainWindow::onMirrorLastBody);
+        menu.addAction(tr("Rect Pattern"), this, &MainWindow::onRectangularPattern);
+        menu.addAction(tr("Circ Pattern"), this, &MainWindow::onCircularPattern);
+        menu.addAction(tr("Shell"),        this, &MainWindow::onShell);
+        menu.addAction(tr("Hole"),         this, &MainWindow::onAddHole);
+        menu.addSeparator();
+        menu.addAction(tr("Export STEP..."), this, &MainWindow::onExportSTEP);
+    }
+
+    if (!menu.isEmpty()) {
+        menu.addSeparator();
+        menu.addAction(tr("Delete"), this, &MainWindow::onDeleteSelectedFeature);
+    }
+
+    menu.exec(globalPos);
 }
