@@ -31,6 +31,7 @@ class MeasureTool;
 class MarkingMenu;
 class CommandPalette;
 class FeatureDialog;
+class ParameterTablePanel;
 
 namespace features { class SketchFeature; }
 
@@ -135,6 +136,10 @@ private:
     std::unique_ptr<document::Document> m_document;
     std::unique_ptr<document::PreviewEngine> m_previewEngine;
 
+    // Repeat-last-command tracking for context menus
+    QString m_lastCommandName;
+    std::function<void()> m_lastCommandCallback;
+
     // Selection
     std::unique_ptr<SelectionManager> m_selectionMgr;
 
@@ -143,6 +148,7 @@ private:
     FeatureTree*    m_featureTree  = nullptr;
     TimelinePanel*  m_timeline     = nullptr;
     PropertiesPanel* m_properties  = nullptr;
+    ParameterTablePanel* m_parameterTable = nullptr;
 
     /// The feature ID currently being edited (empty when not in edit mode).
     QString m_editingFeatureId;
@@ -209,8 +215,10 @@ private:
     };
 
     /// Add a labelled group of tool buttons to a ribbon tab layout.
+    /// dropdownExtras are additional commands shown below a separator in the group dropdown.
     void addToolGroup(QHBoxLayout* parentLayout, const QString& groupName,
-                      const std::vector<ToolEntry>& tools);
+                      const std::vector<ToolEntry>& tools,
+                      const std::vector<ToolEntry>& dropdownExtras = {});
 
     /// Add a thin vertical separator between groups.
     void addGroupSeparator(QHBoxLayout* layout);

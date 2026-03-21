@@ -74,6 +74,7 @@ add_executable(kernelCAD
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp
   ui/IconFactory.cpp
+  ui/ParameterTablePanel.cpp
 )
 
 target_include_directories(kernelCAD PRIVATE

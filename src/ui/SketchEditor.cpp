@@ -349,17 +349,58 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
     if (!screenToSketch(event->pos(), sx, sy))
         return false;
 
-    // ── Pointer (None) tool: start drag if near a point ─────────────────
-    if (m_tool == SketchTool::None) {
+    // ── DRAG: always try drag first, regardless of active tool ──────────
+    // In Fusion 360, you can grab and drag any sketch entity at any time.
+    // Points drag directly; circles/arcs drag to change radius.
+    {
+        // 1. Try dragging a point (endpoint, center, control point)
         std::string ptId = findNearestPoint(sx, sy, 5.0);
-        if (!ptId.empty()) {
+        if (!ptId.empty() && !m_drawingInProgress) {
             m_isDragging = true;
             m_dragPointId = ptId;
-            if (m_viewport) m_viewport->update();
+            m_dragMode = DragMode::Point;
+            if (m_viewport) {
+                m_viewport->setCursor(Qt::ClosedHandCursor);
+                m_viewport->update();
+            }
             return true;
         }
-        // Click on a constraint marker could select it for deletion
-        // For now, deselect any selected constraint
+
+        // 2. Try dragging a circle edge (change radius)
+        if (!m_drawingInProgress) {
+            std::string circId = findNearestCircle(sx, sy, 5.0);
+            if (!circId.empty()) {
+                const auto& circ = m_sketch->circle(circId);
+                m_isDragging = true;
+                m_dragPointId = circ.centerPointId;  // reference center
+                m_dragCircleId = circId;
+                m_dragMode = DragMode::CircleRadius;
+                if (m_viewport) {
+                    m_viewport->setCursor(Qt::SizeAllCursor);
+                    m_viewport->update();
+                }
+                return true;
+            }
+
+            // 3. Try dragging an arc edge (change radius)
+            std::string arcId = findNearestArc(sx, sy, 5.0);
+            if (!arcId.empty()) {
+                const auto& a = m_sketch->arc(arcId);
+                m_isDragging = true;
+                m_dragPointId = a.centerPointId;
+                m_dragCircleId = arcId;
+                m_dragMode = DragMode::ArcRadius;
+                if (m_viewport) {
+                    m_viewport->setCursor(Qt::SizeAllCursor);
+                    m_viewport->update();
+                }
+                return true;
+            }
+        }
+    }
+
+    // ── Pointer (None) tool: deselect constraints ────────────────────────
+    if (m_tool == SketchTool::None) {
         m_selectedConstraintId.clear();
         return false;
     }
@@ -744,13 +785,18 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
     switch (event->key()) {
     case Qt::Key_Escape:
         if (m_drawingInProgress) {
+            // First Escape while drawing: cancel current draw, stay in same tool
             cancelDraw();
             if (m_viewport) m_viewport->update();
         } else if (m_firstPick.kind != SketchPickResult::Nothing) {
             // Cancel the first pick for Dimension/Constraint tool
             m_firstPick = {};
             if (m_viewport) m_viewport->update();
+        } else if (m_tool != SketchTool::None) {
+            // Escape when a tool is active but not drawing: exit tool to pointer mode
+            setTool(SketchTool::None);
         } else {
+            // Escape when already in pointer mode: finish sketch editing
             finishEditing();
         }
         return true;
@@ -1296,13 +1342,20 @@ void SketchEditor::finalizeLine()
     // Always auto-apply H/V constraints to nearly-aligned lines
     autoConstrainLastEntity(lineId);
 
+    // Auto-dimension: add a Distance constraint showing the line length
+    {
+        const auto& ln = m_sketch->line(lineId);
+        m_sketch->addConstraint(sketch::ConstraintType::Distance,
+                                {ln.startPointId, ln.endPointId}, len);
+    }
+
     if (m_autoConstrain)
         m_sketch->autoConstrain();
 
     m_drawingInProgress = false;
     emit sketchChanged();
 
-    // Optionally chain: start a new line from the end of the previous one
+    // Chain: start next line from the endpoint of the previous one
     m_startX = x2;
     m_startY = y2;
     m_currentX = x2;
@@ -1342,6 +1395,14 @@ void SketchEditor::finalizeRectangle()
     autoConstrainLastEntity(lt);
     autoConstrainLastEntity(ll);
 
+    // Auto-dimension: width (bottom edge) and height (right edge)
+    {
+        double width  = std::abs(x2 - x1);
+        double height = std::abs(y2 - y1);
+        m_sketch->addConstraint(sketch::ConstraintType::Distance, {p0, p1}, width);
+        m_sketch->addConstraint(sketch::ConstraintType::Distance, {p1, p2}, height);
+    }
+
     if (m_autoConstrain)
         m_sketch->autoConstrain();
 
@@ -1362,8 +1423,11 @@ void SketchEditor::finalizeCircle()
         return;
     }
 
-    m_sketch->addCircle(cx, cy, radius);
+    std::string circleId = m_sketch->addCircle(cx, cy, radius);
     m_sketch->solve();
+
+    // Auto-dimension: add a Radius constraint showing the circle's radius
+    m_sketch->addConstraint(sketch::ConstraintType::Radius, {circleId}, radius);
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();

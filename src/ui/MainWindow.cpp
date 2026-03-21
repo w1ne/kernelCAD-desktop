@@ -13,6 +13,7 @@
 #include "MarkingMenu.h"
 #include "CommandPalette.h"
 #include "FeatureDialog.h"
+#include "ParameterTablePanel.h"
 #include "../document/Document.h"
 #include "../document/InteractiveCommands.h"
 #include "../document/AutoSave.h"
@@ -97,6 +98,14 @@ MainWindow::MainWindow(QWidget* parent)
     setupSketchToolBar();
     m_featureTree->setDocument(m_document.get());
     m_properties->setDocument(m_document.get());
+    m_parameterTable->setDocument(m_document.get());
+
+    // Parameter changes -> recompute + refresh
+    connect(m_parameterTable, &ParameterTablePanel::parameterChanged, this, [this]() {
+        m_document->recompute();
+        refreshAllPanels();
+        m_parameterTable->refresh();
+    });
 
     // Wire up selection manager to viewport and callbacks
     m_viewport->setSelectionManager(m_selectionMgr.get());
@@ -236,7 +245,8 @@ void MainWindow::setupUI()
 // ─── Ribbon helpers ─────────────────────────────────────────────────────────
 
 void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupName,
-                               const std::vector<ToolEntry>& tools)
+                               const std::vector<ToolEntry>& tools,
+                               const std::vector<ToolEntry>& dropdownExtras)
 {
     auto* groupWidget = new QWidget;
     groupWidget->setObjectName("RibbonGroup");
@@ -269,11 +279,30 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     }
     groupLayout->addLayout(buttonRow);
 
-    // Group label (small text underneath)
-    auto* label = new QLabel(groupName);
-    label->setAlignment(Qt::AlignCenter);
-    label->setObjectName("RibbonGroupLabel");
-    groupLayout->addWidget(label);
+    // Group label as clickable dropdown button (shows all commands in this group)
+    auto* groupLabel = new QPushButton(groupName + QString::fromUtf8(" \xe2\x96\xbe"));
+    groupLabel->setFlat(true);
+    groupLabel->setStyleSheet("color: #888; font-size: 9px; border: none; padding: 0 2px;");
+    groupLabel->setCursor(Qt::PointingHandCursor);
+    // Capture copies of tools and extras for the dropdown lambda
+    auto toolsCopy = tools;
+    auto extrasCopy = dropdownExtras;
+    connect(groupLabel, &QPushButton::clicked, this, [toolsCopy, extrasCopy, groupLabel]() {
+        QMenu menu;
+        for (const auto& t : toolsCopy) {
+            if (t.action)
+                menu.addAction(t.name, t.action);
+        }
+        if (!extrasCopy.empty()) {
+            menu.addSeparator();
+            for (const auto& t : extrasCopy) {
+                if (t.action)
+                    menu.addAction(t.name, t.action);
+            }
+        }
+        menu.exec(groupLabel->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
+    });
+    groupLayout->addWidget(groupLabel, 0, Qt::AlignCenter);
 
     parentLayout->addWidget(groupWidget);
 }
@@ -364,6 +393,10 @@ void MainWindow::setupToolBar()
              [this]() { onCreateCylinder(); }},
             {"Sphere",   IconFactory::createIcon("sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
              [this]() { onCreateSphere(); }},
+        }, {
+            {"Torus",  {}, tr("Torus"),  [this]() { statusBar()->showMessage(tr("Torus — not yet implemented")); }},
+            {"Coil",   {}, tr("Coil"),   [this]() { statusBar()->showMessage(tr("Coil — not yet implemented")); }},
+            {"Pipe",   {}, tr("Pipe"),   [this]() { statusBar()->showMessage(tr("Pipe — not yet implemented")); }},
         });
         addGroupSeparator(layout);
 
@@ -377,6 +410,9 @@ void MainWindow::setupToolBar()
              [this]() { onSweepSketch(); }},
             {"Loft",    IconFactory::createIcon("loft"),    tr("Loft \u2014 Solid between profiles"),
              [this]() { onLoftTest(); }},
+        }, {
+            {"Extrude from Face",    {}, tr("Extrude from Face"),    [this]() { onExtrudeSketch(); }},
+            {"Revolve from Sketch",  {}, tr("Revolve from Sketch"),  [this]() { onRevolveSketch(); }},
         });
         addGroupSeparator(layout);
 
@@ -392,6 +428,19 @@ void MainWindow::setupToolBar()
              [this]() { onDraft(); }},
             {"Hole",    IconFactory::createIcon("hole"),    tr("Hole (H) \u2014 Create a hole on a face"),
              [this]() { onAddHole(); }},
+        }, {
+            {"Press/Pull",    {}, tr("Press/Pull"),    [this]() { statusBar()->showMessage(tr("Press/Pull — not yet implemented")); }},
+            {"Scale",         {}, tr("Scale"),         [this]() { statusBar()->showMessage(tr("Scale — not yet implemented")); }},
+            {"Combine",       {}, tr("Combine"),       [this]() { statusBar()->showMessage(tr("Combine — not yet implemented")); }},
+            {"Replace Face",  {}, tr("Replace Face"),  [this]() { statusBar()->showMessage(tr("Replace Face — not yet implemented")); }},
+            {"Split Face",    {}, tr("Split Face"),    [this]() { statusBar()->showMessage(tr("Split Face — not yet implemented")); }},
+            {"Split Body",    {}, tr("Split Body"),    [this]() { statusBar()->showMessage(tr("Split Body — not yet implemented")); }},
+            {"Offset Faces",  {}, tr("Offset Faces"),  [this]() { statusBar()->showMessage(tr("Offset Faces — not yet implemented")); }},
+            {"Delete Face",   {}, tr("Delete Face"),   [this]() { statusBar()->showMessage(tr("Delete Face — not yet implemented")); }},
+            {"Thread",        {}, tr("Thread"),        [this]() { statusBar()->showMessage(tr("Thread — not yet implemented")); }},
+            {"Thicken",       {}, tr("Thicken"),       [this]() { statusBar()->showMessage(tr("Thicken — not yet implemented")); }},
+            {"Move/Copy",     {}, tr("Move/Copy"),     [this]() { statusBar()->showMessage(tr("Move/Copy — not yet implemented")); }},
+            {"Appearance",    {}, tr("Appearance"),    [this]() { statusBar()->showMessage(tr("Appearance — not yet implemented")); }},
         });
         addGroupSeparator(layout);
 
@@ -403,6 +452,8 @@ void MainWindow::setupToolBar()
              [this]() { onRectangularPattern(); }},
             {"Circ Pattern", IconFactory::createIcon("circ_pattern"), tr("Circ Pattern \u2014 Circular array"),
              [this]() { onCircularPattern(); }},
+        }, {
+            {"Path Pattern", {}, tr("Path Pattern"), [this]() { statusBar()->showMessage(tr("Path Pattern — not yet implemented")); }},
         });
         addGroupSeparator(layout);
 
@@ -414,6 +465,12 @@ void MainWindow::setupToolBar()
              [this]() { onConstructAxis(); }},
             {"Point", IconFactory::createIcon("point"), tr("Construct Point \u2014 Create a construction point"),
              [this]() { onConstructPoint(); }},
+        }, {
+            {"Offset Plane",             {}, tr("Offset Plane"),             [this]() { statusBar()->showMessage(tr("Offset Plane — not yet implemented")); }},
+            {"Plane at Angle",           {}, tr("Plane at Angle"),           [this]() { statusBar()->showMessage(tr("Plane at Angle — not yet implemented")); }},
+            {"Plane Through 3 Points",   {}, tr("Plane Through 3 Points"),  [this]() { statusBar()->showMessage(tr("Plane Through 3 Points — not yet implemented")); }},
+            {"Axis Through 2 Points",    {}, tr("Axis Through 2 Points"),   [this]() { statusBar()->showMessage(tr("Axis Through 2 Points — not yet implemented")); }},
+            {"Point at Vertex",          {}, tr("Point at Vertex"),          [this]() { statusBar()->showMessage(tr("Point at Vertex — not yet implemented")); }},
         });
         addGroupSeparator(layout);
 
@@ -421,6 +478,28 @@ void MainWindow::setupToolBar()
         addToolGroup(layout, "Inspect", {
             {"Measure", IconFactory::createIcon("measure"), tr("Measure (M) \u2014 Measure distances"),
              [this]() { onMeasure(); }},
+        }, {
+            {"Physical Properties", {}, tr("Physical Properties"), [this]() { statusBar()->showMessage(tr("Physical Properties — not yet implemented")); }},
+            {"Face Count",          {}, tr("Face Count"),          [this]() {
+                auto& brep = m_document->brepModel();
+                auto ids = brep.bodyIds();
+                int totalFaces = 0;
+                for (const auto& id : ids) {
+                    auto bq = brep.query(id);
+                    totalFaces += bq.faceCount();
+                }
+                statusBar()->showMessage(tr("Total faces: %1").arg(totalFaces));
+            }},
+            {"Edge Count",          {}, tr("Edge Count"),          [this]() {
+                auto& brep = m_document->brepModel();
+                auto ids = brep.bodyIds();
+                int totalEdges = 0;
+                for (const auto& id : ids) {
+                    auto bq = brep.query(id);
+                    totalEdges += bq.edgeCount();
+                }
+                statusBar()->showMessage(tr("Total edges: %1").arg(totalEdges));
+            }},
         });
 
         layout->addStretch();
@@ -886,6 +965,18 @@ void MainWindow::setupMenuBar()
     toolsMenu->addAction(tr("&Measure"), this, &MainWindow::onMeasure,
                           QKeySequence(tr("M")));
     toolsMenu->addSeparator();
+    toolsMenu->addAction(tr("&Parameters..."), this, [this]() {
+        // Find and raise the Parameters dock
+        const auto docks = findChildren<QDockWidget*>();
+        for (auto* dock : docks) {
+            if (dock->windowTitle() == tr("Parameters")) {
+                dock->show();
+                dock->raise();
+                break;
+            }
+        }
+    });
+    toolsMenu->addSeparator();
     toolsMenu->addAction(tr("Check &Interference"), this, &MainWindow::onCheckInterference);
 
     // --- Appearance menu (material assignment) ---
@@ -1004,6 +1095,14 @@ void MainWindow::setupDocks()
     auto* rightDock = new QDockWidget(tr("Properties"), this);
     rightDock->setWidget(m_properties);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
+
+    // Parameter Table -- tabbed alongside Properties on the right
+    m_parameterTable = new ParameterTablePanel(this);
+    auto* paramDock = new QDockWidget(tr("Parameters"), this);
+    paramDock->setWidget(m_parameterTable);
+    addDockWidget(Qt::RightDockWidgetArea, paramDock);
+    tabifyDockWidget(rightDock, paramDock);
+    rightDock->raise();  // Properties tab is shown first by default
 
     // Timeline -- bottom
     m_timeline = new TimelinePanel(this);
@@ -1243,6 +1342,8 @@ void MainWindow::onPropertyChanged(const QString& featureId,
             std::ostringstream oss;
             oss << newValue.toDouble() << " mm";
             p.distanceExpr = oss.str();
+        } else if (propertyName == QLatin1String("distanceExpr")) {
+            p.distanceExpr = newValue.toString().toStdString();
         } else if (propertyName == QLatin1String("ExtentType")) {
             QString txt = newValue.toString();
             if (txt == QLatin1String("Distance"))    p.extentType = features::ExtentType::Distance;
@@ -1269,6 +1370,8 @@ void MainWindow::onPropertyChanged(const QString& featureId,
             std::ostringstream oss;
             oss << newValue.toDouble() << " deg";
             p.angleExpr = oss.str();
+        } else if (propertyName == QLatin1String("angleExpr")) {
+            p.angleExpr = newValue.toString().toStdString();
         } else if (propertyName == QLatin1String("AxisType")) {
             QString txt = newValue.toString();
             if (txt == QLatin1String("XAxis"))       p.axisType = features::AxisType::XAxis;
@@ -1287,6 +1390,8 @@ void MainWindow::onPropertyChanged(const QString& featureId,
             std::ostringstream oss;
             oss << newValue.toDouble() << " mm";
             p.radiusExpr = oss.str();
+        } else if (propertyName == QLatin1String("radiusExpr")) {
+            p.radiusExpr = newValue.toString().toStdString();
         }
         break;
     }
@@ -1297,11 +1402,41 @@ void MainWindow::onPropertyChanged(const QString& featureId,
             std::ostringstream oss;
             oss << newValue.toDouble() << " mm";
             p.distanceExpr = oss.str();
+        } else if (propertyName == QLatin1String("distanceExpr")) {
+            p.distanceExpr = newValue.toString().toStdString();
         } else if (propertyName == QLatin1String("ChamferType")) {
             QString txt = newValue.toString();
             if (txt == QLatin1String("EqualDistance"))      p.chamferType = features::ChamferType::EqualDistance;
             else if (txt == QLatin1String("TwoDistances"))  p.chamferType = features::ChamferType::TwoDistances;
             else if (txt == QLatin1String("DistanceAndAngle")) p.chamferType = features::ChamferType::DistanceAndAngle;
+        }
+        break;
+    }
+    case FT::Hole: {
+        auto* hf = static_cast<features::HoleFeature*>(feat);
+        auto& p = hf->params();
+        if (propertyName == QLatin1String("Diameter")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " mm";
+            p.diameterExpr = oss.str();
+        } else if (propertyName == QLatin1String("diameterExpr")) {
+            p.diameterExpr = newValue.toString().toStdString();
+        } else if (propertyName == QLatin1String("Depth")) {
+            std::ostringstream oss;
+            oss << newValue.toDouble() << " mm";
+            p.depthExpr = oss.str();
+        } else if (propertyName == QLatin1String("depthExpr")) {
+            p.depthExpr = newValue.toString().toStdString();
+        } else if (propertyName == QLatin1String("TipAngle")) {
+            p.tipAngleDeg = newValue.toDouble();
+        }
+        break;
+    }
+    case FT::Shell: {
+        auto* sf = static_cast<features::ShellFeature*>(feat);
+        auto& p = sf->params();
+        if (propertyName == QLatin1String("Thickness")) {
+            p.thicknessExpr = newValue.toDouble();
         }
         break;
     }
@@ -1492,6 +1627,7 @@ void MainWindow::onNewDocument()
     m_document->newDocument();
     setWindowTitle("kernelCAD — Untitled");
     m_featureTree->setDocument(m_document.get());
+    m_parameterTable->setDocument(m_document.get());
     m_properties->clear();
     m_selectionMgr->clearSelection();
     m_selectionMgr->clearPreSelection();
@@ -1506,6 +1642,7 @@ void MainWindow::onOpenDocument()
     if (!path.isEmpty()) {
         if (m_document->load(path.toStdString())) {
             m_featureTree->setDocument(m_document.get());
+            m_parameterTable->setDocument(m_document.get());
             m_properties->clear();
             refreshAllPanels();
             statusBar()->showMessage(tr("Opened: %1").arg(path));
@@ -1597,6 +1734,8 @@ void MainWindow::onExportSTL()
 
 void MainWindow::onCreateBox()
 {
+    m_lastCommandName = tr("Create Box");
+    m_lastCommandCallback = [this]() { onCreateBox(); };
     features::ExtrudeParams params;
     params.profileId    = "";           // empty = base-feature shortcut (makeBox)
     params.distanceExpr = "50 mm";
@@ -1618,6 +1757,8 @@ void MainWindow::onCreateBox()
 
 void MainWindow::onCreateCylinder()
 {
+    m_lastCommandName = tr("Create Cylinder");
+    m_lastCommandCallback = [this]() { onCreateCylinder(); };
     features::RevolveParams params;
     params.profileId       = "";          // empty = base-feature shortcut (makeCylinder)
     params.angleExpr       = "360 deg";
@@ -1639,6 +1780,8 @@ void MainWindow::onCreateCylinder()
 
 void MainWindow::onCreateSphere()
 {
+    m_lastCommandName = tr("Create Sphere");
+    m_lastCommandCallback = [this]() { onCreateSphere(); };
     m_document->executeCommand(
         std::make_unique<document::AddSphereCommand>(25.0));
     statusBar()->showMessage(tr("Created sphere"));
@@ -1654,6 +1797,8 @@ void MainWindow::onCreateSphere()
 
 void MainWindow::onCreateSketch()
 {
+    m_lastCommandName = tr("Create Sketch");
+    m_lastCommandCallback = [this]() { onCreateSketch(); };
     // If already editing a sketch, finish first
     if (m_sketchEditor->isEditing())
         m_sketchEditor->finishEditing();
@@ -1850,6 +1995,8 @@ void MainWindow::onEditSketch()
 
 void MainWindow::onExtrudeSketch()
 {
+    m_lastCommandName = tr("Extrude");
+    m_lastCommandCallback = [this]() { onExtrudeSketch(); };
     // Selection-driven extrude: if faces are selected, use the interactive
     // command dialog (future: push/pull the selected face).
     const auto& sel = m_selectionMgr->selection();
@@ -1924,6 +2071,8 @@ void MainWindow::onExtrudeSketch()
 
 void MainWindow::onRevolveSketch()
 {
+    m_lastCommandName = tr("Revolve");
+    m_lastCommandCallback = [this]() { onRevolveSketch(); };
     // Find the last non-suppressed sketch in the timeline
     auto& tl = m_document->timeline();
     features::SketchFeature* lastSketch = nullptr;
@@ -1988,6 +2137,8 @@ void MainWindow::onRevolveSketch()
 
 void MainWindow::onAddHole()
 {
+    m_lastCommandName = tr("Hole");
+    m_lastCommandCallback = [this]() { onAddHole(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2165,6 +2316,8 @@ std::vector<int> MainWindow::collectSelectedFaces(std::string& bodyIdOut) const
 // ---------------------------------------------------------------------------
 void MainWindow::onFillet()
 {
+    m_lastCommandName = tr("Fillet");
+    m_lastCommandCallback = [this]() { onFillet(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2244,6 +2397,8 @@ void MainWindow::onFillet()
 // ---------------------------------------------------------------------------
 void MainWindow::onChamfer()
 {
+    m_lastCommandName = tr("Chamfer");
+    m_lastCommandCallback = [this]() { onChamfer(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2317,6 +2472,8 @@ void MainWindow::onChamfer()
 // ---------------------------------------------------------------------------
 void MainWindow::onShell()
 {
+    m_lastCommandName = tr("Shell");
+    m_lastCommandCallback = [this]() { onShell(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2391,6 +2548,8 @@ void MainWindow::onShell()
 // ---------------------------------------------------------------------------
 void MainWindow::onDraft()
 {
+    m_lastCommandName = tr("Draft");
+    m_lastCommandCallback = [this]() { onDraft(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2515,6 +2674,8 @@ void MainWindow::onConstructPoint()
 
 void MainWindow::onMirrorLastBody()
 {
+    m_lastCommandName = tr("Mirror");
+    m_lastCommandCallback = [this]() { onMirrorLastBody(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2546,6 +2707,8 @@ void MainWindow::onMirrorLastBody()
 
 void MainWindow::onCircularPattern()
 {
+    m_lastCommandName = tr("Circular Pattern");
+    m_lastCommandCallback = [this]() { onCircularPattern(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2579,6 +2742,8 @@ void MainWindow::onCircularPattern()
 
 void MainWindow::onRectangularPattern()
 {
+    m_lastCommandName = tr("Rectangular Pattern");
+    m_lastCommandCallback = [this]() { onRectangularPattern(); };
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty()) {
@@ -2630,6 +2795,8 @@ void MainWindow::onSweepTest()
 
 void MainWindow::onLoftTest()
 {
+    m_lastCommandName = tr("Loft");
+    m_lastCommandCallback = [this]() { onLoftTest(); };
     features::LoftParams params;
     // Empty sectionIds triggers the test circle-to-square loft
     params.operation = features::FeatureOperation::NewBody;
@@ -2647,6 +2814,8 @@ void MainWindow::onLoftTest()
 
 void MainWindow::onSweepSketch()
 {
+    m_lastCommandName = tr("Sweep");
+    m_lastCommandCallback = [this]() { onSweepSketch(); };
     // Find the last two sketch features: first = profile, second = path
     auto& tl = m_document->timeline();
     std::vector<std::pair<std::string, features::SketchFeature*>> sketches;
@@ -3307,6 +3476,10 @@ void MainWindow::refreshAllPanels()
     // Update rich status bar (body count, mode, units)
     updateStatusBarInfo();
 
+    // Refresh parameter table
+    if (m_parameterTable)
+        m_parameterTable->refresh();
+
     // Notify auto-save that the document changed
     if (m_autoSave)
         m_autoSave->documentChanged();
@@ -3600,6 +3773,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::onMeasure()
 {
+    m_lastCommandName = tr("Measure");
+    m_lastCommandCallback = [this]() { onMeasure(); };
     if (m_measureActive) {
         // Toggle off
         m_measureActive = false;
@@ -3684,26 +3859,70 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
 {
     QMenu menu(this);
 
+    // "Repeat [last command]" — always first, matching professional CAD UX
+    if (!m_lastCommandName.isEmpty() && m_lastCommandCallback) {
+        menu.addAction(tr("Repeat %1").arg(m_lastCommandName), this, m_lastCommandCallback);
+        menu.addSeparator();
+    }
+
     if (!m_selectionMgr->hasSelection()) {
-        // Nothing selected -- viewport-level actions
+        // ── Right-click on empty space ──────────────────────────────────
         menu.addAction(tr("Fit All"), this, [this]() {
             m_viewport->fitAll();
             statusBar()->showMessage(tr("Fit All"));
         });
 
-        // Standard Views submenu
+        // Standard Views submenu (all 7 standard views)
         auto* viewsMenu = menu.addMenu(tr("Standard Views"));
         viewsMenu->addAction(tr("Front"), this, [this]() {
             m_viewport->setStandardView(StandardView::Front);
         });
-        viewsMenu->addAction(tr("Top"), this, [this]() {
-            m_viewport->setStandardView(StandardView::Top);
+        viewsMenu->addAction(tr("Back"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Back);
+        });
+        viewsMenu->addAction(tr("Left"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Left);
         });
         viewsMenu->addAction(tr("Right"), this, [this]() {
             m_viewport->setStandardView(StandardView::Right);
         });
+        viewsMenu->addAction(tr("Top"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Top);
+        });
+        viewsMenu->addAction(tr("Bottom"), this, [this]() {
+            m_viewport->setStandardView(StandardView::Bottom);
+        });
         viewsMenu->addAction(tr("Isometric"), this, [this]() {
             m_viewport->setStandardView(StandardView::Isometric);
+        });
+
+        menu.addSeparator();
+
+        // Visual Style submenu (all 4 view modes)
+        auto* viewModeMenu = menu.addMenu(tr("Visual Style"));
+        auto* solidEdgesAct = viewModeMenu->addAction(tr("Solid + Edges"));
+        solidEdgesAct->setCheckable(true);
+        solidEdgesAct->setChecked(m_viewport->viewMode() == ViewMode::SolidWithEdges);
+        connect(solidEdgesAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::SolidWithEdges);
+        });
+        auto* solidAct = viewModeMenu->addAction(tr("Solid"));
+        solidAct->setCheckable(true);
+        solidAct->setChecked(m_viewport->viewMode() == ViewMode::Solid);
+        connect(solidAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::Solid);
+        });
+        auto* wireAct = viewModeMenu->addAction(tr("Wireframe"));
+        wireAct->setCheckable(true);
+        wireAct->setChecked(m_viewport->viewMode() == ViewMode::Wireframe);
+        connect(wireAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::Wireframe);
+        });
+        auto* hiddenAct = viewModeMenu->addAction(tr("Hidden Line"));
+        hiddenAct->setCheckable(true);
+        hiddenAct->setChecked(m_viewport->viewMode() == ViewMode::HiddenLine);
+        connect(hiddenAct, &QAction::triggered, this, [this]() {
+            m_viewport->setViewMode(ViewMode::HiddenLine);
         });
 
         menu.addSeparator();
@@ -3717,40 +3936,9 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
             statusBar()->showMessage(checked ? tr("Grid visible") : tr("Grid hidden"));
         });
 
-        // Toggle Origin
-        auto* originAction = menu.addAction(tr("Toggle Origin"));
-        originAction->setCheckable(true);
-        originAction->setChecked(m_viewport->showOrigin());
-        connect(originAction, &QAction::toggled, this, [this](bool checked) {
-            m_viewport->setShowOrigin(checked);
-            statusBar()->showMessage(checked ? tr("Origin visible") : tr("Origin hidden"));
-        });
-
-        // View Mode submenu
-        auto* viewModeMenu = menu.addMenu(tr("View Mode"));
-        auto* solidEdgesAct = viewModeMenu->addAction(tr("Solid with Edges"));
-        solidEdgesAct->setCheckable(true);
-        solidEdgesAct->setChecked(m_viewport->viewMode() == ViewMode::SolidWithEdges);
-        connect(solidEdgesAct, &QAction::triggered, this, [this]() {
-            m_viewport->setViewMode(ViewMode::SolidWithEdges);
-        });
-        auto* solidAct = viewModeMenu->addAction(tr("Solid Only"));
-        solidAct->setCheckable(true);
-        solidAct->setChecked(m_viewport->viewMode() == ViewMode::Solid);
-        connect(solidAct, &QAction::triggered, this, [this]() {
-            m_viewport->setViewMode(ViewMode::Solid);
-        });
-        auto* wireAct = viewModeMenu->addAction(tr("Wireframe"));
-        wireAct->setCheckable(true);
-        wireAct->setChecked(m_viewport->viewMode() == ViewMode::Wireframe);
-        connect(wireAct, &QAction::triggered, this, [this]() {
-            m_viewport->setViewMode(ViewMode::Wireframe);
-        });
-
         menu.addSeparator();
         menu.addAction(tr("Create Sketch"), this, &MainWindow::onCreateSketch);
         menu.addAction(tr("Create Box"),    this, &MainWindow::onCreateBox);
-        menu.addAction(tr("Measure"),       this, &MainWindow::onMeasure);
 
         menu.exec(globalPos);
         return;
@@ -3759,34 +3947,44 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
     const auto& hit = m_selectionMgr->selection().front();
     bool hasFace = (hit.faceIndex >= 0);
     bool hasEdge = (hit.edgeIndex >= 0);
-    bool hasBody = !hit.bodyId.empty();
 
     if (hasFace) {
-        // Face selected
-        menu.addAction(tr("Extrude from Face"),      this, &MainWindow::onExtrudeSketch);
-        menu.addAction(tr("Create Sketch on Face"),   this, &MainWindow::onCreateSketch);
+        // ── Right-click on face ─────────────────────────────────────────
+        menu.addAction(tr("Press/Pull"), this, [this]() {
+            statusBar()->showMessage(tr("Press/Pull \u2014 not yet implemented"));
+        });
+        menu.addAction(tr("Create Sketch on Face"), this, &MainWindow::onCreateSketch);
+        menu.addAction(tr("Extrude"),               this, &MainWindow::onExtrudeSketch);
         menu.addSeparator();
-        menu.addAction(tr("Fillet Adjacent Edges"),   this, &MainWindow::onFillet);
-        menu.addAction(tr("Chamfer Adjacent Edges"),  this, &MainWindow::onChamfer);
-        menu.addAction(tr("Shell (remove this face)"),this, &MainWindow::onShell);
-        menu.addAction(tr("Draft"),                   this, &MainWindow::onDraft);
-        menu.addAction(tr("Hole"),                    this, &MainWindow::onAddHole);
+        menu.addAction(tr("Fillet"),                this, &MainWindow::onFillet);
+        menu.addAction(tr("Chamfer"),               this, &MainWindow::onChamfer);
+        menu.addAction(tr("Shell (remove this face)"), this, &MainWindow::onShell);
+        menu.addAction(tr("Draft"),                 this, &MainWindow::onDraft);
+        menu.addAction(tr("Hole"),                  this, &MainWindow::onAddHole);
+        menu.addSeparator();
+        menu.addAction(tr("Appearance"), this, [this]() {
+            statusBar()->showMessage(tr("Appearance \u2014 not yet implemented"));
+        });
+        menu.addAction(tr("Measure"), this, &MainWindow::onMeasure);
+        menu.addSeparator();
+        menu.addAction(tr("Delete"), this, &MainWindow::onDeleteSelectedFeature);
     } else if (hasEdge) {
-        // Edge selected
+        // ── Right-click on edge ─────────────────────────────────────────
         menu.addAction(tr("Fillet this Edge"),  this, &MainWindow::onFillet);
         menu.addAction(tr("Chamfer this Edge"), this, &MainWindow::onChamfer);
-    } else if (hasBody) {
-        // Body selected (no specific sub-entity)
+        menu.addSeparator();
+        menu.addAction(tr("Measure"), this, &MainWindow::onMeasure);
+        menu.addSeparator();
+        menu.addAction(tr("Delete"), this, &MainWindow::onDeleteSelectedFeature);
+    } else {
+        // Body selected (no specific sub-entity) — fallback
         menu.addAction(tr("Mirror"),       this, &MainWindow::onMirrorLastBody);
         menu.addAction(tr("Rect Pattern"), this, &MainWindow::onRectangularPattern);
         menu.addAction(tr("Circ Pattern"), this, &MainWindow::onCircularPattern);
         menu.addAction(tr("Shell"),        this, &MainWindow::onShell);
         menu.addAction(tr("Hole"),         this, &MainWindow::onAddHole);
         menu.addSeparator();
-        menu.addAction(tr("Export STEP..."), this, &MainWindow::onExportSTEP);
-    }
-
-    if (!menu.isEmpty()) {
+        menu.addAction(tr("Measure"), this, &MainWindow::onMeasure);
         menu.addSeparator();
         menu.addAction(tr("Delete"), this, &MainWindow::onDeleteSelectedFeature);
     }

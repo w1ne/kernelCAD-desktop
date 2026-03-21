@@ -595,18 +595,18 @@ void PropertiesPanel::buildExtrudeForm(const QString& featureId,
     const auto& p = feat->params();
     setHeaderText(QString::fromStdString(feat->name()), QStringLiteral("ExtrudeFeature"));
 
-    // --- Distance ---
-    auto* distSpin = new QDoubleSpinBox();
-    distSpin->setObjectName("Distance");
-    distSpin->setRange(0.0, 100000.0);
-    distSpin->setDecimals(4);
-    distSpin->setSuffix(" mm");
-    distSpin->setValue(parseExprValue(p.distanceExpr));
-    m_formLayout->addRow(tr("Distance"), distSpin);
+    // --- Distance (expression field) ---
+    auto* distField = new QLineEdit(this);
+    distField->setObjectName("Distance");
+    distField->setText(QString::fromStdString(p.distanceExpr));
+    distField->setPlaceholderText(tr("e.g. 50 mm or width/2"));
+    distField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Distance"), distField);
 
-    connect(distSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Distance"), v);
+    connect(distField, &QLineEdit::editingFinished, this,
+        [this, featureId, distField]() {
+            emit propertyChanged(featureId, QStringLiteral("distanceExpr"), distField->text());
         });
 
     // --- Extent Type ---
@@ -671,18 +671,18 @@ void PropertiesPanel::buildRevolveForm(const QString& featureId,
     const auto& p = feat->params();
     setHeaderText(QString::fromStdString(feat->name()), QStringLiteral("RevolveFeature"));
 
-    // --- Angle ---
-    auto* angleSpin = new QDoubleSpinBox();
-    angleSpin->setObjectName("Angle");
-    angleSpin->setRange(0.0, 360.0);
-    angleSpin->setDecimals(2);
-    angleSpin->setSuffix(QStringLiteral(" \u00B0"));
-    angleSpin->setValue(parseExprValue(p.angleExpr));
-    m_formLayout->addRow(tr("Angle"), angleSpin);
+    // --- Angle (expression field) ---
+    auto* angleField = new QLineEdit(this);
+    angleField->setObjectName("Angle");
+    angleField->setText(QString::fromStdString(p.angleExpr));
+    angleField->setPlaceholderText(tr("e.g. 360 deg or sweep_angle"));
+    angleField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Angle"), angleField);
 
-    connect(angleSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Angle"), v);
+    connect(angleField, &QLineEdit::editingFinished, this,
+        [this, featureId, angleField]() {
+            emit propertyChanged(featureId, QStringLiteral("angleExpr"), angleField->text());
         });
 
     // --- Axis Type ---
@@ -720,18 +720,18 @@ void PropertiesPanel::buildFilletForm(const QString& featureId,
     const auto& p = feat->params();
     setHeaderText(QString::fromStdString(feat->name()), QStringLiteral("FilletFeature"));
 
-    // --- Radius ---
-    auto* radiusSpin = new QDoubleSpinBox();
-    radiusSpin->setObjectName("Radius");
-    radiusSpin->setRange(0.0, 100000.0);
-    radiusSpin->setDecimals(4);
-    radiusSpin->setSuffix(" mm");
-    radiusSpin->setValue(parseExprValue(p.radiusExpr));
-    m_formLayout->addRow(tr("Radius"), radiusSpin);
+    // --- Radius (expression field) ---
+    auto* radiusField = new QLineEdit(this);
+    radiusField->setObjectName("Radius");
+    radiusField->setText(QString::fromStdString(p.radiusExpr));
+    radiusField->setPlaceholderText(tr("e.g. 2 mm or fillet_r"));
+    radiusField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Radius"), radiusField);
 
-    connect(radiusSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Radius"), v);
+    connect(radiusField, &QLineEdit::editingFinished, this,
+        [this, featureId, radiusField]() {
+            emit propertyChanged(featureId, QStringLiteral("radiusExpr"), radiusField->text());
         });
 
     // --- Edge count (read-only) ---
@@ -748,18 +748,18 @@ void PropertiesPanel::buildChamferForm(const QString& featureId,
     const auto& p = feat->params();
     setHeaderText(QString::fromStdString(feat->name()), QStringLiteral("ChamferFeature"));
 
-    // --- Distance ---
-    auto* distSpin = new QDoubleSpinBox();
-    distSpin->setObjectName("Distance");
-    distSpin->setRange(0.0, 100000.0);
-    distSpin->setDecimals(4);
-    distSpin->setSuffix(" mm");
-    distSpin->setValue(parseExprValue(p.distanceExpr));
-    m_formLayout->addRow(tr("Distance"), distSpin);
+    // --- Distance (expression field) ---
+    auto* distField = new QLineEdit(this);
+    distField->setObjectName("Distance");
+    distField->setText(QString::fromStdString(p.distanceExpr));
+    distField->setPlaceholderText(tr("e.g. 1 mm or chamfer_d"));
+    distField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Distance"), distField);
 
-    connect(distSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Distance"), v);
+    connect(distField, &QLineEdit::editingFinished, this,
+        [this, featureId, distField]() {
+            emit propertyChanged(featureId, QStringLiteral("distanceExpr"), distField->text());
         });
 
     // --- Chamfer Type ---
@@ -940,32 +940,32 @@ void PropertiesPanel::buildHoleForm(const QString& featureId,
     typeCombo->setCurrentIndex(static_cast<int>(p.holeType));
     m_formLayout->addRow(tr("Hole Type"), typeCombo);
 
-    // --- Diameter ---
-    auto* diamSpin = new QDoubleSpinBox();
-    diamSpin->setObjectName("Diameter");
-    diamSpin->setRange(0.001, 100000.0);
-    diamSpin->setDecimals(4);
-    diamSpin->setSuffix(" mm");
-    diamSpin->setValue(parseExprValue(p.diameterExpr));
-    m_formLayout->addRow(tr("Diameter"), diamSpin);
+    // --- Diameter (expression field) ---
+    auto* diamField = new QLineEdit(this);
+    diamField->setObjectName("Diameter");
+    diamField->setText(QString::fromStdString(p.diameterExpr));
+    diamField->setPlaceholderText(tr("e.g. 10 mm or hole_d"));
+    diamField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Diameter"), diamField);
 
-    connect(diamSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Diameter"), v);
+    connect(diamField, &QLineEdit::editingFinished, this,
+        [this, featureId, diamField]() {
+            emit propertyChanged(featureId, QStringLiteral("diameterExpr"), diamField->text());
         });
 
-    // --- Depth ---
-    auto* depthSpin = new QDoubleSpinBox();
-    depthSpin->setObjectName("Depth");
-    depthSpin->setRange(0.0, 100000.0);
-    depthSpin->setDecimals(4);
-    depthSpin->setSuffix(" mm");
-    depthSpin->setValue(parseExprValue(p.depthExpr));
-    m_formLayout->addRow(tr("Depth (0=through)"), depthSpin);
+    // --- Depth (expression field) ---
+    auto* depthField = new QLineEdit(this);
+    depthField->setObjectName("Depth");
+    depthField->setText(QString::fromStdString(p.depthExpr));
+    depthField->setPlaceholderText(tr("e.g. 20 mm or hole_depth (0=through)"));
+    depthField->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; padding: 2px 4px; }"));
+    m_formLayout->addRow(tr("Depth (0=through)"), depthField);
 
-    connect(depthSpin, &QDoubleSpinBox::valueChanged, this,
-        [this, featureId](double v) {
-            schedulePropertyChanged(featureId, QStringLiteral("Depth"), v);
+    connect(depthField, &QLineEdit::editingFinished, this,
+        [this, featureId, depthField]() {
+            emit propertyChanged(featureId, QStringLiteral("depthExpr"), depthField->text());
         });
 
     // --- Tip Angle ---
