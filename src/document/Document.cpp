@@ -956,6 +956,23 @@ std::string Document::addOffsetFaces(features::OffsetFacesParams params)
     return targetId;
 }
 
+std::string Document::addConstructionPlane(features::ConstructionPlaneParams params)
+{
+    std::ostringstream featureIdStream;
+    featureIdStream << "cplane_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::ConstructionPlane>(featureId, std::move(params));
+
+    m_depGraph.addNode(featureId);
+
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return featureId;
+}
+
 std::string Document::addMove(features::MoveParams params)
 {
     std::string targetId = params.targetBodyId;

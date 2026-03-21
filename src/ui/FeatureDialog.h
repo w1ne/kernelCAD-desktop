@@ -8,6 +8,8 @@
 #include "../features/ChamferFeature.h"
 #include "../features/ShellFeature.h"
 #include "../features/RevolveFeature.h"
+#include "../features/OffsetFacesFeature.h"
+#include "../features/ConstructionPlane.h"
 
 class QFormLayout;
 class QLabel;
@@ -41,6 +43,12 @@ public:
     /// Show dialog configured for Revolve with given default params.
     void showRevolve(const features::RevolveParams& defaults);
 
+    /// Show dialog configured for Press/Pull (offset faces) with given default params.
+    void showPressPull(const features::OffsetFacesParams& defaults);
+
+    /// Show dialog configured for Construction Plane with given default params.
+    void showConstructionPlane(const features::ConstructionPlaneParams& defaults);
+
     /// Hide and clear all form content.
     void dismiss();
 
@@ -63,12 +71,14 @@ signals:
     void chamferAccepted(features::ChamferParams params);
     void shellAccepted(features::ShellParams params);
     void revolveAccepted(features::RevolveParams params);
+    void pressPullAccepted(features::OffsetFacesParams params);
+    void constructionPlaneAccepted(features::ConstructionPlaneParams params);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    enum class Mode { None, Extrude, Fillet, Chamfer, Shell, Revolve };
+    enum class Mode { None, Extrude, Fillet, Chamfer, Shell, Revolve, PressPull, ConstructionPlane };
 
     void clearForm();
     void setupLayout();
@@ -81,6 +91,8 @@ private:
     void buildChamferForm(const features::ChamferParams& defaults);
     void buildShellForm(const features::ShellParams& defaults);
     void buildRevolveForm(const features::RevolveParams& defaults);
+    void buildPressPullForm(const features::OffsetFacesParams& defaults);
+    void buildConstructionPlaneForm(const features::ConstructionPlaneParams& defaults);
 
     /// Collect current form values into the typed params and emit the accepted signal.
     void emitAccepted();
@@ -126,10 +138,22 @@ private:
     QCheckBox*      m_fullRevCheck       = nullptr;
     QComboBox*      m_revolveOpCombo     = nullptr;
 
+    // PressPull
+    QDoubleSpinBox* m_ppDistanceSpin     = nullptr;
+    QLabel*         m_ppFaceCountLabel   = nullptr;
+
+    // Construction Plane
+    QComboBox*      m_cpTypeCombo        = nullptr;
+    QComboBox*      m_cpRefCombo         = nullptr;
+    QDoubleSpinBox* m_cpOffsetSpin       = nullptr;
+    QDoubleSpinBox* m_cpAngleSpin        = nullptr;
+
     // Stored defaults for building the result
     features::ExtrudeParams  m_extrudeDefaults;
     features::FilletParams   m_filletDefaults;
     features::ChamferParams  m_chamferDefaults;
     features::ShellParams    m_shellDefaults;
     features::RevolveParams  m_revolveDefaults;
+    features::OffsetFacesParams m_pressPullDefaults;
+    features::ConstructionPlaneParams m_cpDefaults;
 };

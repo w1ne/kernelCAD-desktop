@@ -351,6 +351,21 @@ private:
     void drawOriginPlanes(const QMatrix4x4& mvp);
     void drawOriginPoint(const QMatrix4x4& mvp);
 
+    // ── custom construction planes ──────────────────────────────────────
+public:
+    struct ConstructionPlaneData {
+        float originX, originY, originZ;
+        float normalX, normalY, normalZ;
+        float xDirX, xDirY, xDirZ;
+        std::string label;
+    };
+    /// Set the list of custom construction planes to render.
+    void setConstructionPlanes(const std::vector<ConstructionPlaneData>& planes);
+
+private:
+    std::vector<ConstructionPlaneData> m_constructionPlanes;
+    void drawConstructionPlanes(const QMatrix4x4& mvp);
+
     // ── standard views & ViewCube ───────────────────────────────────────
     /// Position camera along `direction` at m_orbitDistance from m_center.
     void setStandardView(const QVector3D& direction, const QVector3D& up);

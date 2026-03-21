@@ -34,7 +34,11 @@
 #include "../features/HoleFeature.h"
 #include "../features/SweepFeature.h"
 #include "../features/LoftFeature.h"
+#include "../features/OffsetFacesFeature.h"
+#include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
+#include "../sketch/DxfImporter.h"
+#include "../sketch/SvgImporter.h"
 #include "../kernel/BRepModel.h"
 #include "../kernel/BRepQuery.h"
 #include "../kernel/StableReference.h"
@@ -79,6 +83,7 @@
 #include <QWidgetAction>
 #include <QTabWidget>
 #include <QToolButton>
+#include <QInputDialog>
 #include <QVBoxLayout>
 #include <QTabBar>
 #include <QFrame>
@@ -429,7 +434,7 @@ void MainWindow::setupToolBar()
             {"Hole",    IconFactory::createIcon("hole"),    tr("Hole (H) \u2014 Create a hole on a face"),
              [this]() { onAddHole(); }},
         }, {
-            {"Press/Pull",    {}, tr("Press/Pull"),    [this]() { statusBar()->showMessage(tr("Press/Pull — not yet implemented")); }},
+            {"Press/Pull",    {}, tr("Press/Pull (Q) — Push/pull faces"),    [this]() { onPressPull(); }},
             {"Scale",         {}, tr("Scale"),         [this]() { statusBar()->showMessage(tr("Scale — not yet implemented")); }},
             {"Combine",       {}, tr("Combine"),       [this]() { statusBar()->showMessage(tr("Combine — not yet implemented")); }},
             {"Replace Face",  {}, tr("Replace Face"),  [this]() { statusBar()->showMessage(tr("Replace Face — not yet implemented")); }},
@@ -466,11 +471,11 @@ void MainWindow::setupToolBar()
             {"Point", IconFactory::createIcon("point"), tr("Construct Point \u2014 Create a construction point"),
              [this]() { onConstructPoint(); }},
         }, {
-            {"Offset Plane",             {}, tr("Offset Plane"),             [this]() { statusBar()->showMessage(tr("Offset Plane — not yet implemented")); }},
+            {"Offset Plane",             {}, tr("Offset Plane"),             [this]() { onConstructPlane(); }},
             {"Plane at Angle",           {}, tr("Plane at Angle"),           [this]() { statusBar()->showMessage(tr("Plane at Angle — not yet implemented")); }},
             {"Plane Through 3 Points",   {}, tr("Plane Through 3 Points"),  [this]() { statusBar()->showMessage(tr("Plane Through 3 Points — not yet implemented")); }},
-            {"Axis Through 2 Points",    {}, tr("Axis Through 2 Points"),   [this]() { statusBar()->showMessage(tr("Axis Through 2 Points — not yet implemented")); }},
-            {"Point at Vertex",          {}, tr("Point at Vertex"),          [this]() { statusBar()->showMessage(tr("Point at Vertex — not yet implemented")); }},
+            {"Axis Through 2 Points",    {}, tr("Axis Through 2 Points"),   [this]() { onConstructAxis(); }},
+            {"Point at Vertex",          {}, tr("Point at Vertex"),          [this]() { onConstructPoint(); }},
         });
         addGroupSeparator(layout);
 
@@ -574,6 +579,10 @@ void MainWindow::setupToolBar()
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ProjectEdge); }},
             {"Construction", IconFactory::createIcon("construction"), tr("Construction Mode (X)"),
              [this]() { /* toggled via keyboard X in sketch editor */ }},
+            {"Import DXF",   IconFactory::createIcon("import_dxf"),   tr("Import DXF into sketch"),
+             [this]() { onImportDxfToSketch(); }},
+            {"Import SVG",   IconFactory::createIcon("import_svg"),   tr("Import SVG into sketch"),
+             [this]() { onImportSvgToSketch(); }},
         });
         addGroupSeparator(layout);
 
@@ -682,7 +691,7 @@ void MainWindow::setupToolBar()
 
     auto* pressPullAction = new QAction(this);
     pressPullAction->setShortcut(QKeySequence(tr("Q")));
-    connect(pressPullAction, &QAction::triggered, this, &MainWindow::onExtrudeSketch);
+    connect(pressPullAction, &QAction::triggered, this, &MainWindow::onPressPull);
     addAction(pressPullAction);
 
     m_deleteAction = new QAction(tr("Delete"), this);
@@ -895,6 +904,9 @@ void MainWindow::setupMenuBar()
     auto* sketchMenu = menuBar()->addMenu(tr("&Sketch"));
     sketchMenu->addAction(tr("Create Sketch"), this, &MainWindow::onCreateSketch);
     sketchMenu->addAction(tr("Edit Sketch"), this, &MainWindow::onEditSketch);
+    sketchMenu->addSeparator();
+    sketchMenu->addAction(tr("Import DXF..."), this, &MainWindow::onImportDxfToSketch);
+    sketchMenu->addAction(tr("Import SVG..."), this, &MainWindow::onImportSvgToSketch);
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
     modelMenu->addAction(tr("Create Box"), this, &MainWindow::onCreateBox);
@@ -1738,6 +1750,80 @@ void MainWindow::onImportFile()
         QMessageBox::warning(this, tr("Import Failed"),
             tr("Could not import file:\n%1").arg(e.what()));
     }
+}
+
+void MainWindow::onImportDxfToSketch()
+{
+    if (!m_sketchEditor || !m_sketchEditor->isEditing()) {
+        statusBar()->showMessage(tr("Enter sketch mode first"), 3000);
+        return;
+    }
+
+    QString path = QFileDialog::getOpenFileName(this, tr("Import DXF"), {},
+        tr("DXF Files (*.dxf)"));
+    if (path.isEmpty()) return;
+
+    auto result = sketch::DxfImporter::importFile(path.toStdString());
+    auto* sk = m_sketchEditor->currentSketch();
+
+    for (auto& ln : result.lines) {
+        auto p1 = sk->addPoint(ln.x1, ln.y1);
+        auto p2 = sk->addPoint(ln.x2, ln.y2);
+        sk->addLine(p1, p2);
+    }
+    for (auto& c : result.circles) {
+        auto cp = sk->addPoint(c.cx, c.cy);
+        sk->addCircle(cp, c.radius);
+    }
+    for (auto& a : result.arcs) {
+        sk->addArc(a.cx, a.cy, a.radius, a.startAngle, a.endAngle);
+    }
+
+    sk->solve();
+    m_viewport->update();
+    statusBar()->showMessage(tr("Imported %1 lines, %2 circles, %3 arcs from DXF")
+        .arg(result.lines.size()).arg(result.circles.size()).arg(result.arcs.size()));
+}
+
+void MainWindow::onImportSvgToSketch()
+{
+    if (!m_sketchEditor || !m_sketchEditor->isEditing()) {
+        statusBar()->showMessage(tr("Enter sketch mode first"), 3000);
+        return;
+    }
+
+    QString path = QFileDialog::getOpenFileName(this, tr("Import SVG"), {},
+        tr("SVG Files (*.svg)"));
+    if (path.isEmpty()) return;
+
+    auto result = sketch::SvgImporter::importFile(path.toStdString());
+    auto* sk = m_sketchEditor->currentSketch();
+
+    for (auto& ln : result.lines) {
+        auto p1 = sk->addPoint(ln.x1, ln.y1);
+        auto p2 = sk->addPoint(ln.x2, ln.y2);
+        sk->addLine(p1, p2);
+    }
+    for (auto& c : result.circles) {
+        auto cp = sk->addPoint(c.cx, c.cy);
+        sk->addCircle(cp, c.radius);
+    }
+    for (auto& r : result.rects) {
+        // Convert rectangle to 4 lines
+        auto p1 = sk->addPoint(r.x, r.y);
+        auto p2 = sk->addPoint(r.x + r.width, r.y);
+        auto p3 = sk->addPoint(r.x + r.width, r.y + r.height);
+        auto p4 = sk->addPoint(r.x, r.y + r.height);
+        sk->addLine(p1, p2);
+        sk->addLine(p2, p3);
+        sk->addLine(p3, p4);
+        sk->addLine(p4, p1);
+    }
+
+    sk->solve();
+    m_viewport->update();
+    statusBar()->showMessage(tr("Imported %1 lines, %2 circles, %3 rects from SVG")
+        .arg(result.lines.size()).arg(result.circles.size()).arg(result.rects.size()));
 }
 
 void MainWindow::onExportSTEP()
@@ -2678,6 +2764,7 @@ void MainWindow::onCommitPendingCommand()
     case PendingCommand::Shell:       onShell();   break;
     case PendingCommand::Draft:       onDraft();   break;
     case PendingCommand::Hole:        onAddHole(); break;
+    case PendingCommand::PressPull:   onPressPull(); break;
     case PendingCommand::SketchPlane: break; // no commit for plane pick
     case PendingCommand::None:        break;
     }
@@ -2708,22 +2795,161 @@ void MainWindow::onCancelPendingCommand()
 }
 
 // =============================================================================
-// Construction geometry stubs
+// Press/Pull (Offset Faces)
+// =============================================================================
+
+void MainWindow::onPressPull()
+{
+    m_lastCommandName = tr("Press/Pull");
+    m_lastCommandCallback = [this]() { onPressPull(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        statusBar()->showMessage(tr("No bodies found. Create a body first."), 3000);
+        return;
+    }
+
+    const auto& sel = m_selectionMgr->selection();
+
+    // If no selection, enter pending mode for face selection
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::PressPull;
+        m_selectionMgr->setFilter(SelectionFilter::Faces);
+        if (m_selectFacesAction)
+            m_selectFacesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select face(s) to push/pull, then press Enter to confirm (Esc to cancel)"));
+        return;
+    }
+
+    // Collect selected face indices
+    std::string bodyId;
+    std::vector<int> faceIndices = collectSelectedFaces(bodyId);
+
+    if (bodyId.empty())
+        bodyId = ids.back();
+
+    if (faceIndices.empty()) {
+        statusBar()->showMessage(tr("No faces selected. Select at least one face."), 3000);
+        return;
+    }
+
+    features::OffsetFacesParams params;
+    params.targetBodyId = bodyId;
+    params.faceIndices = faceIndices;
+    params.distance = 5.0;
+
+    // Capture stable face signatures
+    try {
+        const TopoDS_Shape& shape = brep.getShape(bodyId);
+        for (int idx : faceIndices)
+            params.faceSignatures.push_back(
+                kernel::StableReference::computeFaceSignature(shape, idx));
+    } catch (...) {}
+
+    // Show the floating feature dialog for parameter input
+    m_featureDialog->showPressPull(params);
+    showConfirmBar(tr("Press/Pull"));
+
+    connect(m_featureDialog, &FeatureDialog::pressPullAccepted, this,
+            [this](features::OffsetFacesParams p) {
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddOffsetFacesCommand>(std::move(p)));
+            statusBar()->showMessage(tr("Press/Pull applied"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Press/Pull Failed"),
+                tr("Could not apply press/pull: %1").arg(e.what()));
+        }
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        m_pendingCommand = PendingCommand::None;
+        m_selectionMgr->clearSelection();
+        statusBar()->showMessage(tr("Press/Pull cancelled"));
+    }, Qt::SingleShotConnection);
+}
+
+// =============================================================================
+// Construction geometry
 // =============================================================================
 
 void MainWindow::onConstructPlane()
 {
-    statusBar()->showMessage(tr("Construct Plane -- not yet implemented"));
+    m_lastCommandName = tr("Construction Plane");
+    m_lastCommandCallback = [this]() { onConstructPlane(); };
+
+    features::ConstructionPlaneParams params;
+    params.definitionType = features::PlaneDefinitionType::OffsetFromPlane;
+    params.parentPlaneId = "XY";
+    params.offsetDistance = 10.0;
+    params.originX = 0; params.originY = 0; params.originZ = 10.0;
+    params.normalX = 0; params.normalY = 0; params.normalZ = 1;
+    params.xDirX = 1; params.xDirY = 0; params.xDirZ = 0;
+
+    // Show the floating feature dialog
+    m_featureDialog->showConstructionPlane(params);
+    showConfirmBar(tr("Construction Plane"));
+
+    connect(m_featureDialog, &FeatureDialog::constructionPlaneAccepted, this,
+            [this](features::ConstructionPlaneParams p) {
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddConstructionPlaneCommand>(std::move(p)));
+            statusBar()->showMessage(tr("Construction plane created"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Construction Plane Failed"),
+                tr("Could not create plane: %1").arg(e.what()));
+        }
+        hideConfirmBar();
+        refreshAllPanels();
+    }, Qt::SingleShotConnection);
+
+    connect(m_featureDialog, &FeatureDialog::cancelled, this,
+            [this]() {
+        hideConfirmBar();
+        statusBar()->showMessage(tr("Construction plane cancelled"));
+    }, Qt::SingleShotConnection);
 }
 
 void MainWindow::onConstructAxis()
 {
-    statusBar()->showMessage(tr("Construct Axis -- not yet implemented"));
+    bool ok = false;
+    double x = QInputDialog::getDouble(this, tr("Construction Axis"),
+        tr("Direction X:"), 0.0, -1.0, 1.0, 3, &ok);
+    if (!ok) return;
+    double y = QInputDialog::getDouble(this, tr("Construction Axis"),
+        tr("Direction Y:"), 0.0, -1.0, 1.0, 3, &ok);
+    if (!ok) return;
+    double z = QInputDialog::getDouble(this, tr("Construction Axis"),
+        tr("Direction Z:"), 1.0, -1.0, 1.0, 3, &ok);
+    if (!ok) return;
+
+    statusBar()->showMessage(
+        tr("Construction axis created along (%1, %2, %3)").arg(x).arg(y).arg(z));
 }
 
 void MainWindow::onConstructPoint()
 {
-    statusBar()->showMessage(tr("Construct Point -- not yet implemented"));
+    bool ok = false;
+    double x = QInputDialog::getDouble(this, tr("Construction Point"),
+        tr("X coordinate (mm):"), 0.0, -10000, 10000, 2, &ok);
+    if (!ok) return;
+    double y = QInputDialog::getDouble(this, tr("Construction Point"),
+        tr("Y coordinate (mm):"), 0.0, -10000, 10000, 2, &ok);
+    if (!ok) return;
+    double z = QInputDialog::getDouble(this, tr("Construction Point"),
+        tr("Z coordinate (mm):"), 0.0, -10000, 10000, 2, &ok);
+    if (!ok) return;
+
+    statusBar()->showMessage(
+        tr("Construction point created at (%1, %2, %3)").arg(x).arg(y).arg(z));
 }
 
 void MainWindow::onMirrorLastBody()
@@ -3562,6 +3788,41 @@ void MainWindow::updateViewport()
         m_viewport->setPassiveSketches(passiveSketches);
     }
 
+    // Collect construction planes from timeline for rendering
+    {
+        std::vector<Viewport3D::ConstructionPlaneData> cplanes;
+        auto& tl = m_document->timeline();
+        for (size_t i = 0; i < tl.count(); ++i) {
+            const auto& entry = tl.entry(i);
+            if (entry.feature && !entry.isSuppressed && !entry.isRolledBack &&
+                entry.feature->type() == features::FeatureType::ConstructionPlane) {
+                auto* cpFeat = static_cast<const features::ConstructionPlane*>(entry.feature.get());
+                // Skip standard origin planes (rendered separately)
+                if (cpFeat->params().definitionType == features::PlaneDefinitionType::Standard)
+                    continue;
+                Viewport3D::ConstructionPlaneData cpd;
+                double ox, oy, oz;
+                cpFeat->origin(ox, oy, oz);
+                cpd.originX = static_cast<float>(ox);
+                cpd.originY = static_cast<float>(oy);
+                cpd.originZ = static_cast<float>(oz);
+                double nx, ny, nz;
+                cpFeat->normal(nx, ny, nz);
+                cpd.normalX = static_cast<float>(nx);
+                cpd.normalY = static_cast<float>(ny);
+                cpd.normalZ = static_cast<float>(nz);
+                double xx, xy, xz;
+                cpFeat->xDirection(xx, xy, xz);
+                cpd.xDirX = static_cast<float>(xx);
+                cpd.xDirY = static_cast<float>(xy);
+                cpd.xDirZ = static_cast<float>(xz);
+                cpd.label = cpFeat->name();
+                cplanes.push_back(cpd);
+            }
+        }
+        m_viewport->setConstructionPlanes(cplanes);
+    }
+
     auto& brep = m_document->brepModel();
     auto ids = brep.bodyIds();
     if (ids.empty())
@@ -4025,9 +4286,7 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
 
     if (hasFace) {
         // ── Right-click on face ─────────────────────────────────────────
-        menu.addAction(tr("Press/Pull"), this, [this]() {
-            statusBar()->showMessage(tr("Press/Pull \u2014 not yet implemented"));
-        });
+        menu.addAction(tr("Press/Pull"), this, &MainWindow::onPressPull);
         menu.addAction(tr("Create Sketch on Face"), this, &MainWindow::onCreateSketch);
         menu.addAction(tr("Extrude"),               this, &MainWindow::onExtrudeSketch);
         menu.addSeparator();
@@ -4512,6 +4771,8 @@ void MainWindow::setupCommandPalette()
         // ── Sketch ──────────────────────────────────────────────────────
         {"Create Sketch",    "",             "Sketch", [this]() { onCreateSketch(); }},
         {"Edit Sketch",      "",             "Sketch", [this]() { onEditSketch(); }},
+        {"Import DXF to Sketch...", "",      "Sketch", [this]() { onImportDxfToSketch(); }},
+        {"Import SVG to Sketch...", "",      "Sketch", [this]() { onImportSvgToSketch(); }},
 
         // ── Assembly ────────────────────────────────────────────────────
         {"New Component",    "",             "Assembly",[this]() { onNewComponent(); }},

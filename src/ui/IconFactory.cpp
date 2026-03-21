@@ -91,6 +91,8 @@ QIcon IconFactory::createIcon(const QString& name, int size) {
         {"fillet_sketch", &drawFilletSketch},
         {"chamfer_sketch",&drawChamferSketch},
         {"constraint",    &drawConstraintIcon},
+        {"import_dxf",    &drawImportDxf},
+        {"import_svg",    &drawImportSvg},
     };
 
     auto it = map.find(name.toLower());
@@ -1679,6 +1681,112 @@ QPixmap IconFactory::drawConstraintIcon(int size) {
     p.setFont(f);
     p.setPen(QColor(255, 200, 60));
     p.drawText(QRectF(vx - sq, vy - sq*0.3, sq*2, sq*1.3), Qt::AlignCenter, "C");
+
+    return px;
+}
+
+// ─── Import icons ───────────────────────────────────────────────────────────
+
+QPixmap IconFactory::drawImportDxf(int size) {
+    QPixmap px = makePixmap(size);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(100, 200, 130, 150), 1.0));
+    p.setBrush(QColor(100, 200, 130, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
+    initPainter(p, QColor(100, 200, 130), 1.5);
+
+    int m = kMargin + 1;
+    int w = size - 2*m;
+    int h = size - 2*m;
+
+    // Page outline with folded corner
+    qreal fold = w * 0.2;
+    QPainterPath page;
+    page.moveTo(m + w*0.1, m + h*0.05);
+    page.lineTo(m + w*0.65 - fold, m + h*0.05);
+    page.lineTo(m + w*0.65, m + h*0.05 + fold);
+    page.lineTo(m + w*0.65, m + h*0.7);
+    page.lineTo(m + w*0.1, m + h*0.7);
+    page.closeSubpath();
+    p.setBrush(QColor(100, 200, 130, 25));
+    p.drawPath(page);
+
+    // Fold triangle
+    QPainterPath foldPath;
+    foldPath.moveTo(m + w*0.65 - fold, m + h*0.05);
+    foldPath.lineTo(m + w*0.65 - fold, m + h*0.05 + fold);
+    foldPath.lineTo(m + w*0.65, m + h*0.05 + fold);
+    foldPath.closeSubpath();
+    p.setBrush(QColor(100, 200, 130, 50));
+    p.drawPath(foldPath);
+
+    // Import arrow (pointing into sketch)
+    p.setPen(QPen(QColor(100, 200, 130), 2.0, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(m + w*0.8, m + h*0.5), QPointF(m + w*0.8, m + h*0.95));
+    QPointF tip(m + w*0.8, m + h*0.95);
+    p.drawLine(tip, tip + QPointF(-4, -5));
+    p.drawLine(tip, tip + QPointF(4, -5));
+
+    // "DXF" text
+    QFont f("Monospace", std::max(6, size / 5), QFont::Bold);
+    f.setStyleHint(QFont::Monospace);
+    p.setFont(f);
+    p.setPen(QColor(100, 200, 130));
+    p.drawText(QRectF(m, m + h*0.72, w*0.7, h*0.28), Qt::AlignCenter, "DXF");
+
+    return px;
+}
+
+QPixmap IconFactory::drawImportSvg(int size) {
+    QPixmap px = makePixmap(size);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(180, 130, 255, 150), 1.0));
+    p.setBrush(QColor(180, 130, 255, 40));
+    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 8, 8);
+
+    initPainter(p, QColor(180, 130, 255), 1.5);
+
+    int m = kMargin + 1;
+    int w = size - 2*m;
+    int h = size - 2*m;
+
+    // Page outline with folded corner
+    qreal fold = w * 0.2;
+    QPainterPath page;
+    page.moveTo(m + w*0.1, m + h*0.05);
+    page.lineTo(m + w*0.65 - fold, m + h*0.05);
+    page.lineTo(m + w*0.65, m + h*0.05 + fold);
+    page.lineTo(m + w*0.65, m + h*0.7);
+    page.lineTo(m + w*0.1, m + h*0.7);
+    page.closeSubpath();
+    p.setBrush(QColor(180, 130, 255, 25));
+    p.drawPath(page);
+
+    // Fold triangle
+    QPainterPath foldPath;
+    foldPath.moveTo(m + w*0.65 - fold, m + h*0.05);
+    foldPath.lineTo(m + w*0.65 - fold, m + h*0.05 + fold);
+    foldPath.lineTo(m + w*0.65, m + h*0.05 + fold);
+    foldPath.closeSubpath();
+    p.setBrush(QColor(180, 130, 255, 50));
+    p.drawPath(foldPath);
+
+    // Import arrow (pointing into sketch)
+    p.setPen(QPen(QColor(180, 130, 255), 2.0, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(m + w*0.8, m + h*0.5), QPointF(m + w*0.8, m + h*0.95));
+    QPointF tip(m + w*0.8, m + h*0.95);
+    p.drawLine(tip, tip + QPointF(-4, -5));
+    p.drawLine(tip, tip + QPointF(4, -5));
+
+    // "SVG" text
+    QFont f("Monospace", std::max(6, size / 5), QFont::Bold);
+    f.setStyleHint(QFont::Monospace);
+    p.setFont(f);
+    p.setPen(QColor(180, 130, 255));
+    p.drawText(QRectF(m, m + h*0.72, w*0.7, h*0.28), Qt::AlignCenter, "SVG");
 
     return px;
 }

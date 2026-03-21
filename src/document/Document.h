@@ -38,6 +38,7 @@
 #include "../features/DeleteFaceFeature.h"
 #include "../features/ReplaceFaceFeature.h"
 #include "../features/ReverseNormalFeature.h"
+#include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
 #include "JointSolver.h"
 
@@ -160,6 +161,9 @@ public:
 
     /// Reverse normals of faces on a body. Returns the body ID.
     std::string addReverseNormal(features::ReverseNormalParams params);
+
+    /// Add a construction plane feature. Returns the feature ID.
+    std::string addConstructionPlane(features::ConstructionPlaneParams params);
 
     /// Add a joint between two component occurrences. Returns the joint feature ID.
     std::string addJoint(features::JointParams params);

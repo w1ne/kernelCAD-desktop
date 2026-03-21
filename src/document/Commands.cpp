@@ -765,6 +765,24 @@ void AddReverseNormalCommand::undo(Document& doc)
     doc.setModified(true);
 }
 
+// ── AddConstructionPlaneCommand ───────────────────────────────────────────────
+
+AddConstructionPlaneCommand::AddConstructionPlaneCommand(features::ConstructionPlaneParams params)
+    : m_params(std::move(params))
+{}
+
+void AddConstructionPlaneCommand::execute(Document& doc)
+{
+    m_featureId = doc.addConstructionPlane(m_params);
+}
+
+void AddConstructionPlaneCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
 // ── AddJointCommand ──────────────────────────────────────────────────────────
 
 AddJointCommand::AddJointCommand(features::JointParams params)

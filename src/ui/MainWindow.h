@@ -77,6 +77,7 @@ private:
 
     /// Cancel a pending command and restore default selection state.
     void onCancelPendingCommand();
+    void onPressPull();
     void onConstructPlane();
     void onConstructAxis();
     void onConstructPoint();
@@ -91,6 +92,8 @@ private:
     void onInsertComponent();
     void onAddJoint();
     void onCheckInterference();
+    void onImportDxfToSketch();
+    void onImportSvgToSketch();
     void onUndo();
     void onRedo();
 
@@ -260,7 +263,7 @@ private:
     void executeInteractiveCommand(std::unique_ptr<document::InteractiveCommand> cmd);
 
     // Pending selection-driven command workflow
-    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane };
+    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane, PressPull };
     PendingCommand m_pendingCommand = PendingCommand::None;
 
     /// True when waiting for the user to pick a plane or planar face to start a sketch.

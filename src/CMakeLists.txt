@@ -58,6 +58,8 @@ add_executable(kernelCAD
   sketch/Sketch.cpp
   sketch/SketchSolver.cpp
   sketch/SketchToShape.cpp
+  sketch/DxfImporter.cpp
+  sketch/SvgImporter.cpp
   # ui
   ui/MainWindow.cpp
   ui/Viewport3D.cpp

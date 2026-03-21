@@ -68,6 +68,10 @@ private:
     static QPixmap drawChamferSketch(int size);
     static QPixmap drawConstraintIcon(int size);
 
+    // Import icons
+    static QPixmap drawImportDxf(int size);
+    static QPixmap drawImportSvg(int size);
+
     // Sketch constraint icons
     static QPixmap drawCoincident(int size);
     static QPixmap drawParallel(int size);

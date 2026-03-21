@@ -205,6 +205,12 @@ void FeatureDialog::clearForm()
     m_angleSpin = nullptr;
     m_fullRevCheck = nullptr;
     m_revolveOpCombo = nullptr;
+    m_ppDistanceSpin = nullptr;
+    m_ppFaceCountLabel = nullptr;
+    m_cpTypeCombo = nullptr;
+    m_cpRefCombo = nullptr;
+    m_cpOffsetSpin = nullptr;
+    m_cpAngleSpin = nullptr;
 }
 
 void FeatureDialog::dismiss()
@@ -681,7 +687,122 @@ void FeatureDialog::emitAccepted()
         emit accepted();
         break;
     }
+    case Mode::PressPull: {
+        features::OffsetFacesParams p = m_pressPullDefaults;
+        if (m_ppDistanceSpin)
+            p.distance = m_ppDistanceSpin->value();
+        emit pressPullAccepted(p);
+        emit accepted();
+        break;
+    }
+    case Mode::ConstructionPlane: {
+        features::ConstructionPlaneParams p = m_cpDefaults;
+        if (m_cpRefCombo) {
+            QString ref = m_cpRefCombo->currentText();
+            p.parentPlaneId = ref.toStdString();
+            // Compute origin and normal based on reference plane + offset
+            double offset = m_cpOffsetSpin ? m_cpOffsetSpin->value() : 0.0;
+            p.offsetDistance = offset;
+            p.definitionType = features::PlaneDefinitionType::OffsetFromPlane;
+            if (ref == "XY") {
+                p.originX = 0; p.originY = 0; p.originZ = offset;
+                p.normalX = 0; p.normalY = 0; p.normalZ = 1;
+                p.xDirX = 1; p.xDirY = 0; p.xDirZ = 0;
+            } else if (ref == "XZ") {
+                p.originX = 0; p.originY = offset; p.originZ = 0;
+                p.normalX = 0; p.normalY = 1; p.normalZ = 0;
+                p.xDirX = 1; p.xDirY = 0; p.xDirZ = 0;
+            } else if (ref == "YZ") {
+                p.originX = offset; p.originY = 0; p.originZ = 0;
+                p.normalX = 1; p.normalY = 0; p.normalZ = 0;
+                p.xDirX = 0; p.xDirY = 1; p.xDirZ = 0;
+            }
+        }
+        emit constructionPlaneAccepted(p);
+        emit accepted();
+        break;
+    }
     case Mode::None:
         break;
     }
+}
+
+// =============================================================================
+// Press/Pull (Offset Faces)
+// =============================================================================
+
+void FeatureDialog::showPressPull(const features::OffsetFacesParams& defaults)
+{
+    clearForm();
+    m_mode = Mode::PressPull;
+    m_pressPullDefaults = defaults;
+    m_titleLabel->setText(tr("PRESS/PULL"));
+    buildPressPullForm(defaults);
+    showAtPosition();
+}
+
+void FeatureDialog::buildPressPullForm(const features::OffsetFacesParams& defaults)
+{
+    // Distance
+    m_ppDistanceSpin = new QDoubleSpinBox(this);
+    m_ppDistanceSpin->setRange(-1000.0, 1000.0);
+    m_ppDistanceSpin->setDecimals(2);
+    m_ppDistanceSpin->setSuffix(tr(" mm"));
+    m_ppDistanceSpin->setValue(defaults.distance);
+    m_formLayout->addRow(tr("Distance:"), m_ppDistanceSpin);
+
+    connect(m_ppDistanceSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+        emit parameterChanged("distance", v);
+    });
+
+    // Face count label
+    m_ppFaceCountLabel = new QLabel(
+        tr("%1 face(s) selected").arg(defaults.faceIndices.size()), this);
+    m_formLayout->addRow(tr("Faces:"), m_ppFaceCountLabel);
+
+    m_ppDistanceSpin->setFocus();
+    m_ppDistanceSpin->selectAll();
+}
+
+// =============================================================================
+// Construction Plane
+// =============================================================================
+
+void FeatureDialog::showConstructionPlane(const features::ConstructionPlaneParams& defaults)
+{
+    clearForm();
+    m_mode = Mode::ConstructionPlane;
+    m_cpDefaults = defaults;
+    m_titleLabel->setText(tr("CONSTRUCTION PLANE"));
+    buildConstructionPlaneForm(defaults);
+    showAtPosition();
+}
+
+void FeatureDialog::buildConstructionPlaneForm(const features::ConstructionPlaneParams& defaults)
+{
+    // Reference plane
+    m_cpRefCombo = new QComboBox(this);
+    m_cpRefCombo->addItems({"XY", "XZ", "YZ"});
+    if (!defaults.parentPlaneId.empty()) {
+        int idx = m_cpRefCombo->findText(QString::fromStdString(defaults.parentPlaneId));
+        if (idx >= 0) m_cpRefCombo->setCurrentIndex(idx);
+    }
+    m_formLayout->addRow(tr("Reference:"), m_cpRefCombo);
+
+    // Offset distance
+    m_cpOffsetSpin = new QDoubleSpinBox(this);
+    m_cpOffsetSpin->setRange(-10000.0, 10000.0);
+    m_cpOffsetSpin->setDecimals(2);
+    m_cpOffsetSpin->setSuffix(tr(" mm"));
+    m_cpOffsetSpin->setValue(defaults.offsetDistance);
+    m_formLayout->addRow(tr("Offset:"), m_cpOffsetSpin);
+
+    connect(m_cpOffsetSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+        emit parameterChanged("offset", v);
+    });
+
+    m_cpOffsetSpin->setFocus();
+    m_cpOffsetSpin->selectAll();
 }

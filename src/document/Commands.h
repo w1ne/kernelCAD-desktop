@@ -26,6 +26,7 @@
 #include "../features/DeleteFaceFeature.h"
 #include "../features/ReplaceFaceFeature.h"
 #include "../features/ReverseNormalFeature.h"
+#include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
 #include <string>
 #include <memory>
@@ -497,6 +498,21 @@ public:
 private:
     features::ReverseNormalParams m_params;
     std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddConstructionPlaneCommand ───────────────────────────────────────────────
+
+class AddConstructionPlaneCommand : public Command {
+public:
+    explicit AddConstructionPlaneCommand(features::ConstructionPlaneParams params);
+
+    std::string description() const override { return "Add Construction Plane"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::ConstructionPlaneParams m_params;
     std::string m_featureId;
 };
 

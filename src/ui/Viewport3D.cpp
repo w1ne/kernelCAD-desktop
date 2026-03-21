@@ -386,6 +386,13 @@ void Viewport3D::paintGL()
     }
 
     // ====================================================================
+    // 0d. Draw custom construction planes
+    // ====================================================================
+    if (!m_constructionPlanes.empty() && m_edgeProgram) {
+        drawConstructionPlanes(mvp);
+    }
+
+    // ====================================================================
     // Determine what to draw based on view mode
     // ====================================================================
     const bool drawFaces = (m_viewMode == ViewMode::SolidWithEdges ||
@@ -2223,6 +2230,95 @@ void Viewport3D::drawOriginPoint(const QMatrix4x4& mvp)
     glDrawArrays(GL_POINTS, 12, 1);
 
     m_originPlaneVao.release();
+    m_edgeProgram->release();
+}
+
+// =============================================================================
+// Custom construction plane rendering
+// =============================================================================
+
+void Viewport3D::setConstructionPlanes(const std::vector<ConstructionPlaneData>& planes)
+{
+    m_constructionPlanes = planes;
+    update();
+}
+
+void Viewport3D::drawConstructionPlanes(const QMatrix4x4& mvp)
+{
+    if (m_constructionPlanes.empty() || !m_edgeProgram)
+        return;
+
+    m_edgeProgram->bind();
+    m_edgeProgram->setUniformValue("uDepthBias", 0.0f);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+
+    const float S = 40.0f; // half-extent of construction plane quad
+
+    for (const auto& cp : m_constructionPlanes) {
+        // Compute Y direction = normal x xDir
+        float yx = cp.normalY * cp.xDirZ - cp.normalZ * cp.xDirY;
+        float yy = cp.normalZ * cp.xDirX - cp.normalX * cp.xDirZ;
+        float yz = cp.normalX * cp.xDirY - cp.normalY * cp.xDirX;
+
+        // Build model matrix: translate to origin, orient axes
+        QMatrix4x4 model;
+        model.setToIdentity();
+        model.translate(cp.originX, cp.originY, cp.originZ);
+        // Set column vectors: xDir, yDir, normal
+        float m[16] = {
+            cp.xDirX, cp.xDirY, cp.xDirZ, 0,
+            yx, yy, yz, 0,
+            cp.normalX, cp.normalY, cp.normalZ, 0,
+            cp.originX, cp.originY, cp.originZ, 1
+        };
+        model = QMatrix4x4(m);
+
+        QMatrix4x4 finalMVP = mvp * model;
+        m_edgeProgram->setUniformValue("uMVP", finalMVP);
+
+        // Build quad vertices in local XY plane
+        float verts[] = {
+            -S, -S, 0.0f,
+             S, -S, 0.0f,
+             S,  S, 0.0f,
+            -S,  S, 0.0f,
+        };
+
+        // Upload and draw the filled quad (orange tint, semi-transparent)
+        QOpenGLVertexArrayObject vao;
+        QOpenGLBuffer vbo(QOpenGLBuffer::VertexBuffer);
+        vao.create();
+        vbo.create();
+        vao.bind();
+        vbo.bind();
+        vbo.allocate(verts, sizeof(verts));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+
+        // Fill
+        m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(0.9f, 0.6f, 0.1f));
+        m_edgeProgram->setUniformValue("uEdgeAlpha", 0.15f);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+        // Border
+        glEnable(GL_LINE_SMOOTH);
+        glLineWidth(1.5f);
+        m_edgeProgram->setUniformValue("uEdgeColor", QVector3D(1.0f, 0.7f, 0.2f));
+        m_edgeProgram->setUniformValue("uEdgeAlpha", 0.5f);
+        glDrawArrays(GL_LINE_LOOP, 0, 4);
+        glDisable(GL_LINE_SMOOTH);
+
+        vbo.release();
+        vao.release();
+        vbo.destroy();
+        vao.destroy();
+    }
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
     m_edgeProgram->release();
 }
 
