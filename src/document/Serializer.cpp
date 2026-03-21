@@ -1059,6 +1059,8 @@ bool Serializer::save(const Document& doc, const std::string& path)
         w.writeString("id", entry.id);
         w.writeString("type", featureTypeToStr(entry.feature->type()));
         w.writeBool("isSuppressed", entry.isSuppressed);
+        if (!entry.customName.empty())
+            w.writeString("customName", entry.customName);
 
         // Write feature-specific params
         const features::SketchFeature* sketchFeat = nullptr;
@@ -1836,9 +1838,12 @@ bool Serializer::load(Document& doc, const std::string& path)
             // Append to timeline
             doc.timeline().append(feature);
 
-            // Set suppressed state if needed
+            // Set suppressed state and custom name if needed
             size_t idx = doc.timeline().count() - 1;
             doc.timeline().entry(idx).isSuppressed = isSuppressed;
+            std::string customName = entryVal->getString("customName", "");
+            if (!customName.empty())
+                doc.timeline().entry(idx).customName = customName;
         }
     }
 

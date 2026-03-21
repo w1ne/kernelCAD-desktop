@@ -240,6 +240,29 @@ Viewport3D::Viewport3D(QWidget* parent)
     // Enable mouse tracking so mouseMoveEvent fires without buttons pressed
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+
+    // Camera animation timer
+    m_animTimer.setInterval(kAnimTickMs);
+    connect(&m_animTimer, &QTimer::timeout, this, [this]() {
+        m_animElapsed += kAnimTickMs;
+        float t = std::min(1.0f, static_cast<float>(m_animElapsed) / m_animDuration);
+        // Smooth ease-in-out (cubic)
+        float s = (t < 0.5f) ? 4.0f * t * t * t
+                              : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f;
+
+        m_eye    = m_animStartEye    + s * (m_animEndEye    - m_animStartEye);
+        m_center = m_animStartCenter + s * (m_animEndCenter - m_animStartCenter);
+        // Slerp-like up vector interpolation (normalize after lerp)
+        QVector3D upLerp = m_animStartUp + s * (m_animEndUp - m_animStartUp);
+        float upLen = upLerp.length();
+        m_up = (upLen > 1e-6f) ? upLerp / upLen : m_animEndUp;
+
+        update();
+        if (t >= 1.0f) {
+            m_animating = false;
+            m_animTimer.stop();
+        }
+    });
 }
 
 Viewport3D::~Viewport3D()
@@ -558,6 +581,7 @@ void Viewport3D::paintGL()
     if (m_sketchEditor) {
         drawSketchOverlay();
         drawSketchConstraintOverlay();
+        drawSketchSnapAndDimensionOverlay();
     }
 
     // -- ViewCube overlay (top-right corner) ------------------------------
@@ -1118,16 +1142,17 @@ void Viewport3D::fitAll()
     const float fovRad   = qDegreesToRadians(m_fov);
     const float distance = radius / std::sin(fovRad * 0.5f);
 
-    m_center = center;
-    m_orbitDistance = distance * 1.1f;      // 10 % margin
-    m_eye = m_center + QVector3D(0.0f, 0.0f, m_orbitDistance);
-    m_up  = QVector3D(0.0f, 1.0f, 0.0f);
+    float newOrbitDist = distance * 1.1f;
+    QVector3D targetCenter = center;
+    QVector3D targetEye = targetCenter + QVector3D(0.0f, 0.0f, newOrbitDist);
+    QVector3D targetUp(0.0f, 1.0f, 0.0f);
 
-    // Adjust near/far to encompass the scene
+    // Update near/far and orbit distance immediately (animation only moves camera position)
+    m_orbitDistance = newOrbitDist;
     m_near = std::max(0.001f, m_orbitDistance - radius * 2.0f);
     m_far  = m_orbitDistance + radius * 2.0f;
 
-    update();
+    animateTo(targetEye, targetCenter, targetUp, 300);
 }
 
 // =============================================================================
@@ -1155,9 +1180,8 @@ void Viewport3D::buildProjectionMatrix(QMatrix4x4& out) const
 
 void Viewport3D::setStandardView(const QVector3D& direction, const QVector3D& up)
 {
-    m_eye = m_center + direction * m_orbitDistance;
-    m_up  = up;
-    update();
+    QVector3D targetEye = m_center + direction * m_orbitDistance;
+    animateTo(targetEye, m_center, up, 300);
 }
 
 void Viewport3D::setStandardView(StandardView view)
@@ -3018,4 +3042,192 @@ void Viewport3D::drawPreviewMesh(const QMatrix4x4& model,
 
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
+}
+
+// =============================================================================
+// Smooth camera animation
+// =============================================================================
+
+void Viewport3D::animateTo(const QVector3D& targetEye, const QVector3D& targetCenter,
+                            const QVector3D& targetUp, int durationMs)
+{
+    // If the move is very small, snap immediately (avoids jitter)
+    float dist = (targetEye - m_eye).length() + (targetCenter - m_center).length();
+    if (dist < 1e-4f || durationMs <= 0) {
+        m_eye    = targetEye;
+        m_center = targetCenter;
+        m_up     = targetUp;
+        update();
+        return;
+    }
+
+    m_animStartEye    = m_eye;
+    m_animStartCenter = m_center;
+    m_animStartUp     = m_up;
+    m_animEndEye      = targetEye;
+    m_animEndCenter   = targetCenter;
+    m_animEndUp       = targetUp;
+    m_animDuration    = durationMs;
+    m_animElapsed     = 0;
+    m_animating       = true;
+    m_animTimer.start();
+}
+
+// =============================================================================
+// Sketch snap indicators & live dimension overlay (QPainter 2D)
+// =============================================================================
+
+void Viewport3D::drawSketchSnapAndDimensionOverlay()
+{
+    if (!m_sketchEditor || !m_sketchEditor->isEditing())
+        return;
+
+    sketch::Sketch* sk = m_sketchEditor->currentSketch();
+    if (!sk)
+        return;
+
+    double cursorX = m_sketchEditor->rubberCurrentX();
+    double cursorY = m_sketchEditor->rubberCurrentY();
+
+    // Helper: sketch 2D -> screen 2D
+    auto skToScreen = [&](double ssx, double ssy) -> QPointF {
+        double wx, wy, wz;
+        sk->sketchToWorld(ssx, ssy, wx, wy, wz);
+        return worldToScreen(QVector3D(static_cast<float>(wx),
+                                       static_cast<float>(wy),
+                                       static_cast<float>(wz)));
+    };
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    // ── Snap-to-point indicators (orange dot) ───────────────────────────
+    constexpr double snapThreshold = 5.0;   // sketch-space units
+    constexpr double alignThreshold = 1.5;  // sketch-space units for H/V alignment
+
+    const QColor cSnapDot(255, 160, 0, 220);     // orange
+    const QColor cAlignLine(100, 220, 100, 120);  // green dashed
+    const QColor cAlignText(180, 255, 180, 200);
+    const QColor cDimLive(200, 230, 255, 240);
+    const QColor cDimLiveBg(30, 30, 30, 180);
+
+    bool snappedToPoint = false;
+
+    for (const auto& [id, pt] : sk->points()) {
+        double dx = cursorX - pt.x;
+        double dy = cursorY - pt.y;
+        double distSq = dx * dx + dy * dy;
+
+        // Point snap indicator
+        if (distSq < snapThreshold * snapThreshold) {
+            QPointF screenPt = skToScreen(pt.x, pt.y);
+            painter.setPen(QPen(cSnapDot, 2.5));
+            painter.setBrush(cSnapDot);
+            painter.drawEllipse(screenPt, 6.0, 6.0);
+            snappedToPoint = true;
+        }
+    }
+
+    // ── H/V alignment indicators (dashed crosshair + H/V label) ────────
+    if (!snappedToPoint) {
+        QFont alignFont("Monospace", 9, QFont::Bold);
+        alignFont.setStyleHint(QFont::Monospace);
+        painter.setFont(alignFont);
+
+        for (const auto& [id, pt] : sk->points()) {
+            // Horizontal alignment
+            if (std::abs(cursorY - pt.y) < alignThreshold) {
+                QPointF s1 = skToScreen(pt.x, pt.y);
+                QPointF s2 = skToScreen(cursorX, cursorY);
+                QPen dashPen(cAlignLine, 1.0, Qt::DashLine);
+                painter.setPen(dashPen);
+                painter.drawLine(s1, s2);
+
+                // "H" label at midpoint
+                QPointF mid((s1.x() + s2.x()) / 2.0, (s1.y() + s2.y()) / 2.0 - 10.0);
+                painter.setPen(cAlignText);
+                painter.drawText(mid, "H");
+            }
+
+            // Vertical alignment
+            if (std::abs(cursorX - pt.x) < alignThreshold) {
+                QPointF s1 = skToScreen(pt.x, pt.y);
+                QPointF s2 = skToScreen(cursorX, cursorY);
+                QPen dashPen(cAlignLine, 1.0, Qt::DashLine);
+                painter.setPen(dashPen);
+                painter.drawLine(s1, s2);
+
+                // "V" label at midpoint
+                QPointF mid((s1.x() + s2.x()) / 2.0 + 8.0, (s1.y() + s2.y()) / 2.0);
+                painter.setPen(cAlignText);
+                painter.drawText(mid, "V");
+            }
+        }
+    }
+
+    // ── Live dimension display during rubber-band drawing ───────────────
+    if (m_sketchEditor->isDrawingInProgress()) {
+        double startX = m_sketchEditor->rubberStartX();
+        double startY = m_sketchEditor->rubberStartY();
+        double dx = cursorX - startX;
+        double dy = cursorY - startY;
+        double dist = std::sqrt(dx * dx + dy * dy);
+
+        if (dist > 0.5) {
+            // Distance text at midpoint of the rubber-band line, offset slightly
+            double midSX = (startX + cursorX) / 2.0;
+            double midSY = (startY + cursorY) / 2.0;
+            QPointF screenMid = skToScreen(midSX, midSY);
+
+            // Perpendicular offset so text doesn't overlap the line
+            double len = std::sqrt(dx * dx + dy * dy);
+            double nx = -dy / len * 16.0;  // screen pixel offset
+            double ny =  dx / len * 16.0;
+            QPointF textPos(screenMid.x() + nx, screenMid.y() + ny);
+
+            // Format dimension string
+            QString dimText = QString::number(dist, 'f', 1) + " mm";
+
+            // Draw angle for non-axis-aligned lines
+            SketchTool tool = m_sketchEditor->currentTool();
+            if (tool == SketchTool::DrawLine) {
+                double angleDeg = std::atan2(dy, dx) * 180.0 / M_PI;
+                // Normalize to 0..360
+                if (angleDeg < 0) angleDeg += 360.0;
+                dimText += QString("  %1%2").arg(angleDeg, 0, 'f', 1).arg(QChar(0x00B0));
+            }
+
+            // For rectangles, show W x H
+            if (tool == SketchTool::DrawRectangle || tool == SketchTool::DrawRectangleCenter) {
+                double w = std::abs(dx);
+                double h = std::abs(dy);
+                dimText = QString("%1 x %2 mm").arg(w, 0, 'f', 1).arg(h, 0, 'f', 1);
+            }
+
+            // For circles, show radius
+            if (tool == SketchTool::DrawCircle || tool == SketchTool::DrawCircle3Point) {
+                dimText = QString("R %1 mm").arg(dist, 0, 'f', 1);
+            }
+
+            // Draw background rect + text
+            QFont dimFont("Monospace", 10);
+            dimFont.setStyleHint(QFont::Monospace);
+            painter.setFont(dimFont);
+            QFontMetricsF fm(dimFont);
+            QRectF br = fm.boundingRect(dimText);
+            double pad = 4.0;
+            QRectF bgRect(textPos.x() - br.width() / 2.0 - pad,
+                          textPos.y() - br.height() / 2.0 - pad,
+                          br.width() + 2.0 * pad,
+                          br.height() + 2.0 * pad);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(cDimLiveBg);
+            painter.drawRoundedRect(bgRect, 4, 4);
+            painter.setPen(cDimLive);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawText(bgRect, Qt::AlignCenter, dimText);
+        }
+    }
+
+    painter.end();
 }

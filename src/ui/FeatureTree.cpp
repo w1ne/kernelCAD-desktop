@@ -15,11 +15,210 @@
 #include <QHeaderView>
 #include <QPixmap>
 #include <QIcon>
+#include <QPainter>
+#include <QPainterPath>
+
+#include <cmath>
 
 // Custom role to distinguish component items from feature items
 static constexpr int ComponentIdRole = Qt::UserRole + 1;
 // Custom role to mark body items (for visibility checkbox)
 static constexpr int BodyIdRole = Qt::UserRole + 2;
+// Custom role to mark feature items (for in-place rename)
+static constexpr int FeatureIdRole = Qt::UserRole + 3;
+
+// =====================================================================
+// featureIcon -- draw simple 16x16 icons per feature type
+// =====================================================================
+
+QIcon FeatureTree::featureIcon(features::FeatureType type)
+{
+    QPixmap pm(16, 16);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    switch (type) {
+    case features::FeatureType::Extrude: {
+        // Blue upward arrow
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(80, 160, 255));
+        // Arrow shaft
+        p.drawRect(6, 5, 4, 9);
+        // Arrow head
+        QPainterPath tri;
+        tri.moveTo(8, 1);
+        tri.lineTo(3, 7);
+        tri.lineTo(13, 7);
+        tri.closeSubpath();
+        p.drawPath(tri);
+        break;
+    }
+    case features::FeatureType::Revolve: {
+        // Green circular arrow
+        p.setPen(QPen(QColor(80, 200, 80), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRect(2, 2, 12, 12), 30 * 16, 270 * 16);
+        // Arrow tip
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(80, 200, 80));
+        QPainterPath tip;
+        tip.moveTo(11, 2);
+        tip.lineTo(14, 5);
+        tip.lineTo(9, 5);
+        tip.closeSubpath();
+        p.drawPath(tip);
+        break;
+    }
+    case features::FeatureType::Fillet: {
+        // Orange quarter-circle
+        p.setPen(QPen(QColor(255, 160, 60), 2.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRect(-2, -2, 16, 16), 0, 90 * 16);
+        // Corner lines
+        p.setPen(QPen(QColor(255, 160, 60), 1.2));
+        p.drawLine(2, 14, 2, 6);
+        p.drawLine(2, 14, 10, 14);
+        break;
+    }
+    case features::FeatureType::Chamfer: {
+        // Orange diagonal line with corner
+        p.setPen(QPen(QColor(255, 140, 40), 1.5));
+        p.drawLine(2, 14, 2, 7);
+        p.drawLine(2, 7, 9, 14);
+        p.drawLine(9, 14, 14, 14);
+        break;
+    }
+    case features::FeatureType::Sketch: {
+        // Purple pencil shape
+        p.setPen(QPen(QColor(180, 100, 220), 1.8));
+        p.drawLine(3, 13, 13, 3);
+        p.drawLine(13, 3, 11, 1);
+        p.drawLine(11, 1, 1, 11);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(180, 100, 220));
+        QPainterPath nib;
+        nib.moveTo(1, 11);
+        nib.lineTo(3, 13);
+        nib.lineTo(1, 15);
+        nib.closeSubpath();
+        p.drawPath(nib);
+        break;
+    }
+    case features::FeatureType::Hole: {
+        // Red circle with inner hole
+        p.setPen(QPen(QColor(220, 60, 60), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QRect(2, 2, 12, 12));
+        p.setBrush(QColor(220, 60, 60, 80));
+        p.drawEllipse(QRect(5, 5, 6, 6));
+        break;
+    }
+    case features::FeatureType::Shell: {
+        // Hollow box outline (teal)
+        p.setPen(QPen(QColor(80, 200, 200), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(2, 2, 12, 12);
+        p.drawRect(5, 5, 6, 6);
+        break;
+    }
+    case features::FeatureType::Mirror: {
+        // Dashed vertical line with symmetric shapes
+        p.setPen(QPen(QColor(100, 180, 255), 1, Qt::DashLine));
+        p.drawLine(8, 1, 8, 15);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(100, 180, 255));
+        p.drawRect(2, 5, 4, 6);
+        p.setBrush(QColor(100, 180, 255, 120));
+        p.drawRect(10, 5, 4, 6);
+        break;
+    }
+    case features::FeatureType::Sweep: {
+        // Curved path with circle (teal)
+        p.setPen(QPen(QColor(80, 200, 180), 2));
+        p.setBrush(Qt::NoBrush);
+        QPainterPath path;
+        path.moveTo(2, 12);
+        path.cubicTo(4, 4, 12, 4, 14, 12);
+        p.drawPath(path);
+        p.setBrush(QColor(80, 200, 180));
+        p.drawEllipse(QPoint(2, 12), 2, 2);
+        break;
+    }
+    case features::FeatureType::Loft: {
+        // Two horizontal lines connected (teal)
+        p.setPen(QPen(QColor(80, 200, 180), 1.5));
+        p.drawLine(4, 3, 12, 3);
+        p.drawLine(2, 13, 14, 13);
+        p.setPen(QPen(QColor(80, 200, 180, 120), 1, Qt::DashLine));
+        p.drawLine(4, 3, 2, 13);
+        p.drawLine(12, 3, 14, 13);
+        break;
+    }
+    case features::FeatureType::Thread: {
+        // Helix lines (brown)
+        p.setPen(QPen(QColor(180, 140, 80), 1.5));
+        for (int y = 3; y <= 13; y += 3) {
+            p.drawLine(4, y, 12, y + 1);
+        }
+        break;
+    }
+    case features::FeatureType::Combine: {
+        // Overlapping rectangles (yellow)
+        p.setPen(QPen(QColor(220, 200, 60), 1.5));
+        p.setBrush(QColor(220, 200, 60, 60));
+        p.drawRect(1, 1, 9, 9);
+        p.drawRect(6, 6, 9, 9);
+        break;
+    }
+    case features::FeatureType::Move: {
+        // Cross arrows (gray-blue)
+        p.setPen(QPen(QColor(140, 170, 210), 2));
+        p.drawLine(8, 2, 8, 14);
+        p.drawLine(2, 8, 14, 8);
+        break;
+    }
+    case features::FeatureType::Scale: {
+        // Nested squares (purple)
+        p.setPen(QPen(QColor(160, 120, 200), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(1, 1, 14, 14);
+        p.drawRect(4, 4, 8, 8);
+        break;
+    }
+    case features::FeatureType::Draft: {
+        // Angled trapezoid (orange)
+        p.setPen(QPen(QColor(255, 160, 60), 1.5));
+        p.setBrush(QColor(255, 160, 60, 40));
+        QPolygonF trap;
+        trap << QPointF(4, 2) << QPointF(12, 2) << QPointF(14, 14) << QPointF(2, 14);
+        p.drawPolygon(trap);
+        break;
+    }
+    case features::FeatureType::Joint: {
+        // Link icon (green)
+        p.setPen(QPen(QColor(80, 200, 80), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QRect(1, 1, 8, 8));
+        p.drawEllipse(QRect(7, 7, 8, 8));
+        break;
+    }
+    default: {
+        // Generic feature: gray diamond
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(160, 165, 170));
+        QPolygonF diamond;
+        diamond << QPointF(8, 1) << QPointF(15, 8) << QPointF(8, 15) << QPointF(1, 8);
+        p.drawPolygon(diamond);
+        break;
+    }
+    }
+
+    p.end();
+    return QIcon(pm);
+}
+
+// =====================================================================
 
 FeatureTree::FeatureTree(QWidget* parent) : QTreeWidget(parent)
 {
@@ -32,14 +231,23 @@ FeatureTree::FeatureTree(QWidget* parent) : QTreeWidget(parent)
             this, &FeatureTree::onItemDoubleClicked);
     connect(this, &QTreeWidget::customContextMenuRequested,
             this, &FeatureTree::onContextMenu);
+
+    // Body visibility checkbox changes
     connect(this, &QTreeWidget::itemChanged,
             this, [this](QTreeWidgetItem* item, int /*column*/) {
+        if (m_refreshing)
+            return;
         QVariant bodyData = item->data(0, BodyIdRole);
         if (bodyData.isValid() && !bodyData.toString().isEmpty()) {
             bool visible = (item->checkState(0) == Qt::Checked);
             emit bodyVisibilityToggled(bodyData.toString(), visible);
+            return;
         }
     });
+
+    // In-place rename for feature items
+    connect(this, &QTreeWidget::itemChanged,
+            this, &FeatureTree::onItemRenamed);
 }
 
 void FeatureTree::setDocument(document::Document* doc)
@@ -64,6 +272,7 @@ void FeatureTree::buildComponentTree(QTreeWidgetItem* parentItem,
             auto* child = new QTreeWidgetItem(originItem);
             child->setText(0, QString::fromStdString(feat->name()));
             child->setData(0, Qt::UserRole, QString::fromStdString(feat->id()));
+            child->setIcon(0, featureIcon(feat->type()));
         }
     }
 
@@ -94,8 +303,17 @@ void FeatureTree::buildComponentTree(QTreeWidgetItem* parentItem,
             const auto& entry = tl.entry(i);
 
             auto* item = new QTreeWidgetItem(parentItem);
-            item->setText(0, QString::fromStdString(entry.name));
+            // Use displayName (custom name if set, else auto-generated numbered name)
+            item->setText(0, QString::fromStdString(entry.displayName()));
             item->setData(0, Qt::UserRole, QString::fromStdString(entry.id));
+            item->setData(0, FeatureIdRole, QString::fromStdString(entry.id));
+
+            // Set feature type icon
+            if (entry.feature)
+                item->setIcon(0, featureIcon(entry.feature->type()));
+
+            // Make feature items editable (in-place rename)
+            item->setFlags(item->flags() | Qt::ItemIsEditable);
 
             // Suppressed features: italic gray
             if (entry.isSuppressed) {
@@ -146,10 +364,13 @@ void FeatureTree::buildComponentTree(QTreeWidgetItem* parentItem,
 
 void FeatureTree::refresh()
 {
+    m_refreshing = true;
     clear(); // remove all items
 
-    if (!m_document)
+    if (!m_document) {
+        m_refreshing = false;
         return;
+    }
 
     // Top-level item: root component
     const auto& root = m_document->components().rootComponent();
@@ -173,6 +394,7 @@ void FeatureTree::refresh()
     buildComponentTree(rootItem, root);
 
     expandAll();
+    m_refreshing = false;
 }
 
 void FeatureTree::onItemClicked(QTreeWidgetItem* item, int /*column*/)
@@ -200,6 +422,24 @@ void FeatureTree::onItemDoubleClicked(QTreeWidgetItem* item, int /*column*/)
     QVariant data = item->data(0, Qt::UserRole);
     if (data.isValid() && !data.toString().isEmpty())
         emit featureEditRequested(data.toString());
+}
+
+void FeatureTree::onItemRenamed(QTreeWidgetItem* item, int column)
+{
+    if (m_refreshing || !item || column != 0)
+        return;
+
+    // Only handle rename for feature items (those with FeatureIdRole)
+    QVariant featData = item->data(0, FeatureIdRole);
+    if (!featData.isValid() || featData.toString().isEmpty())
+        return;
+
+    QString featureId = featData.toString();
+    QString newText = item->text(0).trimmed();
+    if (newText.isEmpty())
+        return;
+
+    emit featureRenamed(featureId, newText);
 }
 
 void FeatureTree::onContextMenu(const QPoint& pos)
@@ -268,6 +508,12 @@ void FeatureTree::onContextMenu(const QPoint& pos)
                 }
             }
         }
+
+        // Rename action
+        QAction* renameAction = menu.addAction(tr("Rename"));
+        connect(renameAction, &QAction::triggered, this, [this, item]() {
+            editItem(item, 0);
+        });
 
         QAction* suppressAction = menu.addAction(
             isSuppressed ? tr("Unsuppress") : tr("Suppress"));

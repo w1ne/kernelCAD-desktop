@@ -110,7 +110,19 @@ class TimelinePanel : public QWidget
 public:
     explicit TimelinePanel(QWidget* parent = nullptr);
 
-    /// Populate the panel with (id, name) pairs.
+    /// Extended entry info for richer timeline display.
+    struct EntryInfo {
+        QString id;
+        QString displayName;
+        QString tooltip;       ///< Rich tooltip text (HTML supported)
+        QColor  iconColor;     ///< Feature-type-based icon colour
+        bool    suppressed = false;
+    };
+
+    /// Populate the panel with full entry info (preferred).
+    void setEntriesEx(const std::vector<EntryInfo>& entries);
+
+    /// Legacy overload: populate the panel with (id, name) pairs.
     void setEntries(const std::vector<std::pair<QString, QString>>& entries);
 
     /// Set groups metadata (read from document timeline).
@@ -174,6 +186,8 @@ private:
     struct EntryData {
         QString id;
         QString name;
+        QString tooltip;
+        QColor  iconColor;
         bool    suppressed = false;
     };
 
@@ -187,4 +201,14 @@ private:
     TimelineMarker* m_marker      = nullptr;
     int             m_markerIndex = 0;
     QString         m_editingFeatureId;
+
+    /// Drag insertion indicator: -1 = not showing
+    int m_dragInsertIndex = -1;
+
+    /// Draw the drag insertion indicator line on the container.
+    void paintInsertionLine(QPainter& p);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
 };

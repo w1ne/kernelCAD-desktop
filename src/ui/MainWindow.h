@@ -6,6 +6,8 @@
 class QAction;
 class QActionGroup;
 class QSlider;
+class QLabel;
+class QPushButton;
 
 namespace document { class Document; class PreviewEngine; class InteractiveCommand; class AutoSave; }
 
@@ -218,4 +220,20 @@ private:
 
     /// Helper: collect selected face indices for a single body from the current selection.
     std::vector<int> collectSelectedFaces(std::string& bodyIdOut) const;
+
+    // ── Confirmation toolbar (floating OK/Cancel during active commands) ──
+    QWidget*     m_confirmBar       = nullptr;
+    QLabel*      m_confirmLabel     = nullptr;
+    QPushButton* m_confirmOkBtn     = nullptr;
+    QPushButton* m_confirmCancelBtn = nullptr;
+    void setupConfirmBar();
+    void showConfirmBar(const QString& toolName);
+    void hideConfirmBar();
+
+    // ── Rich status bar segments ──────────────────────────────────────────
+    QLabel* m_statusLeft   = nullptr;
+    QLabel* m_statusCenter = nullptr;
+    QLabel* m_statusRight  = nullptr;
+    void setupStatusBar();
+    void updateStatusBarInfo();
 };
