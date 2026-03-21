@@ -1,12 +1,16 @@
 #include "MainWindow.h"
 #include "Viewport3D.h"
+#include "ViewportManipulator.h"
 #include "SketchEditor.h"
 #include "FeatureTree.h"
 #include "TimelinePanel.h"
 #include "PropertiesPanel.h"
 #include "SelectionManager.h"
 #include "MeasureTool.h"
+#include "JointCreator.h"
 #include "CommandDialog.h"
+#include "MarkingMenu.h"
+#include "CommandPalette.h"
 #include "../document/Document.h"
 #include "../document/InteractiveCommands.h"
 #include "../document/AutoSave.h"
@@ -44,6 +48,7 @@
 #include <Poly_Triangulation.hxx>
 #include <TopLoc_Location.hxx>
 #include <sstream>
+#include <algorithm>
 
 #include <QDockWidget>
 #include <QMenuBar>
@@ -53,6 +58,7 @@
 #include <QFileDialog>
 #include <QCloseEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QStatusBar>
@@ -60,7 +66,14 @@
 #include <QSlider>
 #include <QApplication>
 #include <QPixmap>
+#include <QLabel>
+#include <QPushButton>
+#include <QHBoxLayout>
+#include <QGraphicsDropShadowEffect>
 #include <QIcon>
+#include <QTimer>
+#include <QShortcut>
+#include <QWidgetAction>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -72,6 +85,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupUI();
     setupMenuBar();
     setupToolBar();
+    installToolBarHoverFilters();
     setupDocks();
     setupSketchToolBar();
     m_featureTree->setDocument(m_document.get());
@@ -80,11 +94,13 @@ MainWindow::MainWindow(QWidget* parent)
     // Wire up selection manager to viewport and callbacks
     m_viewport->setSelectionManager(m_selectionMgr.get());
 
-    // Viewport right-click context menu
-    m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_viewport, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
-        showViewportContextMenu(m_viewport->mapToGlobal(pos));
-    });
+    // Create viewport manipulator (drag handles for extrude distance, etc.)
+    m_manipulator = new ViewportManipulator(this);
+    m_viewport->setManipulator(m_manipulator);
+
+    // Viewport right-click context menu and marking menu
+    m_viewport->setContextMenuPolicy(Qt::PreventContextMenu);
+    setupMarkingMenu();
     m_selectionMgr->setOnSelectionChanged([this](const std::vector<SelectionHit>&) {
         onSelectionChanged();
     });
@@ -120,6 +136,7 @@ MainWindow::MainWindow(QWidget* parent)
         default:                              toolName = "Tool"; break;
         }
         statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
+        showConfirmBar(tr("Sketch: %1").arg(toolName));
     });
 
     // Create the measure tool
@@ -141,8 +158,54 @@ MainWindow::MainWindow(QWidget* parent)
         m_viewport->clearPreviewMesh();
     });
 
+    // Create the joint creator for interactive face-to-face joint workflow
+    m_jointCreator = new JointCreator(this);
+    m_jointCreator->setBRepModel(&m_document->brepModel());
+    connect(m_jointCreator, &JointCreator::jointReady, this,
+            [this](features::JointParams params) {
+        // Resolve body IDs to occurrence IDs
+        std::string occ1 = m_document->findOccurrenceForBody(params.occurrenceOneId);
+        std::string occ2 = m_document->findOccurrenceForBody(params.occurrenceTwoId);
+        if (!occ1.empty()) params.occurrenceOneId = occ1;
+        if (!occ2.empty()) params.occurrenceTwoId = occ2;
+
+        try {
+            m_document->executeCommand(
+                std::make_unique<document::AddJointCommand>(std::move(params)));
+            statusBar()->showMessage(tr("Joint created from face selections"));
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Joint Failed"),
+                tr("Could not create joint: %1").arg(e.what()));
+        }
+        refreshAllPanels();
+        hideConfirmBar();
+    });
+    connect(m_jointCreator, &JointCreator::stateChanged, this,
+            [this](JointCreator::State state) {
+        switch (state) {
+        case JointCreator::State::Idle:
+            hideConfirmBar();
+            break;
+        case JointCreator::State::PickingFace1:
+            statusBar()->showMessage(tr("Select first face for joint..."));
+            showConfirmBar(tr("Joint: Pick Face 1"));
+            break;
+        case JointCreator::State::PickingFace2:
+            statusBar()->showMessage(tr("Select second face for joint..."));
+            showConfirmBar(tr("Joint: Pick Face 2"));
+            break;
+        }
+    });
+    connect(m_jointCreator, &JointCreator::cancelled, this, [this]() {
+        statusBar()->showMessage(tr("Joint creation cancelled"));
+        hideConfirmBar();
+    });
+
     // Auto-save (5 minute interval)
     m_autoSave = new document::AutoSave(m_document.get(), this);
+
+    // Command palette (Ctrl+K)
+    setupCommandPalette();
 
     connectSignals();
 }
@@ -154,7 +217,9 @@ void MainWindow::setupUI()
     // Central widget: 3D viewport
     m_viewport = new Viewport3D(this);
     setCentralWidget(m_viewport);
-    statusBar()->showMessage("Ready");
+
+    setupStatusBar();
+    setupConfirmBar();
 }
 
 void MainWindow::setupToolBar()
@@ -217,11 +282,13 @@ void MainWindow::setupToolBar()
           &MainWindow::onFillet);
     m_filletAction->setShortcut(QKeySequence(tr("F")));
 
-    addTB(tr("Chamfer"), tr("Chamfer (C) \u2014 Bevel selected edges"),
+    m_chamferAction = addTB(tr("Chamfer"), tr("Chamfer (C) \u2014 Bevel selected edges"),
           &MainWindow::onChamfer);
-    addTB(tr("Shell"),   tr("Shell \u2014 Hollow a body by removing faces"),
+
+    m_shellAction = addTB(tr("Shell"),   tr("Shell \u2014 Hollow a body by removing faces"),
           &MainWindow::onShell);
-    addTB(tr("Draft"),   tr("Draft (D) \u2014 Apply a draft angle to selected faces"),
+
+    m_draftAction = addTB(tr("Draft"),   tr("Draft (D) \u2014 Apply a draft angle to selected faces"),
           &MainWindow::onDraft);
 
     m_holeAction = addTB(tr("Hole"), tr("Hole (H) \u2014 Create a hole feature on a face"),
@@ -239,12 +306,14 @@ void MainWindow::setupToolBar()
     m_mainToolBar->addSeparator();
 
     // ── Assembly ─────────────────────────────────────────────────────────
-    m_jointAction = addTB(tr("Joint"), tr("Joint (J) \u2014 Add a revolute joint between components"),
-          &MainWindow::onAddRevoluteJoint);
+    m_jointAction = addTB(tr("Joint"), tr("Joint (J) \u2014 Click two faces to create a joint"),
+          &MainWindow::onAddJoint);
     m_jointAction->setShortcut(QKeySequence(tr("J")));
 
     addTB(tr("New Component"), tr("New Component \u2014 Create a new component in the assembly"),
           &MainWindow::onNewComponent);
+    addTB(tr("Insert .kcd"), tr("Insert Component \u2014 Import a .kcd file as a component"),
+          &MainWindow::onInsertComponent);
     m_mainToolBar->addSeparator();
 
     // ── Tools ────────────────────────────────────────────────────────────
@@ -495,15 +564,46 @@ void MainWindow::setupMenuBar()
 
     auto* assemblyMenu = menuBar()->addMenu(tr("&Assembly"));
     assemblyMenu->addAction(tr("New Component"), this, &MainWindow::onNewComponent);
-    assemblyMenu->addAction(tr("Insert Component..."), this, &MainWindow::onInsertComponent);
+    assemblyMenu->addAction(tr("Insert Component from .kcd..."), this, &MainWindow::onInsertComponent);
     assemblyMenu->addSeparator();
-    assemblyMenu->addAction(tr("Add Rigid Joint"), this, &MainWindow::onAddRigidJoint);
-    assemblyMenu->addAction(tr("Add Revolute Joint"), this, &MainWindow::onAddRevoluteJoint);
+    assemblyMenu->addAction(tr("Add Joint (click faces)..."), this, &MainWindow::onAddJoint,
+                            QKeySequence(tr("J")));
+
+    // ── View menu: Exploded View ────────────────────────────────────────
+    // (Appended to existing View menu -- find it via menuBar)
+    {
+        // The View menu was already created above; find it and append.
+        QMenu* existingViewMenu = nullptr;
+        for (auto* act : menuBar()->actions()) {
+            if (act->text().contains("View")) {
+                existingViewMenu = act->menu();
+                break;
+            }
+        }
+        if (existingViewMenu) {
+            existingViewMenu->addSeparator();
+            auto* explodeMenu = existingViewMenu->addMenu(tr("Exploded View"));
+            m_explodeSlider = new QSlider(Qt::Horizontal, this);
+            m_explodeSlider->setRange(0, 100);
+            m_explodeSlider->setValue(0);
+            m_explodeSlider->setFixedWidth(200);
+            connect(m_explodeSlider, &QSlider::valueChanged, this, [this](int value) {
+                float factor = static_cast<float>(value) / 100.0f;
+                m_viewport->setExplodeFactor(factor);
+                statusBar()->showMessage(tr("Explode: %1%").arg(value));
+            });
+            auto* sliderAction = new QWidgetAction(this);
+            sliderAction->setDefaultWidget(m_explodeSlider);
+            explodeMenu->addAction(sliderAction);
+        }
+    }
 
     // ── Tools menu ──────────────────────────────────────────────────────
     auto* toolsMenu = menuBar()->addMenu(tr("&Tools"));
     toolsMenu->addAction(tr("&Measure"), this, &MainWindow::onMeasure,
                           QKeySequence(tr("M")));
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(tr("Check &Interference"), this, &MainWindow::onCheckInterference);
 
     // --- Appearance menu (material assignment) ---
     auto* appearanceMenu = menuBar()->addMenu(tr("A&ppearance"));
@@ -636,6 +736,34 @@ void MainWindow::connectSignals()
         m_properties->showFeature(featureId);
     });
 
+    // Viewport Ctrl+drag -> move occurrence transform
+    connect(m_viewport, &Viewport3D::occurrenceDragged, this,
+            [this](float dx, float dy, float dz) {
+        if (!m_selectionMgr->hasSelection())
+            return;
+        const auto& hit = m_selectionMgr->selection().front();
+        if (hit.bodyId.empty())
+            return;
+
+        // Find the occurrence that owns this body
+        std::string occId = m_document->findOccurrenceForBody(hit.bodyId);
+        if (occId.empty())
+            return;
+
+        // Update the occurrence transform (translation part only)
+        auto& root = m_document->components().rootComponent();
+        auto* occ = root.findOccurrence(occId);
+        if (!occ)
+            return;
+
+        occ->transform[12] += static_cast<double>(dx);
+        occ->transform[13] += static_cast<double>(dy);
+        occ->transform[14] += static_cast<double>(dz);
+        m_document->setModified(true);
+
+        updateViewport();
+    });
+
     // Feature tree "Edit" context menu -> roll back and edit feature
     connect(m_featureTree, &FeatureTree::featureEditRequested,
             this, &MainWindow::onEditFeature);
@@ -653,6 +781,23 @@ void MainWindow::connectSignals()
         m_document->executeCommand(
             std::make_unique<document::SuppressFeatureCommand>(featureId.toStdString()));
         refreshAllPanels();
+    });
+
+    // Feature tree in-place rename -> update customName in TimelineEntry
+    connect(m_featureTree, &FeatureTree::featureRenamed, this,
+            [this](const QString& featureId, const QString& newName) {
+        auto& tl = m_document->timeline();
+        for (size_t i = 0; i < tl.count(); ++i) {
+            if (tl.entry(i).id == featureId.toStdString()) {
+                // If the new name matches the default name, clear customName
+                if (newName.toStdString() == tl.entry(i).name)
+                    tl.entry(i).customName.clear();
+                else
+                    tl.entry(i).customName = newName.toStdString();
+                m_document->setModified(true);
+                break;
+            }
+        }
     });
 
     // Feature tree: create component under a parent component
@@ -850,6 +995,9 @@ void MainWindow::onPropertyChanged(const QString& featureId,
 
 void MainWindow::onEditingCommitted(const QString& /*featureId*/)
 {
+    hideConfirmBar();
+    m_viewport->setHighlightedFaces({});
+
     if (m_previewEngine->isActive()) {
         m_previewEngine->commitPreview();
     }
@@ -877,6 +1025,10 @@ void MainWindow::onEditingCommitted(const QString& /*featureId*/)
 
 void MainWindow::onEditingCancelled(const QString& featureId)
 {
+    hideConfirmBar();
+    hideManipulator();
+    m_viewport->setHighlightedFaces({});
+
     if (m_previewEngine->isActive()) {
         m_previewEngine->cancelPreview();
         // Restore the properties panel to show the original values
@@ -923,8 +1075,31 @@ void MainWindow::onEditFeature(const QString& featureId)
             m_timeline->setEditingFeatureId(featureId);
             refreshAllPanels();
 
-            statusBar()->showMessage(tr("Editing: %1 — press Enter to commit, Escape to cancel")
-                .arg(QString::fromStdString(tl.entry(i).name)));
+            // Show the confirmation toolbar with feature name
+            showConfirmBar(tr("Editing: %1")
+                .arg(QString::fromStdString(tl.entry(i).displayName())));
+
+            // Highlight input geometry of the feature (e.g. sketch profile faces)
+            if (tl.entry(i).feature) {
+                auto deps = m_document->depGraph().dependenciesOf(tl.entry(i).id);
+                // Find sketch faces to highlight: any face belonging to the current body
+                // is a good visual cue. For now, highlight all faces of the first body.
+                std::string bodyId;
+                auto faces = collectSelectedFaces(bodyId);
+                // If we have face selection, highlight those; otherwise use all faces
+                if (!faces.empty()) {
+                    std::vector<int> faceIndices(faces.begin(), faces.end());
+                    m_viewport->setHighlightedFaces(faceIndices);
+                }
+
+                // Show distance manipulator for Extrude features
+                if (tl.entry(i).feature->type() == features::FeatureType::Extrude) {
+                    showExtrudeManipulator(featureId);
+                }
+            }
+
+            statusBar()->showMessage(tr("Editing: %1 -- press Enter to commit, Escape to cancel")
+                .arg(QString::fromStdString(tl.entry(i).displayName())));
             return;
         }
     }
@@ -933,6 +1108,7 @@ void MainWindow::onEditFeature(const QString& featureId)
 void MainWindow::onFinishEditing()
 {
     m_editingFeatureId.clear();
+    hideManipulator();
 
     auto& tl = m_document->timeline();
     // Restore to original marker position (or end if it was at end)
@@ -941,6 +1117,8 @@ void MainWindow::onFinishEditing()
 
     m_properties->setEditMode(false);
     m_timeline->setEditingFeatureId(QString());
+    hideConfirmBar();
+    m_viewport->setHighlightedFaces({});
     refreshAllPanels();
 
     statusBar()->showMessage(tr("Ready"));
@@ -1182,6 +1360,17 @@ void MainWindow::onEditSketch()
 
 void MainWindow::onExtrudeSketch()
 {
+    // Selection-driven extrude: if faces are selected, use the interactive
+    // command dialog (future: push/pull the selected face).
+    const auto& sel = m_selectionMgr->selection();
+    if (!sel.empty() && sel[0].faceIndex >= 0) {
+        // Face pre-selection: open the interactive Extrude dialog
+        // which can use the selected face as an extrude profile.
+        executeInteractiveCommand(
+            std::make_unique<document::ExtrudeInteractiveCommand>());
+        return;
+    }
+
     // Find the last sketch feature in the timeline
     auto& tl = m_document->timeline();
     features::SketchFeature* lastSketch = nullptr;
@@ -1295,35 +1484,89 @@ void MainWindow::onAddHole()
         return;
     }
 
-    // Add a 10mm diameter, 20mm deep hole at center of the top face of the last body.
-    // Determine the top face center by finding the face with the highest average Z.
-    std::string lastBodyId = ids.back();
-    const TopoDS_Shape& shape = brep.getShape(lastBodyId);
+    const auto& sel = m_selectionMgr->selection();
 
-    // Find the top face (highest average Z among vertices)
-    double bestAvgZ = -1e30;
+    // Selection-driven: if no selection, enter pending mode for face selection
+    if (sel.empty()) {
+        m_pendingCommand = PendingCommand::Hole;
+        m_selectionMgr->setFilter(SelectionFilter::Faces);
+        if (m_selectFacesAction)
+            m_selectFacesAction->setChecked(true);
+        statusBar()->showMessage(
+            tr("Select a face for the hole position, then press Enter (Esc to cancel)"));
+        return;
+    }
+
+    // If a face is selected, use its center as the hole position
+    std::string lastBodyId;
     double holePosX = 0, holePosY = 0, holePosZ = 0;
 
-    TopExp_Explorer faceEx(shape, TopAbs_FACE);
-    for (; faceEx.More(); faceEx.Next()) {
-        const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
-        double sumX = 0, sumY = 0, sumZ = 0;
-        int count = 0;
-        TopExp_Explorer vertEx(face, TopAbs_VERTEX);
-        for (; vertEx.More(); vertEx.Next()) {
-            gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertEx.Current()));
-            sumX += p.X();
-            sumY += p.Y();
-            sumZ += p.Z();
-            count++;
+    if (!sel.empty() && sel[0].faceIndex >= 0) {
+        lastBodyId = sel[0].bodyId.empty() ? ids.back() : sel[0].bodyId;
+        // Use the 3D hit point from the selection as hole position
+        holePosX = sel[0].worldX;
+        holePosY = sel[0].worldY;
+        holePosZ = sel[0].worldZ;
+    } else {
+        lastBodyId = ids.back();
+    }
+
+    // Add a 10mm diameter, 20mm deep hole.
+    // If no face was selected, determine the top face center by finding
+    // the face with the highest average Z.
+    const TopoDS_Shape& shape = brep.getShape(lastBodyId);
+
+    // If no face was pre-selected, find the top face (highest average Z)
+    if (!sel.empty() && sel[0].faceIndex < 0) {
+        double bestAvgZ = -1e30;
+        TopExp_Explorer faceEx(shape, TopAbs_FACE);
+        for (; faceEx.More(); faceEx.Next()) {
+            const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
+            double sumX = 0, sumY = 0, sumZ = 0;
+            int count = 0;
+            TopExp_Explorer vertEx(face, TopAbs_VERTEX);
+            for (; vertEx.More(); vertEx.Next()) {
+                gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertEx.Current()));
+                sumX += p.X();
+                sumY += p.Y();
+                sumZ += p.Z();
+                count++;
+            }
+            if (count > 0) {
+                double avgZ = sumZ / count;
+                if (avgZ > bestAvgZ) {
+                    bestAvgZ = avgZ;
+                    holePosX = sumX / count;
+                    holePosY = sumY / count;
+                    holePosZ = sumZ / count;
+                }
+            }
         }
-        if (count > 0) {
-            double avgZ = sumZ / count;
-            if (avgZ > bestAvgZ) {
-                bestAvgZ = avgZ;
-                holePosX = sumX / count;
-                holePosY = sumY / count;
-                holePosZ = sumZ / count;
+    } else if (sel.empty()) {
+        // Fallback: top face search when no selection (shouldn't reach here
+        // due to pending mode above, but kept for robustness)
+        double bestAvgZ = -1e30;
+        TopExp_Explorer faceEx(shape, TopAbs_FACE);
+        for (; faceEx.More(); faceEx.Next()) {
+            const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
+            double sumX = 0, sumY = 0, sumZ = 0;
+            int count = 0;
+            TopExp_Explorer vertEx(face, TopAbs_VERTEX);
+            for (; vertEx.More(); vertEx.Next()) {
+                gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertEx.Current()));
+                sumX += p.X();
+                sumY += p.Y();
+                sumZ += p.Z();
+                count++;
+            }
+            if (count > 0) {
+                double avgZ = sumZ / count;
+                if (avgZ > bestAvgZ) {
+                    bestAvgZ = avgZ;
+                    holePosX = sumX / count;
+                    holePosY = sumY / count;
+                    holePosZ = sumZ / count;
+                }
             }
         }
     }
@@ -1350,6 +1593,8 @@ void MainWindow::onAddHole()
             tr("Could not create hole: %1").arg(e.what()));
     }
 
+    m_pendingCommand = PendingCommand::None;
+    m_selectionMgr->clearSelection();
     refreshAllPanels();
 }
 
@@ -1690,6 +1935,11 @@ void MainWindow::onCommitPendingCommand()
 
 void MainWindow::onCancelPendingCommand()
 {
+    // Cancel joint creator if active
+    if (m_jointCreator && m_jointCreator->state() != JointCreator::State::Idle) {
+        m_jointCreator->cancel();
+    }
+
     if (m_pendingCommand != PendingCommand::None) {
         m_pendingCommand = PendingCommand::None;
         m_selectionMgr->clearSelection();
@@ -1936,115 +2186,80 @@ void MainWindow::onNewComponent()
 
 void MainWindow::onInsertComponent()
 {
-    auto& reg = m_document->components();
-    auto allIds = reg.componentIds();
+    QString filePath = QFileDialog::getOpenFileName(this,
+        tr("Insert Component from .kcd"),
+        QString(),
+        tr("kernelCAD files (*.kcd);;All files (*)"));
 
-    // Need at least 2 components (root + one other) to insert an occurrence
-    if (allIds.size() < 2) {
-        QMessageBox::information(this, tr("Insert Component"),
-            tr("No additional components to insert. Create a component first."));
+    if (filePath.isEmpty())
         return;
-    }
 
-    // Find the active component
-    document::Component* active = nullptr;
-    for (const auto& id : allIds) {
-        auto* c = reg.findComponent(id);
-        if (c && c->isActive()) {
-            active = c;
-            break;
-        }
-    }
-    if (!active)
-        active = &reg.rootComponent();
-
-    // Insert the first non-root, non-active component as a placeholder
-    for (const auto& id : allIds) {
-        if (id == active->id() || id == reg.rootComponent().id())
-            continue;
-        active->addOccurrence(id);
-        m_document->setModified(true);
+    try {
+        std::string occId = m_document->insertComponentFromFile(filePath.toStdString());
         statusBar()->showMessage(
-            tr("Inserted occurrence of component %1").arg(QString::fromStdString(id)));
-        break;
+            tr("Inserted component from %1 (occurrence %2)")
+                .arg(QFileInfo(filePath).fileName())
+                .arg(QString::fromStdString(occId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Insert Failed"),
+            tr("Could not insert component: %1").arg(e.what()));
     }
 
     refreshAllPanels();
 }
 
-void MainWindow::onAddRigidJoint()
+void MainWindow::onAddJoint()
 {
-    auto& reg = m_document->components();
-    auto& root = reg.rootComponent();
-    const auto& occs = root.occurrences();
-
-    if (occs.size() < 2) {
-        QMessageBox::information(this, tr("Add Rigid Joint"),
-            tr("Need at least two component occurrences in the root component. "
-               "Create components first."));
+    // If the joint creator is already active, cancel it
+    if (m_jointCreator->state() != JointCreator::State::Idle) {
+        m_jointCreator->cancel();
         return;
     }
 
-    // Create a rigid joint between the first two occurrences
-    features::JointParams params;
-    params.occurrenceOneId = occs[0].id;
-    params.occurrenceTwoId = occs[1].id;
-    params.jointType = features::JointType::Rigid;
-
-    try {
-        m_document->executeCommand(
-            std::make_unique<document::AddJointCommand>(std::move(params)));
-        statusBar()->showMessage(tr("Added rigid joint between %1 and %2")
-            .arg(QString::fromStdString(occs[0].name))
-            .arg(QString::fromStdString(occs[1].name)));
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Joint Failed"),
-            tr("Could not create joint: %1").arg(e.what()));
-    }
-
-    refreshAllPanels();
+    // Start interactive face-to-face joint creation (default: Rigid)
+    m_jointCreator->begin(features::JointType::Rigid);
 }
 
-void MainWindow::onAddRevoluteJoint()
+void MainWindow::onCheckInterference()
 {
-    auto& reg = m_document->components();
-    auto& root = reg.rootComponent();
-    const auto& occs = root.occurrences();
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
 
-    if (occs.size() < 2) {
-        QMessageBox::information(this, tr("Add Revolute Joint"),
-            tr("Need at least two component occurrences in the root component. "
-               "Create components first."));
+    if (ids.size() < 2) {
+        QMessageBox::information(this, tr("Interference Check"),
+            tr("Need at least two bodies to check interference."));
         return;
     }
 
-    // Create a revolute (hinge) joint between the first two occurrences
-    // rotating around the Z axis at the origin
-    features::JointParams params;
-    params.occurrenceOneId = occs[0].id;
-    params.occurrenceTwoId = occs[1].id;
-    params.jointType = features::JointType::Revolute;
-    // Default geometry: joint at origin, rotating around Z
-    params.geometryOne.originX = 0;
-    params.geometryOne.originY = 0;
-    params.geometryOne.originZ = 0;
-    params.geometryOne.primaryAxisX = 0;
-    params.geometryOne.primaryAxisY = 0;
-    params.geometryOne.primaryAxisZ = 1;
-    params.geometryTwo = params.geometryOne;
-
-    try {
-        m_document->executeCommand(
-            std::make_unique<document::AddJointCommand>(std::move(params)));
-        statusBar()->showMessage(tr("Added revolute joint between %1 and %2")
-            .arg(QString::fromStdString(occs[0].name))
-            .arg(QString::fromStdString(occs[1].name)));
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Joint Failed"),
-            tr("Could not create joint: %1").arg(e.what()));
+    // Build the body list for interference check
+    std::vector<std::pair<std::string, TopoDS_Shape>> bodies;
+    bodies.reserve(ids.size());
+    for (const auto& id : ids) {
+        bodies.emplace_back(id, brep.getShape(id));
     }
 
-    refreshAllPanels();
+    auto results = m_document->kernel().checkInterference(bodies);
+
+    if (results.empty()) {
+        statusBar()->showMessage(tr("No interference detected between %1 bodies")
+            .arg(static_cast<int>(ids.size())));
+        QMessageBox::information(this, tr("Interference Check"),
+            tr("No interference detected. All bodies are clear."));
+        return;
+    }
+
+    // Report results and highlight interfering bodies
+    QString report;
+    std::vector<int> highlightFaces;
+    for (const auto& ir : results) {
+        report += tr("Interference between %1 and %2: volume = %3 mm^3\n")
+            .arg(QString::fromStdString(ir.body1Id))
+            .arg(QString::fromStdString(ir.body2Id))
+            .arg(ir.volume, 0, 'f', 3);
+    }
+
+    statusBar()->showMessage(tr("%1 interference(s) found").arg(static_cast<int>(results.size())));
+    QMessageBox::warning(this, tr("Interference Detected"), report);
 }
 
 void MainWindow::onUndo()
@@ -2177,6 +2392,14 @@ void MainWindow::onSectionSliderChanged(int value)
 
 void MainWindow::onSelectionChanged()
 {
+    // Route selection to JointCreator if it's active
+    if (m_jointCreator && m_jointCreator->state() != JointCreator::State::Idle
+        && m_selectionMgr->hasSelection()) {
+        const auto& hit = m_selectionMgr->selection().front();
+        m_jointCreator->onFaceSelected(hit);
+        return;
+    }
+
     if (!m_selectionMgr->hasSelection()) {
         m_properties->clear();
         statusBar()->showMessage(tr("Selection cleared"));
@@ -2367,21 +2590,116 @@ void MainWindow::onSelectionChanged()
     statusBar()->showMessage(msg);
 }
 
+// Map feature type to a consistent colour used in both FeatureTree icons and timeline entries.
+static QColor featureTypeColor(features::FeatureType type)
+{
+    switch (type) {
+    case features::FeatureType::Extrude:            return {80, 160, 255};
+    case features::FeatureType::Revolve:            return {80, 200, 80};
+    case features::FeatureType::Fillet:             return {255, 160, 60};
+    case features::FeatureType::Chamfer:            return {255, 140, 40};
+    case features::FeatureType::Shell:              return {80, 200, 200};
+    case features::FeatureType::Sketch:             return {180, 100, 220};
+    case features::FeatureType::Hole:               return {220, 60, 60};
+    case features::FeatureType::Sweep:              return {80, 200, 180};
+    case features::FeatureType::Loft:               return {80, 200, 180};
+    case features::FeatureType::Mirror:             return {100, 180, 255};
+    case features::FeatureType::Thread:             return {180, 140, 80};
+    case features::FeatureType::Draft:              return {255, 160, 60};
+    case features::FeatureType::Combine:            return {220, 200, 60};
+    case features::FeatureType::Move:               return {140, 170, 210};
+    case features::FeatureType::Scale:              return {160, 120, 200};
+    case features::FeatureType::Joint:              return {80, 200, 80};
+    case features::FeatureType::Coil:               return {200, 160, 100};
+    case features::FeatureType::RectangularPattern: return {100, 220, 210};
+    case features::FeatureType::CircularPattern:    return {100, 220, 210};
+    case features::FeatureType::PathPattern:        return {100, 220, 210};
+    default:                                        return {160, 165, 170};
+    }
+}
+
+// Build a rich tooltip string (HTML) for a timeline entry.
+static QString buildEntryTooltip(const document::TimelineEntry& entry)
+{
+    if (!entry.feature)
+        return QString::fromStdString(entry.displayName());
+
+    QString tip;
+    tip += QStringLiteral("<b>") + QString::fromStdString(entry.displayName()) + QStringLiteral("</b><br>");
+
+    // Feature type
+    tip += QStringLiteral("Type: ") + QString::fromStdString(entry.feature->name()) + QStringLiteral("<br>");
+
+    // Health state
+    auto h = entry.feature->healthState();
+    const char* healthStr = "Healthy";
+    switch (h) {
+    case features::HealthState::Healthy:    healthStr = "Healthy"; break;
+    case features::HealthState::Warning:    healthStr = "Warning"; break;
+    case features::HealthState::Error:      healthStr = "Error"; break;
+    case features::HealthState::Suppressed: healthStr = "Suppressed"; break;
+    case features::HealthState::RolledBack: healthStr = "Rolled Back"; break;
+    case features::HealthState::Unknown:    healthStr = "Unknown"; break;
+    }
+    tip += QStringLiteral("Health: ") + QString::fromLatin1(healthStr);
+
+    if (h == features::HealthState::Error && !entry.feature->errorMessage().empty())
+        tip += QStringLiteral("<br><span style='color:red'>") +
+               QString::fromStdString(entry.feature->errorMessage()) +
+               QStringLiteral("</span>");
+
+    // Key parameters per feature type
+    auto ft = entry.feature->type();
+    if (ft == features::FeatureType::Extrude) {
+        auto* ef = dynamic_cast<const features::ExtrudeFeature*>(entry.feature.get());
+        if (ef)
+            tip += QStringLiteral("<br>Distance: ") + QString::fromStdString(ef->params().distanceExpr);
+    } else if (ft == features::FeatureType::Fillet) {
+        auto* ff = dynamic_cast<const features::FilletFeature*>(entry.feature.get());
+        if (ff)
+            tip += QStringLiteral("<br>Radius: ") + QString::fromStdString(ff->params().radiusExpr);
+    } else if (ft == features::FeatureType::Chamfer) {
+        auto* cf = dynamic_cast<const features::ChamferFeature*>(entry.feature.get());
+        if (cf)
+            tip += QStringLiteral("<br>Distance: ") + QString::fromStdString(cf->params().distanceExpr);
+    } else if (ft == features::FeatureType::Revolve) {
+        auto* rf = dynamic_cast<const features::RevolveFeature*>(entry.feature.get());
+        if (rf)
+            tip += QStringLiteral("<br>Angle: ") + QString::fromStdString(rf->params().angleExpr);
+    } else if (ft == features::FeatureType::Hole) {
+        auto* hf = dynamic_cast<const features::HoleFeature*>(entry.feature.get());
+        if (hf)
+            tip += QStringLiteral("<br>Diameter: ") + QString::fromStdString(hf->params().diameterExpr);
+    } else if (ft == features::FeatureType::Shell) {
+        auto* sf = dynamic_cast<const features::ShellFeature*>(entry.feature.get());
+        if (sf)
+            tip += QStringLiteral("<br>Thickness: ") +
+                   QString::number(sf->params().thicknessExpr, 'f', 2) + QStringLiteral(" mm");
+    }
+
+    return tip;
+}
+
 void MainWindow::refreshAllPanels()
 {
     // Refresh the feature tree
     m_featureTree->refresh();
 
-    // Rebuild timeline entries from the document
+    // Rebuild timeline entries from the document with rich info
     auto& tl = m_document->timeline();
-    std::vector<std::pair<QString, QString>> entries;
+    std::vector<TimelinePanel::EntryInfo> entries;
     entries.reserve(tl.count());
     for (size_t i = 0; i < tl.count(); ++i) {
         const auto& e = tl.entry(i);
-        entries.emplace_back(QString::fromStdString(e.id),
-                             QString::fromStdString(e.name));
+        TimelinePanel::EntryInfo ei;
+        ei.id          = QString::fromStdString(e.id);
+        ei.displayName = QString::fromStdString(e.displayName());
+        ei.tooltip     = buildEntryTooltip(e);
+        ei.iconColor   = e.feature ? featureTypeColor(e.feature->type()) : QColor(160, 165, 170);
+        ei.suppressed  = e.isSuppressed;
+        entries.push_back(std::move(ei));
     }
-    m_timeline->setEntries(entries);
+    m_timeline->setEntriesEx(entries);
     m_timeline->setMarkerPosition(static_cast<int>(tl.markerPosition()));
     m_timeline->setEditingFeatureId(m_editingFeatureId);
 
@@ -2397,6 +2715,9 @@ void MainWindow::refreshAllPanels()
     // Update undo/redo menu items and window title
     updateUndoRedoActions();
     updateWindowTitle();
+
+    // Update rich status bar (body count, mode, units)
+    updateStatusBarInfo();
 
     // Notify auto-save that the document changed
     if (m_autoSave)
@@ -2620,12 +2941,14 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     if (m_deleteAction)   m_deleteAction->setEnabled(false);
 
     showSketchToolBar(true);
+    showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Editing sketch -- L=Line, R=Rect, C=Circle, A=Arc, X=Construction, T=Trim, E=Extend, O=Offset, Esc=Finish"));
 }
 
 void MainWindow::onSketchEditingFinished()
 {
     showSketchToolBar(false);
+    hideConfirmBar();
 
     // Re-enable feature shortcuts that were disabled during sketch editing
     if (m_extrudeAction)  m_extrudeAction->setEnabled(true);
@@ -2847,3 +3170,612 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
 
     menu.exec(globalPos);
 }
+
+// =============================================================================
+// Confirmation toolbar (floating OK/Cancel during active commands)
+// =============================================================================
+
+void MainWindow::setupConfirmBar()
+{
+    m_confirmBar = new QWidget(m_viewport);
+    m_confirmBar->setObjectName("ConfirmBar");
+
+    auto* layout = new QHBoxLayout(m_confirmBar);
+    layout->setContentsMargins(12, 6, 12, 6);
+    layout->setSpacing(8);
+
+    m_confirmLabel = new QLabel(m_confirmBar);
+    m_confirmLabel->setStyleSheet("color: #ddd; font-weight: bold; font-size: 12px;");
+
+    m_confirmOkBtn = new QPushButton(m_confirmBar);
+    m_confirmOkBtn->setText(tr("OK"));
+    m_confirmOkBtn->setFixedSize(60, 28);
+    m_confirmOkBtn->setStyleSheet(
+        "QPushButton { background: #2a7d2a; color: white; border: none; border-radius: 4px; font-weight: bold; }"
+        "QPushButton:hover { background: #38a838; }");
+
+    m_confirmCancelBtn = new QPushButton(m_confirmBar);
+    m_confirmCancelBtn->setText(tr("Cancel"));
+    m_confirmCancelBtn->setFixedSize(60, 28);
+    m_confirmCancelBtn->setStyleSheet(
+        "QPushButton { background: #8a2a2a; color: white; border: none; border-radius: 4px; font-weight: bold; }"
+        "QPushButton:hover { background: #b83838; }");
+
+    layout->addWidget(m_confirmLabel);
+    layout->addWidget(m_confirmOkBtn);
+    layout->addWidget(m_confirmCancelBtn);
+
+    m_confirmBar->setStyleSheet(
+        "QWidget#ConfirmBar { background: rgba(30, 30, 30, 210); border-radius: 8px; }");
+    m_confirmBar->adjustSize();
+    m_confirmBar->setVisible(false);
+
+    // Wire up buttons
+    connect(m_confirmOkBtn, &QPushButton::clicked, this, [this]() {
+        if (m_sketchEditor && m_sketchEditor->isEditing()) {
+            m_sketchEditor->finishEditing();
+        } else if (!m_editingFeatureId.isEmpty()) {
+            onEditingCommitted(m_editingFeatureId);
+        } else if (m_pendingCommand != PendingCommand::None) {
+            onCommitPendingCommand();
+        }
+    });
+
+    connect(m_confirmCancelBtn, &QPushButton::clicked, this, [this]() {
+        if (m_sketchEditor && m_sketchEditor->isEditing()) {
+            m_sketchEditor->finishEditing();
+        } else if (!m_editingFeatureId.isEmpty()) {
+            onEditingCancelled(m_editingFeatureId);
+        } else if (m_pendingCommand != PendingCommand::None) {
+            onCancelPendingCommand();
+        }
+    });
+}
+
+void MainWindow::showConfirmBar(const QString& toolName)
+{
+    if (!m_confirmBar)
+        return;
+    m_confirmLabel->setText(toolName);
+    m_confirmBar->adjustSize();
+
+    // Position at bottom-center of the viewport
+    int barW = m_confirmBar->width();
+    int barH = m_confirmBar->height();
+    int vpW  = m_viewport->width();
+    int vpH  = m_viewport->height();
+    m_confirmBar->move((vpW - barW) / 2, vpH - barH - 20);
+    m_confirmBar->raise();
+    m_confirmBar->setVisible(true);
+}
+
+void MainWindow::hideConfirmBar()
+{
+    if (m_confirmBar)
+        m_confirmBar->setVisible(false);
+}
+
+// =============================================================================
+// Rich status bar (body count, mode, units)
+// =============================================================================
+
+void MainWindow::setupStatusBar()
+{
+    m_statusLeft   = new QLabel(this);
+    m_statusCenter = new QLabel(this);
+    m_statusRight  = new QLabel(this);
+
+    m_statusLeft->setStyleSheet("padding-left: 8px;");
+    m_statusCenter->setAlignment(Qt::AlignCenter);
+    m_statusRight->setAlignment(Qt::AlignRight);
+    m_statusRight->setStyleSheet("padding-right: 8px;");
+
+    statusBar()->addWidget(m_statusLeft, 1);
+    statusBar()->addWidget(m_statusCenter, 1);
+    statusBar()->addPermanentWidget(m_statusRight);
+
+    m_statusLeft->setText(tr("Bodies: 0"));
+    m_statusCenter->setText(tr("Model"));
+    m_statusRight->setText(tr("Grid: On | mm"));
+}
+
+void MainWindow::updateStatusBarInfo()
+{
+    if (!m_document)
+        return;
+
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    int bodyCount = static_cast<int>(ids.size());
+
+    // Total face count across all bodies
+    int totalFaces = 0;
+    for (const auto& bid : ids) {
+        try {
+            auto q = brep.query(bid);
+            totalFaces += q.faceCount();
+        } catch (...) {}
+    }
+
+    // If something is selected, show rich selection info
+    const auto& sel = m_selectionMgr->selection();
+    if (!sel.empty() && !sel[0].bodyId.empty()) {
+        const auto& hit = sel[0];
+        QString selInfo;
+        if (hit.faceIndex >= 0) {
+            selInfo = tr("Selected: Face %1 on %2").arg(hit.faceIndex)
+                          .arg(QString::fromStdString(hit.bodyId));
+            try {
+                auto q = brep.query(hit.bodyId);
+                auto fi = q.faceInfo(hit.faceIndex);
+                selInfo += QStringLiteral(" (")
+                         + QString::fromLatin1(kernel::surfaceTypeName(fi.surfaceType))
+                         + QStringLiteral(")");
+                selInfo += tr(" | Area: %1 mm%2").arg(fi.area, 0, 'f', 2)
+                               .arg(QChar(0x00B2));
+            } catch (...) {}
+        } else if (hit.edgeIndex >= 0) {
+            selInfo = tr("Selected: Edge %1 on %2").arg(hit.edgeIndex)
+                          .arg(QString::fromStdString(hit.bodyId));
+            try {
+                auto q = brep.query(hit.bodyId);
+                auto ei = q.edgeInfo(hit.edgeIndex);
+                selInfo += QStringLiteral(" (")
+                         + QString::fromLatin1(kernel::curveTypeName(ei.curveType))
+                         + QStringLiteral(")");
+                selInfo += tr(" | Length: %1 mm").arg(ei.length, 0, 'f', 2);
+            } catch (...) {}
+        } else {
+            selInfo = tr("Selected: %1").arg(QString::fromStdString(hit.bodyId));
+        }
+        m_statusLeft->setText(selInfo);
+    } else {
+        m_statusLeft->setText(tr("%1 bodies | %2 faces | Grid: 5mm | Units: mm")
+                                  .arg(bodyCount).arg(totalFaces));
+    }
+
+    // Center: current mode
+    QString mode = tr("Model");
+    if (m_sketchEditor && m_sketchEditor->isEditing())
+        mode = tr("Sketch");
+    else if (!m_editingFeatureId.isEmpty())
+        mode = tr("Edit Feature");
+    else if (m_pendingCommand != PendingCommand::None)
+        mode = tr("Command Active");
+    m_statusCenter->setText(mode);
+
+    // Right: grid status + units
+    bool gridOn = m_viewport->showGrid();
+    m_statusRight->setText(tr("Grid: %1 | mm").arg(gridOn ? tr("On") : tr("Off")));
+}
+
+// =============================================================================
+// Marking menu (radial context menu on right-click-and-hold)
+// =============================================================================
+
+void MainWindow::setupMarkingMenu()
+{
+    m_markingMenu = new MarkingMenu(nullptr);  // popup window, no parent
+
+    // Timer: fires after 200ms of right-button hold to trigger the marking menu.
+    m_markingMenuTimer = new QTimer(this);
+    m_markingMenuTimer->setSingleShot(true);
+    m_markingMenuTimer->setInterval(200);
+    connect(m_markingMenuTimer, &QTimer::timeout, this, [this]() {
+        m_markingMenuShown = true;
+        showMarkingMenuForContext(m_rightClickPos);
+    });
+
+    // Install an event filter on the viewport to intercept right-click events.
+    m_viewport->installEventFilter(this);
+}
+
+void MainWindow::showMarkingMenuForContext(const QPoint& globalPos)
+{
+    std::vector<MarkingMenu::MenuItem> items;
+
+    bool inSketch = m_sketchEditor && m_sketchEditor->isEditing();
+
+    if (inSketch) {
+        // Sketch mode items: N=Line, NE=Dimension, E=Circle, SE=Trim, S=Rectangle, SW=Finish, W=Arc, NW=Offset
+        items.push_back({"Line", "L", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::DrawLine);
+        }});
+        items.push_back({"Dimension", "D", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::Dimension);
+        }});
+        items.push_back({"Circle", "C", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::DrawCircle);
+        }});
+        items.push_back({"Trim", "T", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::Trim);
+        }});
+        items.push_back({"Rectangle", "R", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::DrawRectangle);
+        }});
+        items.push_back({"Finish Sketch", "", {}, [this]() {
+            m_sketchEditor->finishEditing();
+        }});
+        items.push_back({"Arc", "A", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::DrawArc);
+        }});
+        items.push_back({"Offset", "O", {}, [this]() {
+            m_sketchEditor->setTool(SketchTool::Offset);
+        }});
+    } else if (m_selectionMgr->hasSelection()) {
+        const auto& hit = m_selectionMgr->selection().front();
+        bool hasFace = (hit.faceIndex >= 0);
+        bool hasEdge = (hit.edgeIndex >= 0);
+
+        if (hasFace) {
+            // Face selected: N=Extrude, NE=Chamfer, E=Fillet, SE=Hole, S=Shell, SW=Select Loop, W=Draft, NW=Appearance
+            items.push_back({"Extrude", "E", {}, [this]() { onExtrudeSketch(); }});
+            items.push_back({"Chamfer", "", {}, [this]() { onChamfer(); }});
+            items.push_back({"Fillet", "F", {}, [this]() { onFillet(); }});
+            items.push_back({"Hole", "H", {}, [this]() { onAddHole(); }});
+            items.push_back({"Shell", "", {}, [this]() { onShell(); }});
+            items.push_back({"Sketch", "", {}, [this]() { onCreateSketch(); }});
+            items.push_back({"Draft", "", {}, [this]() { onDraft(); }});
+            items.push_back({"Measure", "M", {}, [this]() { onMeasure(); }});
+        } else if (hasEdge) {
+            // Edge selected: N=Fillet, E=Chamfer, S=Measure, W=Select
+            items.push_back({"Fillet", "F", {}, [this]() { onFillet(); }});
+            items.push_back({"Chamfer", "", {}, [this]() { onChamfer(); }});
+            items.push_back({});  // empty E placeholder
+            items.push_back({});  // empty SE placeholder
+            items.push_back({"Measure", "M", {}, [this]() { onMeasure(); }});
+            // Remove empty placeholders at the end -- only show actual items
+        }
+    }
+
+    if (items.empty()) {
+        // Nothing selected (default): N=Sketch, NE=Cylinder, E=Box, SE=Sphere, S=Measure, SW=Redo, W=Fit All, NW=Undo
+        items.push_back({"Sketch", "", {}, [this]() { onCreateSketch(); }});
+        items.push_back({"Cylinder", "", {}, [this]() { onCreateCylinder(); }});
+        items.push_back({"Box", "B", {}, [this]() { onCreateBox(); }});
+        items.push_back({"Sphere", "", {}, [this]() { onCreateSphere(); }});
+        items.push_back({"Measure", "M", {}, [this]() { onMeasure(); }});
+        items.push_back({"Redo", "Ctrl+Y", {}, [this]() { onRedo(); }});
+        items.push_back({"Fit All", "", {}, [this]() { m_viewport->fitAll(); }});
+        items.push_back({"Undo", "Ctrl+Z", {}, [this]() { onUndo(); }});
+    }
+
+    // Remove any empty-text items (placeholders)
+    items.erase(std::remove_if(items.begin(), items.end(),
+        [](const MarkingMenu::MenuItem& mi) { return mi.text.isEmpty(); }),
+        items.end());
+
+    m_markingMenu->setItems(items);
+    m_markingMenu->showAt(globalPos);
+}
+
+// Event filter to intercept right-click on the viewport for marking menu vs context menu
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == m_viewport) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::RightButton) {
+                m_rightClickPos = me->globalPos();
+                m_rightClickLocalPos = me->pos();
+                m_markingMenuShown = false;
+                m_markingMenuTimer->start();
+                // Do not consume -- let viewport handle the press too (for camera state)
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (m_markingMenuTimer->isActive()) {
+                // If moved more than 5px, cancel the marking menu timer and fall back to normal context menu
+                QPoint delta = me->pos() - m_rightClickLocalPos;
+                if (delta.manhattanLength() > 5) {
+                    m_markingMenuTimer->stop();
+                }
+            }
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::RightButton) {
+                if (m_markingMenuTimer->isActive()) {
+                    // Quick right-click: stop timer, show standard context menu
+                    m_markingMenuTimer->stop();
+                    showViewportContextMenu(me->globalPos());
+                    return true;  // consume the release
+                }
+                // If marking menu is shown, it handles its own release via grabMouse
+            }
+        }
+    }
+    // Toolbar hover filter: temporarily change selection filter when hovering
+    // over a command button (e.g., hover Fillet → filter to Edges)
+    if (event->type() == QEvent::Enter) {
+        QVariant prop = obj->property("_hoverFilter");
+        if (prop.isValid()) {
+            if (!m_hoverFilterActive) {
+                m_savedHoverFilter = m_selectionMgr->filter();
+                m_hoverFilterActive = true;
+            }
+            m_selectionMgr->setFilterSoft(static_cast<SelectionFilter>(prop.toInt()));
+        }
+    } else if (event->type() == QEvent::Leave) {
+        QVariant prop = obj->property("_hoverFilter");
+        if (prop.isValid()) {
+            restoreHoverFilter();
+        }
+    }
+
+    return QMainWindow::eventFilter(obj, event);
+}
+
+// =============================================================================
+// Command palette (Ctrl+K fuzzy command search)
+// =============================================================================
+
+void MainWindow::setupCommandPalette()
+{
+    m_commandPalette = new CommandPalette(this);
+
+    // Keyboard shortcut: Ctrl+K
+    auto* shortcutK = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_K), this);
+    connect(shortcutK, &QShortcut::activated, this, [this]() {
+        m_commandPalette->activate();
+    });
+
+    // Alternative: Ctrl+Shift+P
+    auto* shortcutP = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this);
+    connect(shortcutP, &QShortcut::activated, this, [this]() {
+        m_commandPalette->activate();
+    });
+
+    // Register all available commands
+    std::vector<CommandPalette::CommandEntry> cmds = {
+        // ── File ────────────────────────────────────────────────────────
+        {"New Document",     "Ctrl+N",       "File",   [this]() { onNewDocument(); }},
+        {"Open...",          "Ctrl+O",       "File",   [this]() { onOpenDocument(); }},
+        {"Save",             "Ctrl+S",       "File",   [this]() { onSaveDocument(); }},
+        {"Import File...",   "Ctrl+I",       "File",   [this]() { onImportFile(); }},
+        {"Export STEP...",   "",             "File",   [this]() { onExportSTEP(); }},
+        {"Export STL...",    "",             "File",   [this]() { onExportSTL(); }},
+
+        // ── Edit ────────────────────────────────────────────────────────
+        {"Undo",             "Ctrl+Z",       "Edit",   [this]() { onUndo(); }},
+        {"Redo",             "Ctrl+Y",       "Edit",   [this]() { onRedo(); }},
+        {"Delete",           "Del",          "Edit",   [this]() { onDeleteSelectedFeature(); }},
+
+        // ── Model (Create) ──────────────────────────────────────────────
+        {"Create Box",       "B",            "Model",  [this]() { onCreateBox(); }},
+        {"Create Cylinder",  "",             "Model",  [this]() { onCreateCylinder(); }},
+        {"Create Sphere",    "",             "Model",  [this]() { onCreateSphere(); }},
+
+        // ── Model (Modify) ──────────────────────────────────────────────
+        {"Extrude",          "E",            "Model",  [this]() { onExtrudeSketch(); }},
+        {"Revolve",          "",             "Model",  [this]() { onRevolveSketch(); }},
+        {"Fillet",           "F",            "Model",  [this]() { onFillet(); }},
+        {"Chamfer",          "",             "Model",  [this]() { onChamfer(); }},
+        {"Shell",            "",             "Model",  [this]() { onShell(); }},
+        {"Draft",            "",             "Model",  [this]() { onDraft(); }},
+        {"Hole",             "H",            "Model",  [this]() { onAddHole(); }},
+        {"Mirror",           "",             "Model",  [this]() { onMirrorLastBody(); }},
+        {"Rectangular Pattern", "",          "Model",  [this]() { onRectangularPattern(); }},
+        {"Circular Pattern", "",             "Model",  [this]() { onCircularPattern(); }},
+        {"Sweep",            "",             "Model",  [this]() { onSweepSketch(); }},
+        {"Loft",             "",             "Model",  [this]() { onLoftTest(); }},
+
+        // ── Sketch ──────────────────────────────────────────────────────
+        {"Create Sketch",    "",             "Sketch", [this]() { onCreateSketch(); }},
+        {"Edit Sketch",      "",             "Sketch", [this]() { onEditSketch(); }},
+
+        // ── Assembly ────────────────────────────────────────────────────
+        {"New Component",    "",             "Assembly",[this]() { onNewComponent(); }},
+        {"Insert Component...", "",          "Assembly",[this]() { onInsertComponent(); }},
+        {"Add Joint",        "J",            "Assembly",[this]() { onAddJoint(); }},
+        {"Check Interference","",            "Assembly",[this]() { onCheckInterference(); }},
+
+        // ── View ────────────────────────────────────────────────────────
+        {"Fit All",          "Home",         "View",   [this]() { m_viewport->fitAll(); }},
+        {"Front View",       "Num1",         "View",   [this]() { m_viewport->setStandardView(StandardView::Front); }},
+        {"Back View",        "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Back); }},
+        {"Left View",        "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Left); }},
+        {"Right View",       "Num3",         "View",   [this]() { m_viewport->setStandardView(StandardView::Right); }},
+        {"Top View",         "Num7",         "View",   [this]() { m_viewport->setStandardView(StandardView::Top); }},
+        {"Bottom View",      "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Bottom); }},
+        {"Isometric View",   "Num0",         "View",   [this]() { m_viewport->setStandardView(StandardView::Isometric); }},
+        {"Toggle Grid",      "G",            "View",   [this]() { m_viewport->setShowGrid(!m_viewport->showGrid()); }},
+
+        // ── Tools ───────────────────────────────────────────────────────
+        {"Measure",          "M",            "Tools",  [this]() { onMeasure(); }},
+
+        // ── Section planes ──────────────────────────────────────────────
+        {"Section X",        "",             "View",   [this]() { onSectionX(); }},
+        {"Section Y",        "",             "View",   [this]() { onSectionY(); }},
+        {"Section Z",        "",             "View",   [this]() { onSectionZ(); }},
+        {"Clear Section",    "",             "View",   [this]() { onClearSection(); }},
+    };
+
+    m_commandPalette->setCommands(cmds);
+}
+
+// =============================================================================
+// Viewport manipulator -- Extrude drag handle
+// =============================================================================
+
+void MainWindow::showExtrudeManipulator(const QString& featureId)
+{
+    // Find the extrude feature in the timeline
+    auto& tl = m_document->timeline();
+    features::ExtrudeFeature* extFeat = nullptr;
+
+    for (size_t i = 0; i < tl.count(); ++i) {
+        auto& entry = tl.entry(i);
+        if (entry.id == featureId.toStdString() &&
+            entry.feature &&
+            entry.feature->type() == features::FeatureType::Extrude) {
+            extFeat = static_cast<features::ExtrudeFeature*>(entry.feature.get());
+            break;
+        }
+    }
+
+    if (!extFeat) {
+        hideManipulator();
+        return;
+    }
+
+    // Determine the extrude origin and direction.
+    // The origin is derived from the sketch plane center (if available) or (0,0,0).
+    // The direction defaults to +Z for a standard sketch on the XY plane.
+    QVector3D origin(0.0f, 0.0f, 0.0f);
+    QVector3D direction(0.0f, 0.0f, 1.0f);
+
+    // Try to find the parent sketch to determine the plane
+    const auto& params = extFeat->params();
+    if (!params.sketchId.empty()) {
+        for (size_t i = 0; i < tl.count(); ++i) {
+            auto& entry = tl.entry(i);
+            if (entry.id == params.sketchId &&
+                entry.feature &&
+                entry.feature->type() == features::FeatureType::Sketch) {
+                auto* skFeat = static_cast<features::SketchFeature*>(entry.feature.get());
+                const auto& sp = skFeat->params();
+                // Origin from sketch plane
+                origin = QVector3D(
+                    static_cast<float>(sp.originX),
+                    static_cast<float>(sp.originY),
+                    static_cast<float>(sp.originZ));
+                // Normal = cross(xDir, yDir) from sketch plane
+                QVector3D xDir(static_cast<float>(sp.xDirX),
+                               static_cast<float>(sp.xDirY),
+                               static_cast<float>(sp.xDirZ));
+                QVector3D yDir(static_cast<float>(sp.yDirX),
+                               static_cast<float>(sp.yDirY),
+                               static_cast<float>(sp.yDirZ));
+                direction = QVector3D::crossProduct(xDir, yDir).normalized();
+                if (direction.length() < 0.5f)
+                    direction = QVector3D(0, 0, 1);  // fallback
+                break;
+            }
+        }
+    }
+
+    // Parse the current distance value
+    double currentDist = 20.0;  // default
+    {
+        const std::string& expr = params.distanceExpr;
+        // Simple parse: "50 mm" -> 50.0
+        try {
+            currentDist = std::stod(expr);
+        } catch (...) {
+            currentDist = 20.0;
+        }
+    }
+
+    // Set direction sign from the feature params
+    m_manipulator->showDistance(origin, direction, currentDist, 0.1, 500.0);
+    if (params.direction == features::ExtentDirection::Negative)
+        m_manipulator->flipDirection();
+
+    // Connect value changes to live preview update
+    disconnect(m_manipulator, nullptr, this, nullptr);  // Clean up old connections
+
+    connect(m_manipulator, &ViewportManipulator::valueChanged, this,
+            [this, featureId](double newValue) {
+        // Find the feature and update its distance expression
+        auto& tl2 = m_document->timeline();
+        for (size_t i = 0; i < tl2.count(); ++i) {
+            auto& entry = tl2.entry(i);
+            if (entry.id == featureId.toStdString() &&
+                entry.feature &&
+                entry.feature->type() == features::FeatureType::Extrude) {
+                auto* feat = static_cast<features::ExtrudeFeature*>(entry.feature.get());
+                feat->params().distanceExpr =
+                    QString::number(newValue, 'f', 2).toStdString() + " mm";
+                break;
+            }
+        }
+
+        // Trigger a preview update
+        if (m_previewEngine && m_previewEngine->isActive()) {
+            m_previewEngine->updatePreview();
+        }
+    });
+
+    connect(m_manipulator, &ViewportManipulator::dragFinished, this,
+            [this, featureId](double finalValue) {
+        // Commit the value -- the preview engine will handle it when
+        // the user presses Enter to finish editing.
+        statusBar()->showMessage(
+            tr("Extrude distance: %1 mm").arg(finalValue, 0, 'f', 1));
+    });
+
+    connect(m_manipulator, &ViewportManipulator::directionFlipped, this,
+            [this, featureId](int newSign) {
+        auto& tl2 = m_document->timeline();
+        for (size_t i = 0; i < tl2.count(); ++i) {
+            auto& entry = tl2.entry(i);
+            if (entry.id == featureId.toStdString() &&
+                entry.feature &&
+                entry.feature->type() == features::FeatureType::Extrude) {
+                auto* feat = static_cast<features::ExtrudeFeature*>(entry.feature.get());
+                feat->params().direction = (newSign > 0)
+                    ? features::ExtentDirection::Positive
+                    : features::ExtentDirection::Negative;
+                break;
+            }
+        }
+
+        if (m_previewEngine && m_previewEngine->isActive()) {
+            m_previewEngine->updatePreview();
+        }
+
+        m_viewport->update();
+    });
+}
+
+void MainWindow::hideManipulator()
+{
+    if (m_manipulator) {
+        disconnect(m_manipulator, nullptr, this, nullptr);
+        m_manipulator->hide();
+        m_viewport->update();
+    }
+}
+
+// =============================================================================
+// Toolbar hover filter -- change selection filter when hovering command buttons
+// =============================================================================
+
+void MainWindow::installToolBarHoverFilters()
+{
+    // Install event filters on command toolbar actions.
+    // When the user hovers over a command button, we temporarily switch
+    // the selection filter to match what that command needs, guiding
+    // the user to pre-select the right entity type.
+
+    auto installHoverFilter = [this](QAction* action, SelectionFilter filter) {
+        if (!action) return;
+        // Find the associated widget(s) in the toolbar
+        QWidget* widget = m_mainToolBar->widgetForAction(action);
+        if (widget) {
+            widget->installEventFilter(this);
+            widget->setProperty("_hoverFilter", static_cast<int>(filter));
+        }
+    };
+
+    // Edge-based commands
+    installHoverFilter(m_filletAction,  SelectionFilter::Edges);
+    installHoverFilter(m_chamferAction, SelectionFilter::Edges);
+
+    // Face-based commands
+    installHoverFilter(m_extrudeAction, SelectionFilter::Faces);
+    installHoverFilter(m_shellAction,   SelectionFilter::Faces);
+    installHoverFilter(m_draftAction,   SelectionFilter::Faces);
+    installHoverFilter(m_holeAction,    SelectionFilter::Faces);
+}
+
+void MainWindow::restoreHoverFilter()
+{
+    if (m_hoverFilterActive) {
+        m_selectionMgr->setFilterSoft(m_savedHoverFilter);
+        m_hoverFilterActive = false;
+    }
+}
+
+// Override eventFilter for toolbar hover detection
+// (eventFilter merged into the single definition above)

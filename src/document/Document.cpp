@@ -154,11 +154,22 @@ std::string Document::generateFeatureName(features::FeatureType type) const
 
 void Document::appendFeatureToTimeline(std::shared_ptr<features::Feature> feature)
 {
-    // Generate the numbered name BEFORE appending (count existing features of this type)
     std::string numberedName = generateFeatureName(feature->type());
-    appendFeatureToTimeline(feature);
-    // Set the auto-generated numbered name on the newly appended entry
-    m_timeline->entry(m_timeline->count() - 1).name = numberedName;
+
+    // If the timeline marker is not at the end (user has rolled back),
+    // insert the new feature at the marker position — this is how Fusion
+    // works: new features go where the marker is, not at the end.
+    size_t markerPos = m_timeline->markerPosition();
+    if (markerPos < m_timeline->count()) {
+        document::TimelineEntry entry;
+        entry.id = feature->id();
+        entry.name = numberedName;
+        entry.feature = std::move(feature);
+        m_timeline->insert(markerPos, std::move(entry));
+    } else {
+        m_timeline->append(std::move(feature));
+        m_timeline->entry(m_timeline->count() - 1).name = numberedName;
+    }
 }
 
 std::string Document::addExtrude(features::ExtrudeParams params)
@@ -1196,6 +1207,74 @@ std::string Document::addJoint(features::JointParams params)
 
     m_modified = true;
     return featureId;
+}
+
+std::string Document::insertComponentFromFile(const std::string& kcdPath)
+{
+    // 1. Create a temporary Document and load the .kcd file into it
+    Document tempDoc;
+    if (!tempDoc.load(kcdPath))
+        throw std::runtime_error("Failed to load component file: " + kcdPath);
+
+    // 2. Create a new Component in this document's registry
+    // Extract a short name from the file path
+    std::string compName = kcdPath;
+    auto slashPos = compName.rfind('/');
+    if (slashPos == std::string::npos)
+        slashPos = compName.rfind('\\');
+    if (slashPos != std::string::npos)
+        compName = compName.substr(slashPos + 1);
+    // Strip .kcd extension
+    auto dotPos = compName.rfind('.');
+    if (dotPos != std::string::npos)
+        compName = compName.substr(0, dotPos);
+
+    std::string compId = m_components.createComponent(compName);
+    auto* comp = m_components.findComponent(compId);
+
+    // 3. For each body in the loaded document, add body to BRepModel with prefixed IDs
+    auto& tempBrep = tempDoc.brepModel();
+    auto tempIds = tempBrep.bodyIds();
+    int bodyIdx = 1;
+    for (const auto& tempBodyId : tempIds) {
+        std::string newBodyId = compId + "_body_" + std::to_string(bodyIdx++);
+        const TopoDS_Shape& shape = tempBrep.getShape(tempBodyId);
+        m_brepModel->addBody(newBodyId, shape);
+        m_nextBodyCounter++;
+
+        // 4. Add body ref to the new component
+        comp->addBodyRef(newBodyId);
+    }
+
+    // 5. Create an Occurrence in the root component pointing to the new component
+    auto& root = m_components.rootComponent();
+    std::string occId = root.addOccurrence(compId, compName);
+
+    m_modified = true;
+    return occId;
+}
+
+std::string Document::findOccurrenceForBody(const std::string& bodyId) const
+{
+    // Search all components for one whose body refs contain bodyId,
+    // then find the occurrence in the root that points to that component.
+    for (const auto& compId : m_components.componentIds()) {
+        const auto* comp = m_components.findComponent(compId);
+        if (!comp) continue;
+        const auto& refs = comp->bodyRefs();
+        for (const auto& ref : refs) {
+            if (ref == bodyId) {
+                // Found the component; now find the occurrence in root
+                const auto& root = m_components.rootComponent();
+                for (const auto& occ : root.occurrences()) {
+                    if (occ.componentId == compId)
+                        return occ.id;
+                }
+                return {};
+            }
+        }
+    }
+    return {};
 }
 
 features::SketchFeature* Document::findSketch(const std::string& sketchId)

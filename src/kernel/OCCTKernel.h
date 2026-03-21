@@ -1,9 +1,8 @@
 #pragma once
 #include <string>
 #include <vector>
-
-// Forward declare OCCT types to keep include cost out of headers
-class TopoDS_Shape;
+#include <utility>
+#include <TopoDS_Shape.hxx>
 
 namespace kernel {
 
@@ -195,6 +194,18 @@ public:
     TopoDS_Shape scaleNonUniform(const TopoDS_Shape& shape,
                                   double factorX, double factorY, double factorZ,
                                   double centerX = 0, double centerY = 0, double centerZ = 0);
+
+    // ── Interference Detection ──────────────────────────────────────────
+    struct InterferenceResult {
+        std::string body1Id, body2Id;
+        double volume;                  // volume of interference region
+        TopoDS_Shape interferenceShape; // the overlapping solid
+    };
+
+    /// Check interference (overlap) between all pairs of bodies.
+    /// Uses BRepAlgoAPI_Common on each pair; non-zero volume = interference.
+    std::vector<InterferenceResult> checkInterference(
+        const std::vector<std::pair<std::string, TopoDS_Shape>>& bodies);
 
     // ── Physical Properties ─────────────────────────────────────────────
     struct PhysicalProperties {

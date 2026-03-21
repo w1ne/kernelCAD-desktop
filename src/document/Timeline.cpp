@@ -117,6 +117,16 @@ void Timeline::insert(size_t index, TimelineEntry entry)
     m_markerPos = m_entries.size();
 }
 
+bool Timeline::replaceFeature(size_t index, std::shared_ptr<features::Feature> newFeature)
+{
+    if (index >= m_entries.size())
+        return false;
+    m_entries[index].id      = newFeature->id();
+    m_entries[index].name    = newFeature->name();
+    m_entries[index].feature = std::move(newFeature);
+    return true;
+}
+
 void Timeline::setMarker(size_t index)
 {
     m_markerPos = std::min(index, m_entries.size());

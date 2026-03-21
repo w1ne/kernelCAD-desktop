@@ -1,0 +1,974 @@
+#include "ScriptEngine.h"
+#include "../document/Document.h"
+#include "../document/JsonReader.h"
+#include "../document/JsonWriter.h"
+#include "../sketch/SketchConstraint.h"
+#include <sstream>
+#include <stdexcept>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <functional>
+#include <unordered_map>
+
+using document::JsonValue;
+using document::JsonReader;
+using document::JsonWriter;
+
+namespace scripting {
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+static std::string featureTypeStr(features::FeatureType t)
+{
+    switch (t) {
+    case features::FeatureType::Extrude:            return "Extrude";
+    case features::FeatureType::Revolve:            return "Revolve";
+    case features::FeatureType::Fillet:             return "Fillet";
+    case features::FeatureType::Chamfer:            return "Chamfer";
+    case features::FeatureType::Shell:              return "Shell";
+    case features::FeatureType::Loft:               return "Loft";
+    case features::FeatureType::Sweep:              return "Sweep";
+    case features::FeatureType::Mirror:             return "Mirror";
+    case features::FeatureType::RectangularPattern: return "RectangularPattern";
+    case features::FeatureType::CircularPattern:    return "CircularPattern";
+    case features::FeatureType::Sketch:             return "Sketch";
+    case features::FeatureType::Hole:               return "Hole";
+    case features::FeatureType::Combine:            return "Combine";
+    case features::FeatureType::SplitBody:          return "SplitBody";
+    case features::FeatureType::OffsetFaces:        return "OffsetFaces";
+    case features::FeatureType::Move:               return "Move";
+    case features::FeatureType::Draft:              return "Draft";
+    case features::FeatureType::Thicken:            return "Thicken";
+    case features::FeatureType::Thread:             return "Thread";
+    case features::FeatureType::Scale:              return "Scale";
+    case features::FeatureType::PathPattern:        return "PathPattern";
+    case features::FeatureType::Coil:               return "Coil";
+    case features::FeatureType::DeleteFace:         return "DeleteFace";
+    case features::FeatureType::ReplaceFace:        return "ReplaceFace";
+    case features::FeatureType::ReverseNormal:      return "ReverseNormal";
+    case features::FeatureType::Joint:              return "Joint";
+    case features::FeatureType::ConstructionPlane:  return "ConstructionPlane";
+    case features::FeatureType::ConstructionAxis:   return "ConstructionAxis";
+    case features::FeatureType::ConstructionPoint:  return "ConstructionPoint";
+    default:                                        return "Unknown";
+    }
+}
+
+static sketch::ConstraintType constraintTypeFromStr(const std::string& s)
+{
+    if (s == "Coincident")        return sketch::ConstraintType::Coincident;
+    if (s == "PointOnLine")       return sketch::ConstraintType::PointOnLine;
+    if (s == "PointOnCircle")     return sketch::ConstraintType::PointOnCircle;
+    if (s == "Distance")          return sketch::ConstraintType::Distance;
+    if (s == "DistancePointLine") return sketch::ConstraintType::DistancePointLine;
+    if (s == "Horizontal")        return sketch::ConstraintType::Horizontal;
+    if (s == "Vertical")          return sketch::ConstraintType::Vertical;
+    if (s == "Parallel")          return sketch::ConstraintType::Parallel;
+    if (s == "Perpendicular")     return sketch::ConstraintType::Perpendicular;
+    if (s == "Tangent")           return sketch::ConstraintType::Tangent;
+    if (s == "Equal")             return sketch::ConstraintType::Equal;
+    if (s == "Symmetric")         return sketch::ConstraintType::Symmetric;
+    if (s == "Midpoint")          return sketch::ConstraintType::Midpoint;
+    if (s == "Concentric")        return sketch::ConstraintType::Concentric;
+    if (s == "FixedAngle")        return sketch::ConstraintType::FixedAngle;
+    if (s == "AngleBetween")      return sketch::ConstraintType::AngleBetween;
+    if (s == "Radius")            return sketch::ConstraintType::Radius;
+    if (s == "Fix")               return sketch::ConstraintType::Fix;
+    throw std::runtime_error("Unknown constraint type: " + s);
+}
+
+/// Read an array of strings from a JsonValue.
+static std::vector<std::string> getStringArray(const JsonValue& obj, const std::string& key)
+{
+    std::vector<std::string> out;
+    const JsonValue* arr = obj.getArray(key);
+    if (!arr) return out;
+    for (auto& elem : arr->arrayVal) {
+        if (elem && elem->type == JsonValue::Type::String)
+            out.push_back(elem->stringVal);
+    }
+    return out;
+}
+
+/// Read an array of ints from a JsonValue.
+static std::vector<int> getIntArray(const JsonValue& obj, const std::string& key)
+{
+    std::vector<int> out;
+    const JsonValue* arr = obj.getArray(key);
+    if (!arr) return out;
+    for (auto& elem : arr->arrayVal) {
+        if (elem && elem->type == JsonValue::Type::Number)
+            out.push_back(static_cast<int>(elem->numberVal));
+    }
+    return out;
+}
+
+/// Build a success JSON response.
+static std::string okResponse(int id, std::function<void(JsonWriter&)> fillResult)
+{
+    JsonWriter w;
+    w.beginObject();
+    w.writeInt("id", id);
+    w.writeBool("ok", true);
+    w.writeKey("result");
+    w.beginObject();
+    if (fillResult) fillResult(w);
+    w.endObject();
+    w.endObject();
+    return w.result();
+}
+
+/// Build an error JSON response.
+static std::string errResponse(int id, const std::string& msg)
+{
+    JsonWriter w;
+    w.beginObject();
+    w.writeInt("id", id);
+    w.writeBool("ok", false);
+    w.writeString("error", msg);
+    w.endObject();
+    return w.result();
+}
+
+// ---------------------------------------------------------------------------
+// Impl
+// ---------------------------------------------------------------------------
+
+struct ScriptEngine::Impl {
+    document::Document doc;
+    LogCallback logCb;
+
+    void log(const std::string& msg) {
+        if (logCb) logCb(msg);
+    }
+
+    // ── Sketch lookup helper ────────────────────────────────────────────
+    sketch::Sketch& resolveSketch(const std::string& sketchId) {
+        auto* sf = doc.findSketch(sketchId);
+        if (!sf)
+            throw std::runtime_error("Sketch not found: " + sketchId);
+        return sf->sketch();
+    }
+
+    // ── Export helpers ───────────────────────────────────────────────────
+    TopoDS_Shape compoundAllBodies() {
+        auto ids = doc.brepModel().bodyIds();
+        if (ids.empty())
+            throw std::runtime_error("No bodies to export");
+        if (ids.size() == 1)
+            return doc.brepModel().getShape(ids[0]);
+
+        // Fuse all bodies into a compound
+        TopoDS_Shape result = doc.brepModel().getShape(ids[0]);
+        for (size_t i = 1; i < ids.size(); ++i) {
+            result = doc.kernel().booleanUnion(result, doc.brepModel().getShape(ids[i]));
+        }
+        return result;
+    }
+
+    // ── Command dispatch ────────────────────────────────────────────────
+    std::string dispatch(const JsonValue& cmd);
+};
+
+// ---------------------------------------------------------------------------
+// Command dispatcher
+// ---------------------------------------------------------------------------
+
+std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
+{
+    std::string cmdName = cmd.getString("cmd");
+    int id = cmd.getInt("id", 0);
+
+    if (cmdName.empty())
+        return errResponse(id, "Missing 'cmd' field");
+
+    try {
+        // ── Document commands ───────────────────────────────────────────
+        if (cmdName == "newDocument") {
+            doc.newDocument();
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "save") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'");
+            bool ok = doc.save(path);
+            if (!ok) return errResponse(id, "Failed to save");
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "load") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'");
+            bool ok = doc.load(path);
+            if (!ok) return errResponse(id, "Failed to load");
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "importStep") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'");
+            int count = doc.importFile(path);
+            auto bodyIds = doc.brepModel().bodyIds();
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeInt("count", count);
+                w.beginArray("bodyIds");
+                for (auto& bid : bodyIds) {
+                    w.beginObject();
+                    w.writeString("id", bid);
+                    w.endObject();
+                }
+                w.endArray();
+            });
+        }
+        if (cmdName == "exportStep") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'");
+            TopoDS_Shape compound = compoundAllBodies();
+            bool ok = doc.kernel().exportSTEP(compound, path);
+            if (!ok) return errResponse(id, "STEP export failed");
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "exportStl") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'");
+            double deflection = cmd.getNumber("deflection", 0.1);
+            TopoDS_Shape compound = compoundAllBodies();
+            bool ok = doc.kernel().exportSTL(compound, path, deflection);
+            if (!ok) return errResponse(id, "STL export failed");
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "undo") {
+            bool ok = doc.history().undo(doc);
+            if (!ok) return errResponse(id, "Nothing to undo");
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "redo") {
+            bool ok = doc.history().redo(doc);
+            if (!ok) return errResponse(id, "Nothing to redo");
+            return okResponse(id, nullptr);
+        }
+
+        // ── Sketch commands ─────────────────────────────────────────────
+        if (cmdName == "createSketch") {
+            features::SketchParams sp;
+            sp.planeId = cmd.getString("plane", "XY");
+            sp.originX = cmd.getNumber("originX", 0);
+            sp.originY = cmd.getNumber("originY", 0);
+            sp.originZ = cmd.getNumber("originZ", 0);
+            std::string featureId = doc.addSketch(sp);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("sketchId", featureId);
+                w.writeString("featureId", featureId);
+            });
+        }
+        if (cmdName == "sketchAddPoint") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            double x = cmd.getNumber("x", 0);
+            double y = cmd.getNumber("y", 0);
+            bool fixed = cmd.getBool("fixed", false);
+            std::string ptId = sk.addPoint(x, y, fixed);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("pointId", ptId);
+            });
+        }
+        if (cmdName == "sketchAddLine") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            std::string startPtId = cmd.getString("startPointId");
+            std::string endPtId = cmd.getString("endPointId");
+            if (!startPtId.empty() && !endPtId.empty()) {
+                bool isCon = cmd.getBool("isConstruction", false);
+                std::string lineId = sk.addLine(startPtId, endPtId, isCon);
+                return okResponse(id, [&](JsonWriter& w) {
+                    w.writeString("lineId", lineId);
+                });
+            }
+            // Convenience overload with coordinates
+            double x1 = cmd.getNumber("x1", 0);
+            double y1 = cmd.getNumber("y1", 0);
+            double x2 = cmd.getNumber("x2", 0);
+            double y2 = cmd.getNumber("y2", 0);
+            std::string lineId = sk.addLine(x1, y1, x2, y2);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("lineId", lineId);
+            });
+        }
+        if (cmdName == "sketchAddCircle") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            std::string centerPtId = cmd.getString("centerPointId");
+            double radius = cmd.getNumber("radius", 10);
+            if (!centerPtId.empty()) {
+                bool isCon = cmd.getBool("isConstruction", false);
+                std::string circId = sk.addCircle(centerPtId, radius, isCon);
+                return okResponse(id, [&](JsonWriter& w) {
+                    w.writeString("circleId", circId);
+                });
+            }
+            double cx = cmd.getNumber("cx", 0);
+            double cy = cmd.getNumber("cy", 0);
+            std::string circId = sk.addCircle(cx, cy, radius);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("circleId", circId);
+            });
+        }
+        if (cmdName == "sketchAddArc") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            std::string centerPtId = cmd.getString("centerPointId");
+            std::string startPtId = cmd.getString("startPointId");
+            std::string endPtId = cmd.getString("endPointId");
+            double radius = cmd.getNumber("radius", 10);
+            if (!centerPtId.empty() && !startPtId.empty() && !endPtId.empty()) {
+                bool isCon = cmd.getBool("isConstruction", false);
+                std::string arcId = sk.addArc(centerPtId, startPtId, endPtId, radius, isCon);
+                return okResponse(id, [&](JsonWriter& w) {
+                    w.writeString("arcId", arcId);
+                });
+            }
+            double cx = cmd.getNumber("cx", 0);
+            double cy = cmd.getNumber("cy", 0);
+            double startAngle = cmd.getNumber("startAngle", 0);
+            double endAngle = cmd.getNumber("endAngle", 3.14159265);
+            std::string arcId = sk.addArc(cx, cy, radius, startAngle, endAngle);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("arcId", arcId);
+            });
+        }
+        if (cmdName == "sketchAddRectangle") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            double x1 = cmd.getNumber("x1", 0);
+            double y1 = cmd.getNumber("y1", 0);
+            double x2 = cmd.getNumber("x2", 10);
+            double y2 = cmd.getNumber("y2", 10);
+
+            // Create 4 corner points
+            std::string p0 = sk.addPoint(x1, y1);
+            std::string p1 = sk.addPoint(x2, y1);
+            std::string p2 = sk.addPoint(x2, y2);
+            std::string p3 = sk.addPoint(x1, y2);
+
+            // Create 4 lines forming a closed rectangle
+            std::string l0 = sk.addLine(p0, p1);
+            std::string l1 = sk.addLine(p1, p2);
+            std::string l2 = sk.addLine(p2, p3);
+            std::string l3 = sk.addLine(p3, p0);
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.beginArray("pointIds");
+                for (auto& pid : {p0, p1, p2, p3}) {
+                    w.beginObject();
+                    w.writeString("id", pid);
+                    w.endObject();
+                }
+                w.endArray();
+                w.beginArray("lineIds");
+                for (auto& lid : {l0, l1, l2, l3}) {
+                    w.beginObject();
+                    w.writeString("id", lid);
+                    w.endObject();
+                }
+                w.endArray();
+            });
+        }
+        if (cmdName == "sketchAddConstraint") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            std::string typeStr = cmd.getString("type");
+            sketch::ConstraintType ctype = constraintTypeFromStr(typeStr);
+            std::vector<std::string> entityIds;
+
+            // Accept entity1/entity2 shorthand or entityIds array
+            if (cmd.has("entityIds")) {
+                entityIds = getStringArray(cmd, "entityIds");
+            } else {
+                std::string e1 = cmd.getString("entity1");
+                std::string e2 = cmd.getString("entity2");
+                if (!e1.empty()) entityIds.push_back(e1);
+                if (!e2.empty()) entityIds.push_back(e2);
+            }
+
+            double value = cmd.getNumber("value", 0);
+            std::string cid = sk.addConstraint(ctype, entityIds, value);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("constraintId", cid);
+            });
+        }
+        if (cmdName == "sketchSolve") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            auto result = sk.solve();
+            const char* statusStr = "Failed";
+            if (result.status == sketch::SolveStatus::Solved)
+                statusStr = "Solved";
+            else if (result.status == sketch::SolveStatus::OverConstrained)
+                statusStr = "OverConstrained";
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("status", statusStr);
+                w.writeInt("freeDOF", sk.freeDOF());
+                w.writeInt("iterations", result.iterations);
+                w.writeNumber("residual", result.residual);
+            });
+        }
+        if (cmdName == "sketchDetectProfiles") {
+            std::string skId = cmd.getString("sketchId");
+            auto& sk = resolveSketch(skId);
+            auto profiles = sk.detectProfiles();
+            return okResponse(id, [&](JsonWriter& w) {
+                w.beginArray("profiles");
+                for (auto& profile : profiles) {
+                    w.beginArrayAnon();
+                    for (auto& eid : profile) {
+                        w.beginObject();
+                        w.writeString("id", eid);
+                        w.endObject();
+                    }
+                    w.endArray();
+                }
+                w.endArray();
+            });
+        }
+
+        // ── Feature commands ────────────────────────────────────────────
+        if (cmdName == "extrude") {
+            features::ExtrudeParams p;
+            p.sketchId = cmd.getString("sketchId");
+            p.profileId = cmd.getString("profileId");
+            p.distanceExpr = cmd.getString("distance", "10 mm");
+            std::string opStr = cmd.getString("operation", "NewBody");
+            if (opStr == "Join")       p.operation = features::FeatureOperation::Join;
+            else if (opStr == "Cut")   p.operation = features::FeatureOperation::Cut;
+            else if (opStr == "Intersect") p.operation = features::FeatureOperation::Intersect;
+            else                       p.operation = features::FeatureOperation::NewBody;
+            p.targetBodyId = cmd.getString("targetBodyId");
+
+            std::string dirStr = cmd.getString("direction", "Positive");
+            if (dirStr == "Negative")    p.direction = features::ExtentDirection::Negative;
+            else if (dirStr == "Symmetric") p.direction = features::ExtentDirection::Symmetric;
+
+            p.taperAngleDeg = cmd.getNumber("taperAngle", 0);
+
+            std::string bodyId = doc.addExtrude(p);
+            // Find the feature id from the timeline (last entry)
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "revolve") {
+            features::RevolveParams p;
+            p.sketchId = cmd.getString("sketchId");
+            p.profileId = cmd.getString("profileId");
+            p.angleExpr = cmd.getString("angle", "360 deg");
+            std::string axisStr = cmd.getString("axis", "Y");
+            if (axisStr == "X")       p.axisType = features::AxisType::XAxis;
+            else if (axisStr == "Y")  p.axisType = features::AxisType::YAxis;
+            else if (axisStr == "Z")  p.axisType = features::AxisType::ZAxis;
+            else                      p.axisType = features::AxisType::YAxis;
+
+            std::string opStr = cmd.getString("operation", "NewBody");
+            if (opStr == "Join")       p.operation = features::FeatureOperation::Join;
+            else if (opStr == "Cut")   p.operation = features::FeatureOperation::Cut;
+            else if (opStr == "Intersect") p.operation = features::FeatureOperation::Intersect;
+
+            std::string bodyId = doc.addRevolve(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "fillet") {
+            features::FilletParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            p.edgeIds = getIntArray(cmd, "edgeIds");
+            p.radiusExpr = cmd.getString("radius", "2 mm");
+
+            std::string bodyId = doc.addFillet(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "chamfer") {
+            features::ChamferParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            p.edgeIds = getIntArray(cmd, "edgeIds");
+            p.distanceExpr = cmd.getString("distance", "1 mm");
+
+            std::string bodyId = doc.addChamfer(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "shell") {
+            features::ShellParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            p.thicknessExpr = cmd.getNumber("thickness", 2.0);
+            p.removedFaceIds = getIntArray(cmd, "removedFaceIds");
+
+            std::string bodyId = doc.addShell(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "mirror") {
+            features::MirrorParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            const JsonValue* planeOrigin = cmd.getArray("planeOrigin");
+            if (planeOrigin && planeOrigin->arrayVal.size() >= 3) {
+                p.planeOx = planeOrigin->arrayVal[0]->numberVal;
+                p.planeOy = planeOrigin->arrayVal[1]->numberVal;
+                p.planeOz = planeOrigin->arrayVal[2]->numberVal;
+            }
+            const JsonValue* planeNormal = cmd.getArray("planeNormal");
+            if (planeNormal && planeNormal->arrayVal.size() >= 3) {
+                p.planeNx = planeNormal->arrayVal[0]->numberVal;
+                p.planeNy = planeNormal->arrayVal[1]->numberVal;
+                p.planeNz = planeNormal->arrayVal[2]->numberVal;
+            }
+            p.isCombine = cmd.getBool("combine", true);
+
+            std::string bodyId = doc.addMirror(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "circularPattern") {
+            features::CircularPatternParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            const JsonValue* axis = cmd.getArray("axis");
+            if (axis && axis->arrayVal.size() >= 3) {
+                p.axisDx = axis->arrayVal[0]->numberVal;
+                p.axisDy = axis->arrayVal[1]->numberVal;
+                p.axisDz = axis->arrayVal[2]->numberVal;
+            }
+            const JsonValue* axisOrigin = cmd.getArray("axisOrigin");
+            if (axisOrigin && axisOrigin->arrayVal.size() >= 3) {
+                p.axisOx = axisOrigin->arrayVal[0]->numberVal;
+                p.axisOy = axisOrigin->arrayVal[1]->numberVal;
+                p.axisOz = axisOrigin->arrayVal[2]->numberVal;
+            }
+            p.count = cmd.getInt("count", 6);
+            p.totalAngleDeg = cmd.getNumber("angle", 360.0);
+
+            std::string bodyId = doc.addCircularPattern(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "rectangularPattern") {
+            features::RectangularPatternParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            const JsonValue* dir1 = cmd.getArray("dir1");
+            if (dir1 && dir1->arrayVal.size() >= 3) {
+                p.dir1X = dir1->arrayVal[0]->numberVal;
+                p.dir1Y = dir1->arrayVal[1]->numberVal;
+                p.dir1Z = dir1->arrayVal[2]->numberVal;
+            }
+            p.spacing1Expr = cmd.getString("spacing1", "20 mm");
+            p.count1 = cmd.getInt("count1", 3);
+            const JsonValue* dir2 = cmd.getArray("dir2");
+            if (dir2 && dir2->arrayVal.size() >= 3) {
+                p.dir2X = dir2->arrayVal[0]->numberVal;
+                p.dir2Y = dir2->arrayVal[1]->numberVal;
+                p.dir2Z = dir2->arrayVal[2]->numberVal;
+            }
+            p.spacing2Expr = cmd.getString("spacing2", "20 mm");
+            p.count2 = cmd.getInt("count2", 1);
+
+            std::string bodyId = doc.addRectangularPattern(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "hole") {
+            features::HoleParams p;
+            p.targetBodyId = cmd.getString("bodyId");
+            const JsonValue* pos = cmd.getArray("position");
+            if (pos && pos->arrayVal.size() >= 3) {
+                p.posX = pos->arrayVal[0]->numberVal;
+                p.posY = pos->arrayVal[1]->numberVal;
+                p.posZ = pos->arrayVal[2]->numberVal;
+            } else {
+                p.posX = cmd.getNumber("posX", 0);
+                p.posY = cmd.getNumber("posY", 0);
+                p.posZ = cmd.getNumber("posZ", 0);
+            }
+            const JsonValue* dir = cmd.getArray("direction");
+            if (dir && dir->arrayVal.size() >= 3) {
+                p.dirX = dir->arrayVal[0]->numberVal;
+                p.dirY = dir->arrayVal[1]->numberVal;
+                p.dirZ = dir->arrayVal[2]->numberVal;
+            } else {
+                p.dirX = cmd.getNumber("dirX", 0);
+                p.dirY = cmd.getNumber("dirY", 0);
+                p.dirZ = cmd.getNumber("dirZ", -1);
+            }
+            p.diameterExpr = cmd.getString("diameter", "10 mm");
+            p.depthExpr = cmd.getString("depth", "0");
+
+            std::string bodyId = doc.addHole(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "combine") {
+            features::CombineParams p;
+            p.targetBodyId = cmd.getString("targetBodyId");
+            p.toolBodyId = cmd.getString("toolBodyId");
+            std::string opStr = cmd.getString("operation", "Join");
+            if (opStr == "Cut")            p.operation = features::CombineOperation::Cut;
+            else if (opStr == "Intersect") p.operation = features::CombineOperation::Intersect;
+            else                           p.operation = features::CombineOperation::Join;
+            p.keepToolBody = cmd.getBool("keepToolBody", false);
+
+            std::string bodyId = doc.addCombine(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+
+        // ── Primitive shortcuts ─────────────────────────────────────────
+        if (cmdName == "createBox") {
+            // Use ExtrudeFeature with empty profileId to trigger makeBox shortcut
+            features::ExtrudeParams p;
+            double dx = cmd.getNumber("dx", 10);
+            double dy = cmd.getNumber("dy", 10);
+            double dz = cmd.getNumber("dz", 10);
+            // distanceExpr encodes [dx, dy, dz] as "dx" for the box shortcut
+            p.distanceExpr = std::to_string(dz) + " mm";
+            // makeBox reads dx, dy from distanceExpr in a special way.
+            // Actually, the ExtrudeFeature::execute makeBox path uses OCCTKernel::makeBox
+            // with params taken from the expression. Let's directly call the kernel.
+            TopoDS_Shape box = doc.kernel().makeBox(dx, dy, dz);
+            // Register as a body
+            std::string bodyId = "body_" + std::to_string(doc.brepModel().bodyIds().size() + 1);
+            // Use addExtrude with empty sketchId to get proper timeline entry
+            p.profileId.clear();
+            p.sketchId.clear();
+            p.distanceExpr = std::to_string(dx) + " " + std::to_string(dy) + " " + std::to_string(dz);
+            std::string resultBodyId = doc.addExtrude(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", resultBodyId);
+            });
+        }
+        if (cmdName == "createCylinder") {
+            // Use RevolveFeature with empty profileId to trigger makeCylinder shortcut
+            features::RevolveParams p;
+            p.profileId.clear();
+            p.sketchId.clear();
+            double radius = cmd.getNumber("radius", 5);
+            double height = cmd.getNumber("height", 10);
+            p.angleExpr = std::to_string(radius) + " " + std::to_string(height);
+
+            std::string bodyId = doc.addRevolve(p);
+            std::string featureId;
+            if (doc.timeline().count() > 0)
+                featureId = doc.timeline().entry(doc.timeline().count() - 1).id;
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "createSphere") {
+            double radius = cmd.getNumber("radius", 5);
+            TopoDS_Shape sphere = doc.kernel().makeSphere(radius);
+            // Register directly in BRepModel (no specific Document::addSphere)
+            std::string bodyId = "body_sphere_" + std::to_string(doc.brepModel().bodyIds().size() + 1);
+            doc.brepModel().addBody(bodyId, sphere);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+
+        // ── Query commands ──────────────────────────────────────────────
+        if (cmdName == "listBodies") {
+            auto ids = doc.brepModel().bodyIds();
+            return okResponse(id, [&](JsonWriter& w) {
+                w.beginArray("bodyIds");
+                for (auto& bid : ids) {
+                    w.beginObject();
+                    w.writeString("id", bid);
+                    w.endObject();
+                }
+                w.endArray();
+            });
+        }
+        if (cmdName == "listFeatures") {
+            return okResponse(id, [&](JsonWriter& w) {
+                w.beginArray("features");
+                for (size_t i = 0; i < doc.timeline().count(); ++i) {
+                    auto& entry = doc.timeline().entry(i);
+                    w.beginObject();
+                    w.writeString("id", entry.id);
+                    w.writeString("name", entry.displayName());
+                    w.writeString("type", entry.feature
+                        ? featureTypeStr(entry.feature->type()) : "Unknown");
+                    w.writeBool("isSuppressed", entry.isSuppressed);
+                    w.endObject();
+                }
+                w.endArray();
+            });
+        }
+        if (cmdName == "getProperties") {
+            std::string bodyId = cmd.getString("bodyId");
+            if (bodyId.empty()) return errResponse(id, "Missing 'bodyId'");
+            if (!doc.brepModel().hasBody(bodyId))
+                return errResponse(id, "Body not found: " + bodyId);
+
+            double density = cmd.getNumber("density", 0.00785);
+            auto props = doc.brepModel().getProperties(bodyId, density);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeNumber("volume", props.volume);
+                w.writeNumber("surfaceArea", props.surfaceArea);
+                w.writeNumber("mass", props.mass);
+                w.writeNumber("cogX", props.cogX);
+                w.writeNumber("cogY", props.cogY);
+                w.writeNumber("cogZ", props.cogZ);
+                w.writeNumber("bboxMinX", props.bboxMinX);
+                w.writeNumber("bboxMinY", props.bboxMinY);
+                w.writeNumber("bboxMinZ", props.bboxMinZ);
+                w.writeNumber("bboxMaxX", props.bboxMaxX);
+                w.writeNumber("bboxMaxY", props.bboxMaxY);
+                w.writeNumber("bboxMaxZ", props.bboxMaxZ);
+            });
+        }
+        if (cmdName == "getFeatureParams") {
+            std::string featureId = cmd.getString("featureId");
+            if (featureId.empty()) return errResponse(id, "Missing 'featureId'");
+
+            // Search timeline for the feature
+            features::Feature* feat = nullptr;
+            for (size_t i = 0; i < doc.timeline().count(); ++i) {
+                if (doc.timeline().entry(i).id == featureId) {
+                    feat = doc.timeline().entry(i).feature.get();
+                    break;
+                }
+            }
+            if (!feat) return errResponse(id, "Feature not found: " + featureId);
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("type", featureTypeStr(feat->type()));
+                // Serialize type-specific params
+                if (feat->type() == features::FeatureType::Extrude) {
+                    auto& p = static_cast<features::ExtrudeFeature*>(feat)->params();
+                    w.writeString("sketchId", p.sketchId);
+                    w.writeString("profileId", p.profileId);
+                    w.writeString("distance", p.distanceExpr);
+                    w.writeString("targetBodyId", p.targetBodyId);
+                } else if (feat->type() == features::FeatureType::Fillet) {
+                    auto& p = static_cast<features::FilletFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeString("radius", p.radiusExpr);
+                } else if (feat->type() == features::FeatureType::Chamfer) {
+                    auto& p = static_cast<features::ChamferFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeString("distance", p.distanceExpr);
+                } else if (feat->type() == features::FeatureType::Shell) {
+                    auto& p = static_cast<features::ShellFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeNumber("thickness", p.thicknessExpr);
+                } else if (feat->type() == features::FeatureType::Revolve) {
+                    auto& p = static_cast<features::RevolveFeature*>(feat)->params();
+                    w.writeString("sketchId", p.sketchId);
+                    w.writeString("profileId", p.profileId);
+                    w.writeString("angle", p.angleExpr);
+                } else if (feat->type() == features::FeatureType::Mirror) {
+                    auto& p = static_cast<features::MirrorFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeNumber("planeOx", p.planeOx);
+                    w.writeNumber("planeOy", p.planeOy);
+                    w.writeNumber("planeOz", p.planeOz);
+                    w.writeNumber("planeNx", p.planeNx);
+                    w.writeNumber("planeNy", p.planeNy);
+                    w.writeNumber("planeNz", p.planeNz);
+                } else if (feat->type() == features::FeatureType::Sketch) {
+                    auto& p = static_cast<features::SketchFeature*>(feat)->params();
+                    w.writeString("planeId", p.planeId);
+                    w.writeNumber("originX", p.originX);
+                    w.writeNumber("originY", p.originY);
+                    w.writeNumber("originZ", p.originZ);
+                } else if (feat->type() == features::FeatureType::Hole) {
+                    auto& p = static_cast<features::HoleFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeString("diameter", p.diameterExpr);
+                    w.writeString("depth", p.depthExpr);
+                } else if (feat->type() == features::FeatureType::Combine) {
+                    auto& p = static_cast<features::CombineFeature*>(feat)->params();
+                    w.writeString("targetBodyId", p.targetBodyId);
+                    w.writeString("toolBodyId", p.toolBodyId);
+                }
+            });
+        }
+        if (cmdName == "faceCount") {
+            std::string bodyId = cmd.getString("bodyId");
+            if (bodyId.empty()) return errResponse(id, "Missing 'bodyId'");
+            if (!doc.brepModel().hasBody(bodyId))
+                return errResponse(id, "Body not found: " + bodyId);
+            int count = doc.kernel().faceCount(doc.brepModel().getShape(bodyId));
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeInt("count", count);
+            });
+        }
+        if (cmdName == "edgeCount") {
+            std::string bodyId = cmd.getString("bodyId");
+            if (bodyId.empty()) return errResponse(id, "Missing 'bodyId'");
+            if (!doc.brepModel().hasBody(bodyId))
+                return errResponse(id, "Body not found: " + bodyId);
+            int count = doc.kernel().edgeCount(doc.brepModel().getShape(bodyId));
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeInt("count", count);
+            });
+        }
+
+        // ── Timeline commands ───────────────────────────────────────────
+        if (cmdName == "setMarker") {
+            int position = cmd.getInt("position", 0);
+            doc.timeline().setMarker(static_cast<size_t>(position));
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "suppress") {
+            std::string featureId = cmd.getString("featureId");
+            if (featureId.empty()) return errResponse(id, "Missing 'featureId'");
+            bool found = false;
+            for (size_t i = 0; i < doc.timeline().count(); ++i) {
+                if (doc.timeline().entry(i).id == featureId) {
+                    doc.timeline().entry(i).isSuppressed =
+                        !doc.timeline().entry(i).isSuppressed;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return errResponse(id, "Feature not found: " + featureId);
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "deleteFeature") {
+            std::string featureId = cmd.getString("featureId");
+            if (featureId.empty()) return errResponse(id, "Missing 'featureId'");
+            doc.timeline().remove(featureId);
+            return okResponse(id, nullptr);
+        }
+        if (cmdName == "recompute") {
+            doc.recompute();
+            return okResponse(id, nullptr);
+        }
+
+        return errResponse(id, "Unknown command: " + cmdName);
+    }
+    catch (const std::exception& ex) {
+        return errResponse(id, ex.what());
+    }
+    catch (...) {
+        return errResponse(id, "Unknown error");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ScriptEngine public API
+// ---------------------------------------------------------------------------
+
+ScriptEngine::ScriptEngine() : m_impl(std::make_unique<Impl>()) {}
+ScriptEngine::~ScriptEngine() = default;
+
+std::string ScriptEngine::execute(const std::string& jsonCommand)
+{
+    auto parsed = JsonReader::parse(jsonCommand);
+    if (!parsed || parsed->type != JsonValue::Type::Object)
+        return errResponse(0, "Invalid JSON");
+    return m_impl->dispatch(*parsed);
+}
+
+std::string ScriptEngine::executeBatch(const std::string& jsonArray)
+{
+    auto parsed = JsonReader::parse(jsonArray);
+    if (!parsed)
+        return errResponse(0, "Invalid JSON");
+
+    // If it's a single object, treat as single command
+    if (parsed->type == JsonValue::Type::Object) {
+        return m_impl->dispatch(*parsed);
+    }
+
+    if (parsed->type != JsonValue::Type::Array)
+        return errResponse(0, "Expected JSON array");
+
+    std::string result = "[";
+    for (size_t i = 0; i < parsed->arrayVal.size(); ++i) {
+        if (i > 0) result += ",";
+        if (parsed->arrayVal[i] && parsed->arrayVal[i]->type == JsonValue::Type::Object)
+            result += m_impl->dispatch(*parsed->arrayVal[i]);
+        else
+            result += errResponse(0, "Array element is not a JSON object");
+    }
+    result += "]";
+    return result;
+}
+
+document::Document& ScriptEngine::document()
+{
+    return m_impl->doc;
+}
+
+void ScriptEngine::setLogCallback(LogCallback cb)
+{
+    m_impl->logCb = std::move(cb);
+}
+
+} // namespace scripting

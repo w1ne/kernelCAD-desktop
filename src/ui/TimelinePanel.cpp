@@ -3,6 +3,7 @@
 #include <QContextMenuEvent>
 #include <QDrag>
 #include <QDragEnterEvent>
+#include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -33,6 +34,7 @@ TimelineEntryWidget::TimelineEntryWidget(const QString& featureId,
 {
     setFixedSize(90, 56);
     setCursor(Qt::OpenHandCursor);
+    // Default tooltip -- callers may override with setToolTip()
     setToolTip(featureName);
 }
 
@@ -104,7 +106,7 @@ void TimelineEntryWidget::paintEvent(QPaintEvent* /*event*/)
         p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 5, 5);
     }
 
-    // Icon placeholder -- colored rectangle at top
+    // Icon placeholder -- colored rectangle at top, using feature-type colour
     QRect iconRect(6, 6, 18, 18);
     p.setBrush(m_iconColor);
     p.setPen(Qt::NoPen);
@@ -280,6 +282,26 @@ TimelinePanel::TimelinePanel(QWidget* parent)
 
 // ----- public API ----------------------------------------------------
 
+void TimelinePanel::setEntriesEx(const std::vector<EntryInfo>& entries)
+{
+    m_data.clear();
+    m_data.reserve(entries.size());
+    for (const auto& ei : entries) {
+        EntryData ed;
+        ed.id         = ei.id;
+        ed.name       = ei.displayName;
+        ed.tooltip    = ei.tooltip;
+        ed.iconColor  = ei.iconColor;
+        ed.suppressed = ei.suppressed;
+        m_data.push_back(std::move(ed));
+    }
+
+    // Clamp marker
+    m_markerIndex = std::min(m_markerIndex, static_cast<int>(m_data.size()));
+
+    rebuildLayout();
+}
+
 void TimelinePanel::setEntries(const std::vector<std::pair<QString, QString>>& entries)
 {
     m_data.clear();
@@ -288,6 +310,7 @@ void TimelinePanel::setEntries(const std::vector<std::pair<QString, QString>>& e
         EntryData ed;
         ed.id   = id;
         ed.name = name;
+        ed.iconColor = colorForName(name);
         m_data.push_back(std::move(ed));
     }
 
@@ -341,10 +364,34 @@ void TimelinePanel::dragEnterEvent(QDragEnterEvent* event)
 void TimelinePanel::dragMoveEvent(QDragMoveEvent* event)
 {
     event->acceptProposedAction();
+
+    // Show drag insertion indicator for entry drags
+    if (event->mimeData()->hasFormat("application/x-timeline-entry")) {
+        QPoint posInContainer = m_container->mapFrom(this, event->position().toPoint());
+        int newInsertIdx = entryIndexAtPos(posInContainer);
+        newInsertIdx = std::clamp(newInsertIdx, 0, static_cast<int>(m_data.size()));
+        if (newInsertIdx != m_dragInsertIndex) {
+            m_dragInsertIndex = newInsertIdx;
+            m_container->update();  // trigger repaint to draw line
+            update();
+        }
+    }
+}
+
+void TimelinePanel::dragLeaveEvent(QDragLeaveEvent* event)
+{
+    Q_UNUSED(event);
+    m_dragInsertIndex = -1;
+    m_container->update();
+    update();
 }
 
 void TimelinePanel::dropEvent(QDropEvent* event)
 {
+    // Clear insertion indicator
+    m_dragInsertIndex = -1;
+    m_container->update();
+
     if (event->mimeData()->hasFormat("application/x-timeline-marker")) {
         // Marker drag -- reposition marker
         QPoint posInContainer = m_container->mapFrom(this, event->position().toPoint());
@@ -374,14 +421,58 @@ void TimelinePanel::dropEvent(QDropEvent* event)
     }
 }
 
+// ----- paint event (for drag insertion line) -------------------------
+
+void TimelinePanel::paintEvent(QPaintEvent* event)
+{
+    QWidget::paintEvent(event);
+
+    if (m_dragInsertIndex < 0)
+        return;
+
+    // Draw a vertical blue insertion line at the calculated position
+    // We need to figure out the x-position in our coordinate system
+    int xPos = -1;
+
+    if (m_entryWidgets.empty()) {
+        xPos = 10;
+    } else if (m_dragInsertIndex >= static_cast<int>(m_entryWidgets.size())) {
+        // After the last widget
+        QWidget* last = m_entryWidgets.back();
+        if (last->isVisible()) {
+            QPoint p = last->mapTo(this, QPoint(last->width() + 2, 0));
+            xPos = p.x();
+        }
+    } else {
+        QWidget* w = m_entryWidgets[m_dragInsertIndex];
+        if (w->isVisible()) {
+            QPoint p = w->mapTo(this, QPoint(-2, 0));
+            xPos = p.x();
+        }
+    }
+
+    if (xPos >= 0) {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(QColor(0, 140, 255), 3));
+        p.drawLine(xPos, 4, xPos, height() - 4);
+
+        // Small triangle at top
+        QPainterPath tri;
+        tri.moveTo(xPos, 4);
+        tri.lineTo(xPos - 5, 0);
+        tri.lineTo(xPos + 5, 0);
+        tri.closeSubpath();
+        p.setBrush(QColor(0, 140, 255));
+        p.setPen(Qt::NoPen);
+        p.drawPath(tri);
+    }
+}
+
 // ----- context menu (right-click to create group) --------------------
 
 void TimelinePanel::contextMenuEvent(QContextMenuEvent* event)
 {
-    // For simplicity, if there are at least 2 entries, offer "Group Selected"
-    // using a simple range selection heuristic: the entry under the cursor
-    // plus the one before it. A full multi-selection system would be more
-    // elaborate; here we allow grouping consecutive entries under the click.
     QPoint posInContainer = m_container->mapFrom(this, event->pos());
     int clickedIdx = entryIndexAtPos(posInContainer);
     if (clickedIdx < 0 || clickedIdx >= static_cast<int>(m_data.size())) {
@@ -459,11 +550,16 @@ void TimelinePanel::rebuildLayout()
         const auto& ed = m_data[i];
         const GroupInfo* grp = groupForIndex(i);
 
-        QColor col = colorForName(ed.name);
+        // Use the stored icon colour (falls back to colorForName if not set)
+        QColor col = ed.iconColor.isValid() ? ed.iconColor : colorForName(ed.name);
         auto* ew = new TimelineEntryWidget(ed.id, ed.name, col, m_container);
         ew->setSuppressed(ed.suppressed || (grp && grp->isSuppressed));
         ew->setDimmed(i >= m_markerIndex);
         ew->setEditing(ed.id == m_editingFeatureId);
+
+        // Set rich tooltip if provided
+        if (!ed.tooltip.isEmpty())
+            ew->setToolTip(ed.tooltip);
 
         connect(ew, &TimelineEntryWidget::doubleClicked, this, [this](const QString& fid) {
             emit entryDoubleClicked(fid);
@@ -572,6 +668,9 @@ bool TimelinePanel::eventFilter(QObject* watched, QEvent* event)
                     ew->setCursor(Qt::ClosedHandCursor);
                     drag->exec(Qt::MoveAction);
                     ew->setCursor(Qt::OpenHandCursor);
+                    // Clear insertion indicator after drop
+                    m_dragInsertIndex = -1;
+                    update();
                     return true;
                 }
             }

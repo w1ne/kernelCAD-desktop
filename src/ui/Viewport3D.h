@@ -19,6 +19,7 @@
 
 class SelectionManager;
 class SketchEditor;
+class ViewportManipulator;
 
 /// Per-body rendering data for multi-body display with distinct colors.
 struct BodyRenderData {
@@ -108,12 +109,16 @@ public:
     /// Set the sketch editor for overlay rendering and input delegation.
     void setSketchEditor(SketchEditor* editor);
 
+signals:
+    /// Emitted when Ctrl+drag moves a selected body in the viewport.
+    void occurrenceDragged(float dx, float dy, float dz);
+
+public:
     /// Access camera matrices (needed by SketchEditor for ray-plane intersection).
     QMatrix4x4 viewMatrix() const;
     QMatrix4x4 projectionMatrix() const;
 
     /// Enable/disable a section (clipping) plane.
-    /// planeX,Y,Z = plane normal; planeD = distance (ax + by + cz + d = 0).
     void setSectionPlane(bool enabled,
                          float planeX = 0, float planeY = 0, float planeZ = 1,
                          float planeD = 0);
@@ -131,9 +136,18 @@ public:
     /// Clear the preview mesh overlay.
     void clearPreviewMesh();
 
+    /// Set the explode factor for assembly exploded view.
+    /// 0 = assembled (default), 1 = fully exploded.
+    void setExplodeFactor(float factor);
+    float explodeFactor() const { return m_explodeFactor; }
+
     /// Toggle ground grid and origin axes visibility.
     void setShowGrid(bool show);
     bool showGrid() const { return m_showGrid; }
+
+    /// Set the viewport manipulator (owned externally, e.g. by MainWindow).
+    void setManipulator(ViewportManipulator* manipulator);
+    ViewportManipulator* manipulator() const { return m_manipulator; }
 
 protected:
     void initializeGL() override;
@@ -214,6 +228,9 @@ private:
     QOpenGLBuffer m_edgeEbo{QOpenGLBuffer::IndexBuffer};
     GLsizei m_edgeIndexCount = 0;
     bool m_edgesLoaded = false;
+
+    // ── exploded view ─────────────────────────────────────────────────
+    float m_explodeFactor = 0.0f;
 
     // ── view mode ───────────────────────────────────────────────────────
     ViewMode m_viewMode = ViewMode::SolidWithEdges;
@@ -336,4 +353,10 @@ private:
     QVector3D m_animStartEye, m_animStartCenter, m_animStartUp;
     QVector3D m_animEndEye,   m_animEndCenter,   m_animEndUp;
     static constexpr int kAnimTickMs = 16;  // ~60 fps
+
+    // ── viewport manipulator (drag handles) ──────────────────────────────
+    ViewportManipulator* m_manipulator = nullptr;
+
+    /// Draw the viewport manipulator overlay (value label, flip arrow).
+    void drawManipulatorOverlay();
 };

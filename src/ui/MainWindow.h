@@ -2,12 +2,16 @@
 #include <QMainWindow>
 #include <QVariant>
 #include <memory>
+#include "SelectionManager.h"  // SelectionFilter enum
 
 class QAction;
 class QActionGroup;
 class QSlider;
 class QLabel;
 class QPushButton;
+class QTimer;
+class JointCreator;
+class ViewportManipulator;
 
 namespace document { class Document; class PreviewEngine; class InteractiveCommand; class AutoSave; }
 
@@ -20,6 +24,8 @@ class PropertiesPanel;
 class SelectionManager;
 class SketchEditor;
 class MeasureTool;
+class MarkingMenu;
+class CommandPalette;
 
 namespace features { class SketchFeature; }
 
@@ -33,6 +39,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void setupUI();
@@ -73,8 +80,8 @@ private:
     void onSweepSketch();
     void onNewComponent();
     void onInsertComponent();
-    void onAddRigidJoint();
-    void onAddRevoluteJoint();
+    void onAddJoint();
+    void onCheckInterference();
     void onUndo();
     void onRedo();
 
@@ -204,6 +211,12 @@ private:
     bool m_measureActive = false;
     void onMeasure();
 
+    // Joint creator for interactive face-to-face joint workflow
+    JointCreator* m_jointCreator = nullptr;
+
+    // Exploded view slider
+    QSlider* m_explodeSlider = nullptr;
+
     // Auto-save
     document::AutoSave* m_autoSave = nullptr;
 
@@ -236,4 +249,41 @@ private:
     QLabel* m_statusRight  = nullptr;
     void setupStatusBar();
     void updateStatusBarInfo();
+
+    // ── Marking menu (radial context menu) ──────────────────────────────
+    MarkingMenu* m_markingMenu = nullptr;
+    QTimer*      m_markingMenuTimer = nullptr;
+    QPoint       m_rightClickPos;        // global position of right-click
+    QPoint       m_rightClickLocalPos;   // viewport-local position
+    bool         m_markingMenuShown = false;
+    void setupMarkingMenu();
+    void showMarkingMenuForContext(const QPoint& globalPos);
+
+    // ── Command palette ─────────────────────────────────────────────────
+    CommandPalette* m_commandPalette = nullptr;
+    void setupCommandPalette();
+
+    // ── Viewport manipulator (drag handles for feature editing) ──────────
+    ViewportManipulator* m_manipulator = nullptr;
+
+    /// Show the distance manipulator for the currently-edited Extrude feature.
+    void showExtrudeManipulator(const QString& featureId);
+
+    /// Hide the manipulator and disconnect signals.
+    void hideManipulator();
+
+    // ── Toolbar hover filter ─────────────────────────────────────────────
+    QAction* m_chamferAction = nullptr;
+    QAction* m_shellAction   = nullptr;
+    QAction* m_draftAction   = nullptr;
+
+    /// Saved selection filter before a toolbar hover override.
+    SelectionFilter m_savedHoverFilter = SelectionFilter::All;
+    bool m_hoverFilterActive = false;
+
+    /// Install event filters on toolbar actions for hover-based filter switching.
+    void installToolBarHoverFilters();
+
+    /// Restore the selection filter after toolbar hover ends.
+    void restoreHoverFilter();
 };

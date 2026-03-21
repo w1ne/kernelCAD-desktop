@@ -1,4 +1,5 @@
 #include "Viewport3D.h"
+#include "ViewportManipulator.h"
 #include "SketchEditor.h"
 #include "SelectionManager.h"
 #include "../sketch/Sketch.h"
@@ -419,10 +420,42 @@ void Viewport3D::paintGL()
         m_program->setUniformValue("uPreSelectedFace", preSelectedFace);
         m_program->setUniformValue("uAlpha", 1.0f);
 
+        // -- compute assembly center for exploded view -------------------
+        QVector3D assemblyCenter(0, 0, 0);
+        float maxBboxSize = 1.0f;
+        if (m_explodeFactor > 0.0f && !m_bodyGPUs.empty()) {
+            assemblyCenter = (m_bboxMin + m_bboxMax) * 0.5f;
+            maxBboxSize = (m_bboxMax - m_bboxMin).length();
+            if (maxBboxSize < 1e-6f) maxBboxSize = 1.0f;
+        }
+
         // -- draw each visible body with its own color -------------------
-        for (const auto& bg : m_bodyGPUs) {
+        for (size_t bgi = 0; bgi < m_bodyGPUs.size(); ++bgi) {
+            const auto& bg = m_bodyGPUs[bgi];
             if (!bg->isVisible)
                 continue;
+
+            // Compute per-body model matrix with explode offset
+            QMatrix4x4 bodyModel;
+            if (m_explodeFactor > 0.0f) {
+                // Approximate body center from overall bbox partitioning:
+                // use the body index to spread bodies outward from center.
+                // For a more accurate approach we would need per-body bboxes,
+                // but this works well for the viewport-level explode.
+                QVector3D bodyCenter = assemblyCenter; // default
+                // Try to find per-body center from stored vertex data
+                // A simple proxy: use the first vertex of each body as a seed
+                // This is recalculated each frame but only when explode > 0.
+                (void)bodyCenter; // Use actual direction from assembly center
+                float angle = static_cast<float>(bgi) * 6.2832f / static_cast<float>(m_bodyGPUs.size());
+                QVector3D dir(std::cos(angle), 0.0f, std::sin(angle));
+                if (m_bodyGPUs.size() == 1) dir = QVector3D(0, 0, 0);
+                bodyModel.translate(dir * m_explodeFactor * maxBboxSize * 0.5f);
+            }
+
+            QMatrix3x3 bodyNormalMatrix = bodyModel.normalMatrix();
+            m_program->setUniformValue("uModel", bodyModel);
+            m_program->setUniformValue("uNormalMatrix", bodyNormalMatrix);
 
             // Apply red tint for bodies with errored features
             if (bg->hasError) {
@@ -440,6 +473,10 @@ void Viewport3D::paintGL()
             glDrawElements(GL_TRIANGLES, bg->indexCount, GL_UNSIGNED_INT, nullptr);
             bg->vao.release();
         }
+
+        // Reset model matrix after body loop
+        m_program->setUniformValue("uModel", model);
+        m_program->setUniformValue("uNormalMatrix", model.normalMatrix());
 
         m_program->release();
 
@@ -577,6 +614,11 @@ void Viewport3D::paintGL()
         drawPreviewMesh(model, view, projection);
     }
 
+    // -- viewport manipulator (drag handles, drawn on top of bodies) ------
+    if (m_manipulator && m_manipulator->isVisible() && m_edgeProgram) {
+        m_manipulator->draw(this, m_edgeProgram, view, projection);
+    }
+
     // -- sketch overlay (drawn on top of 3D scene) -----------------------
     if (m_sketchEditor) {
         drawSketchOverlay();
@@ -586,6 +628,9 @@ void Viewport3D::paintGL()
 
     // -- ViewCube overlay (top-right corner) ------------------------------
     drawViewCubeOverlay();
+
+    // -- manipulator 2D overlay (value label, flip arrow) ----------------
+    drawManipulatorOverlay();
 }
 
 // =============================================================================
@@ -1229,6 +1274,11 @@ void Viewport3D::setSelectionManager(SelectionManager* mgr)
     m_selectionMgr = mgr;
 }
 
+void Viewport3D::setManipulator(ViewportManipulator* manipulator)
+{
+    m_manipulator = manipulator;
+}
+
 void Viewport3D::setHighlightedFaces(const std::vector<int>& faceIndices)
 {
     m_highlightedFaces = faceIndices;
@@ -1468,6 +1518,17 @@ void Viewport3D::mousePressEvent(QMouseEvent* event)
         }
     }
 
+    // Delegate to viewport manipulator (drag handles)
+    if (event->button() == Qt::LeftButton && m_manipulator && m_manipulator->isVisible()) {
+        QMatrix4x4 v = viewMatrix();
+        QMatrix4x4 p = projectionMatrix();
+        if (m_manipulator->handleMousePress(event->pos(), v, p, width(), height())) {
+            event->accept();
+            update();
+            return;
+        }
+    }
+
     // Check ViewCube click (top-right corner)
     if (event->button() == Qt::LeftButton && handleViewCubeClick(event->pos())) {
         event->accept();
@@ -1489,6 +1550,16 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         m_activeButton = Qt::NoButton;
         m_isDragging = false;
         event->accept();
+        return;
+    }
+
+    // Delegate to viewport manipulator
+    if (m_manipulator && m_manipulator->isDragging()) {
+        m_manipulator->handleMouseRelease();
+        m_activeButton = Qt::NoButton;
+        m_isDragging = false;
+        event->accept();
+        update();
         return;
     }
 
@@ -1518,6 +1589,20 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
+    // Delegate to viewport manipulator for drag tracking and hover
+    if (m_manipulator && m_manipulator->isVisible()) {
+        QMatrix4x4 v = viewMatrix();
+        QMatrix4x4 p = projectionMatrix();
+        if (m_manipulator->handleMouseMove(event->pos(), v, p, width(), height())) {
+            m_lastMousePos = event->pos();
+            event->accept();
+            update();
+            return;
+        }
+        // Even if not consumed (hover), trigger repaint for hover feedback
+        update();
+    }
+
     const QPoint pos = event->pos();
 
     // Check if we are dragging (exceeded threshold)
@@ -1528,7 +1613,22 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
             m_isDragging = true;
     }
 
-    if (m_activeButton == Qt::LeftButton && m_isDragging) {
+    if (m_activeButton == Qt::LeftButton && m_isDragging &&
+        (event->modifiers() & Qt::ControlModifier) && m_selectionMgr && m_selectionMgr->hasSelection()) {
+        // -- Ctrl+drag: move selected body (occurrence drag) -----------------
+        const float dx = static_cast<float>(pos.x() - m_lastMousePos.x());
+        const float dy = static_cast<float>(pos.y() - m_lastMousePos.y());
+
+        QVector3D forward = (m_center - m_eye).normalized();
+        QVector3D right   = QVector3D::crossProduct(forward, m_up).normalized();
+        QVector3D camUp   = QVector3D::crossProduct(right, forward).normalized();
+
+        const float moveSpeed = m_orbitDistance * 0.002f;
+        QVector3D delta = (dx * right - dy * camUp) * moveSpeed;
+
+        emit occurrenceDragged(delta.x(), delta.y(), delta.z());
+    }
+    else if (m_activeButton == Qt::LeftButton && m_isDragging) {
         // -- Arcball rotation ------------------------------------------------
         QVector3D va = arcballVector(m_lastMousePos);
         QVector3D vb = arcballVector(pos);
@@ -1712,6 +1812,12 @@ void Viewport3D::buildSketchOverlayShader()
 // =============================================================================
 // Ground grid & origin axes
 // =============================================================================
+
+void Viewport3D::setExplodeFactor(float factor)
+{
+    m_explodeFactor = std::max(0.0f, std::min(1.0f, factor));
+    update();
+}
 
 void Viewport3D::setShowGrid(bool show)
 {
@@ -2828,6 +2934,25 @@ void Viewport3D::drawViewCubeOverlay()
         painter.drawText(QRectF(cx - 25, cy + kViewCubeSize * 0.5f + 2, 50, 14),
                          Qt::AlignCenter, projLabel);
     }
+
+    painter.end();
+}
+
+// =============================================================================
+// Manipulator 2D overlay (value label and flip arrow)
+// =============================================================================
+
+void Viewport3D::drawManipulatorOverlay()
+{
+    if (!m_manipulator || !m_manipulator->isVisible())
+        return;
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    QMatrix4x4 v = viewMatrix();
+    QMatrix4x4 p = projectionMatrix();
+    m_manipulator->drawOverlay(painter, v, p, width(), height());
 
     painter.end();
 }

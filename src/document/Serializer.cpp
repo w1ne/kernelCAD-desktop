@@ -395,6 +395,7 @@ static const char* constraintTypeToStr(sketch::ConstraintType t)
     case sketch::ConstraintType::FixedAngle:        return "FixedAngle";
     case sketch::ConstraintType::AngleBetween:      return "AngleBetween";
     case sketch::ConstraintType::Radius:            return "Radius";
+    case sketch::ConstraintType::Fix:               return "Fix";
     }
     return "Coincident";
 }
@@ -418,6 +419,7 @@ static sketch::ConstraintType constraintTypeFromStr(const std::string& s)
     if (s == "FixedAngle")        return sketch::ConstraintType::FixedAngle;
     if (s == "AngleBetween")      return sketch::ConstraintType::AngleBetween;
     if (s == "Radius")            return sketch::ConstraintType::Radius;
+    if (s == "Fix")               return sketch::ConstraintType::Fix;
     return sketch::ConstraintType::Coincident;
 }
 
@@ -1835,8 +1837,8 @@ bool Serializer::load(Document& doc, const std::string& path)
             if (!feature)
                 continue;
 
-            // Append to timeline
-            doc.timeline().append(feature);
+            // Append to timeline with auto-generated numbered name
+            doc.appendFeatureToTimeline(feature);
 
             // Set suppressed state and custom name if needed
             size_t idx = doc.timeline().count() - 1;

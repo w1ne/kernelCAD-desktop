@@ -1087,6 +1087,45 @@ int OCCTKernel::edgeCount(const TopoDS_Shape& shape)
 // =============================================================================
 // Physical Properties via BRepGProp
 // =============================================================================
+// Interference detection
+// =============================================================================
+
+std::vector<OCCTKernel::InterferenceResult> OCCTKernel::checkInterference(
+    const std::vector<std::pair<std::string, TopoDS_Shape>>& bodies)
+{
+    std::vector<InterferenceResult> results;
+
+    for (size_t i = 0; i < bodies.size(); ++i) {
+        for (size_t j = i + 1; j < bodies.size(); ++j) {
+            try {
+                BRepAlgoAPI_Common common(bodies[i].second, bodies[j].second);
+                common.Build();
+                if (!common.IsDone())
+                    continue;
+
+                const TopoDS_Shape& commonShape = common.Shape();
+                GProp_GProps gprops;
+                BRepGProp::VolumeProperties(commonShape, gprops);
+                double vol = gprops.Mass();
+
+                if (vol > 1e-6) {
+                    InterferenceResult ir;
+                    ir.body1Id = bodies[i].first;
+                    ir.body2Id = bodies[j].first;
+                    ir.volume = vol;
+                    ir.interferenceShape = commonShape;
+                    results.push_back(std::move(ir));
+                }
+            } catch (...) {
+                // Skip pairs that fail boolean common
+            }
+        }
+    }
+
+    return results;
+}
+
+// =============================================================================
 
 OCCTKernel::PhysicalProperties OCCTKernel::computeProperties(
     const TopoDS_Shape& shape, double density)

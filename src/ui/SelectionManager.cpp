@@ -19,6 +19,13 @@ SelectionFilter SelectionManager::filter() const
     return m_filter;
 }
 
+void SelectionManager::setFilterSoft(SelectionFilter filter)
+{
+    // Change the filter for future picks without clearing the current selection.
+    m_filter = filter;
+    clearPreSelection();
+}
+
 // ---------------------------------------------------------------------------
 // Selection
 // ---------------------------------------------------------------------------

@@ -164,6 +164,15 @@ public:
     /// Add a joint between two component occurrences. Returns the joint feature ID.
     std::string addJoint(features::JointParams params);
 
+    /// Import a .kcd file as a new component. Creates a Component from
+    /// the imported document's bodies and adds an Occurrence in the root.
+    /// Returns the occurrence ID.
+    std::string insertComponentFromFile(const std::string& kcdPath);
+
+    /// Find the occurrence ID that owns a given body ID, by searching
+    /// component body refs.  Returns empty string if not found.
+    std::string findOccurrenceForBody(const std::string& bodyId) const;
+
     /// Find a sketch feature by ID in the timeline. Returns nullptr if not found.
     features::SketchFeature* findSketch(const std::string& sketchId);
 
@@ -186,6 +195,9 @@ public:
 
     /// Lookup which feature last created/modified a body.
     std::string featureForBody(const std::string& bodyId) const;
+
+    /// Append a feature to the timeline with an auto-generated numbered name.
+    void appendFeatureToTimeline(std::shared_ptr<features::Feature> feature);
 
 private:
     std::string                    m_name = "Untitled";
@@ -232,9 +244,6 @@ private:
     /// Generate a numbered feature name (e.g. "Extrude 3") by counting existing
     /// features of the given type in the timeline.
     std::string generateFeatureName(features::FeatureType type) const;
-
-    /// Append a feature to the timeline with an auto-generated numbered name.
-    void appendFeatureToTimeline(std::shared_ptr<features::Feature> feature);
 
     /// Execute a single feature during recompute (shared logic).
     void executeFeature(features::Feature* feat, int& bodyCounter);

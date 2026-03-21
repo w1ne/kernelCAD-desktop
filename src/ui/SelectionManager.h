@@ -23,6 +23,10 @@ public:
     void setFilter(SelectionFilter filter);
     SelectionFilter filter() const;
 
+    /// Change the filter without clearing the current selection.
+    /// Used for toolbar hover hints that should not disturb the user's selection.
+    void setFilterSoft(SelectionFilter filter);
+
     // Current selection
     void select(const SelectionHit& hit);
     void addToSelection(const SelectionHit& hit);  // multi-select (Shift+click)

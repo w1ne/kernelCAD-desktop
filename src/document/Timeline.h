@@ -52,6 +52,10 @@ public:
     size_t markerPosition() const { return m_markerPos; }
     size_t count() const          { return m_entries.size(); }
 
+    /// Replace a feature at the given index with a new one (same position in history).
+    /// Returns false if index is out of bounds.
+    bool replaceFeature(size_t index, std::shared_ptr<features::Feature> newFeature);
+
     const TimelineEntry& entry(size_t index) const { return m_entries[index]; }
     TimelineEntry&       entry(size_t index)       { return m_entries[index]; }
 
