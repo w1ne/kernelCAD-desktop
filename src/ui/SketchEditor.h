@@ -85,6 +85,10 @@ public:
     void setConstructionMode(bool enabled) { m_constructionMode = enabled; }
     bool constructionMode() const { return m_constructionMode; }
 
+    /// Toggle grid snapping.
+    void setGridSnap(bool enabled) { m_gridSnap = enabled; }
+    bool gridSnapEnabled() const { return m_gridSnap; }
+
     /// Toggle construction flag on a nearby entity, or toggle global construction mode.
     void toggleConstruction(double sx, double sy);
 
@@ -147,6 +151,9 @@ private:
 
     // Construction mode toggle
     bool m_constructionMode = false;
+
+    // Grid snap toggle (enabled by default)
+    bool m_gridSnap = true;
 
     // Polygon side count
     int m_polygonSides = 6;

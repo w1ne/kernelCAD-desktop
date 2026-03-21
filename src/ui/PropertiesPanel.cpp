@@ -36,6 +36,8 @@
 #include <QFrame>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QColorDialog>
+#include <QPushButton>
 
 #include <sstream>
 #include <cstdlib>
@@ -146,7 +148,9 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
 void PropertiesPanel::clear()
 {
     m_currentFeatureId.clear();
-    m_headerLabel->setText(tr("No selection"));
+    m_headerLabel->setText(
+        QStringLiteral("<span style='color:#888; font-style:italic;'>"
+                       "Select a feature or body to view properties</span>"));
     clearFormWidgets();
 }
 
@@ -195,6 +199,112 @@ void PropertiesPanel::setEditMode(bool editing)
 void PropertiesPanel::setDocument(document::Document* doc)
 {
     m_document = doc;
+}
+
+// ---------------------------------------------------------------------------
+// showBodyProperties — display body statistics and appearance controls
+// ---------------------------------------------------------------------------
+void PropertiesPanel::showBodyProperties(const std::string& bodyId)
+{
+    clear();
+
+    if (!m_document || bodyId.empty())
+        return;
+
+    auto& brep = m_document->brepModel();
+    if (!brep.hasBody(bodyId))
+        return;
+
+    // Header
+    m_headerLabel->setText(
+        QStringLiteral("<b>%1</b> &nbsp;<span style='color:#888;'>(Body)</span>")
+            .arg(QString::fromStdString(bodyId).toHtmlEscaped()));
+
+    // --- Section 1: Body Statistics ---
+    {
+        auto* sectionLabel = new QLabel(
+            QStringLiteral("<span style='color:#5294e2; font-weight:bold;'>"
+                           "Body Statistics</span>"));
+        sectionLabel->setTextFormat(Qt::RichText);
+        m_formLayout->addRow(sectionLabel);
+    }
+
+    // Get material density for this body
+    const auto& bodyMat = m_document->appearances().bodyMaterial(bodyId);
+    double density = bodyMat.density;
+
+    try {
+        auto phys = brep.getProperties(bodyId, density);
+
+        auto addReadOnly = [this](const QString& label, const QString& value) {
+            auto* valLabel = new QLabel(value);
+            valLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            m_formLayout->addRow(label, valLabel);
+        };
+
+        addReadOnly(tr("Volume"),
+                     QString::number(phys.volume, 'f', 2) + QStringLiteral(" mm\u00B3"));
+        addReadOnly(tr("Surface Area"),
+                     QString::number(phys.surfaceArea, 'f', 2) + QStringLiteral(" mm\u00B2"));
+        addReadOnly(tr("Mass"),
+                     QString::number(phys.mass, 'f', 2) + QStringLiteral(" g"));
+        addReadOnly(tr("Center of Gravity"),
+                     QStringLiteral("(%1, %2, %3)")
+                         .arg(phys.cogX, 0, 'f', 3)
+                         .arg(phys.cogY, 0, 'f', 3)
+                         .arg(phys.cogZ, 0, 'f', 3));
+        addReadOnly(tr("Bounding Box"),
+                     QStringLiteral("(%1, %2, %3) \u2014 (%4, %5, %6)")
+                         .arg(phys.bboxMinX, 0, 'f', 2)
+                         .arg(phys.bboxMinY, 0, 'f', 2)
+                         .arg(phys.bboxMinZ, 0, 'f', 2)
+                         .arg(phys.bboxMaxX, 0, 'f', 2)
+                         .arg(phys.bboxMaxY, 0, 'f', 2)
+                         .arg(phys.bboxMaxZ, 0, 'f', 2));
+    } catch (...) {
+        auto* errLabel = new QLabel(tr("Could not compute properties"));
+        m_formLayout->addRow(errLabel);
+    }
+
+    // --- Section 2: Appearance ---
+    {
+        auto* sep = new QFrame();
+        sep->setObjectName("separator");
+        sep->setFrameShape(QFrame::HLine);
+        sep->setFrameShadow(QFrame::Sunken);
+        m_formLayout->addRow(sep);
+
+        auto* sectionLabel = new QLabel(
+            QStringLiteral("<span style='color:#5294e2; font-weight:bold;'>"
+                           "Appearance</span>"));
+        sectionLabel->setTextFormat(Qt::RichText);
+        m_formLayout->addRow(sectionLabel);
+    }
+
+    // Color picker button
+    QColor currentColor = QColor::fromRgbF(bodyMat.baseR, bodyMat.baseG, bodyMat.baseB);
+    auto* colorBtn = new QPushButton();
+    colorBtn->setFixedSize(60, 24);
+    colorBtn->setStyleSheet(
+        QStringLiteral("background-color: %1; border: 1px solid #555; border-radius: 3px;")
+            .arg(currentColor.name()));
+    colorBtn->setToolTip(tr("Click to change body color"));
+
+    QString bodyIdQ = QString::fromStdString(bodyId);
+    connect(colorBtn, &QPushButton::clicked, this, [this, bodyIdQ, colorBtn]() {
+        QColor chosen = QColorDialog::getColor(
+            colorBtn->palette().button().color(), this, tr("Body Color"));
+        if (chosen.isValid()) {
+            colorBtn->setStyleSheet(
+                QStringLiteral("background-color: %1; border: 1px solid #555; border-radius: 3px;")
+                    .arg(chosen.name()));
+            emit bodyColorChanged(bodyIdQ, chosen);
+        }
+    });
+    m_formLayout->addRow(tr("Color"), colorBtn);
+
+    // Material dropdown (reuse existing method)
+    addMaterialDropdown(bodyIdQ, QString::fromStdString(bodyMat.name));
 }
 
 // ---------------------------------------------------------------------------

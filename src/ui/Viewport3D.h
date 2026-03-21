@@ -99,6 +99,9 @@ public:
     void setViewMode(ViewMode mode);
     ViewMode viewMode() const;
 
+    /// Query current projection mode.
+    bool isPerspective() const { return m_perspectiveProjection; }
+
     /// Set a standard view preset (Front, Back, Left, Right, Top, Bottom, Isometric).
     void setStandardView(StandardView view);
 
@@ -108,6 +111,17 @@ public:
 
     /// Set the sketch editor for overlay rendering and input delegation.
     void setSketchEditor(SketchEditor* editor);
+
+    /// Enter/exit sketch editing mode (ghost bodies, lock rotation, disable body picking).
+    void setSketchMode(bool enabled);
+    bool isSketchMode() const { return m_sketchModeActive; }
+
+    /// Current orbit distance (for camera positioning).
+    float orbitDistance() const { return m_orbitDistance; }
+
+    /// Save/restore camera state (used when entering/leaving sketch mode).
+    void saveCameraState();
+    void restoreCameraState(bool animate = true);
 
 signals:
     /// Emitted when Ctrl+drag moves a selected body in the viewport.
@@ -353,6 +367,16 @@ private:
     QVector3D m_animStartEye, m_animStartCenter, m_animStartUp;
     QVector3D m_animEndEye,   m_animEndCenter,   m_animEndUp;
     static constexpr int kAnimTickMs = 16;  // ~60 fps
+
+    // ── sketch mode state ─────────────────────────────────────────────────
+    bool m_sketchModeActive = false;
+    bool m_lockRotation     = false;
+
+    // Saved camera state for restoring after sketch editing
+    QVector3D m_savedEye    {0.0f, 0.0f, 5.0f};
+    QVector3D m_savedCenter {0.0f, 0.0f, 0.0f};
+    QVector3D m_savedUp     {0.0f, 1.0f, 0.0f};
+    bool      m_hasSavedCamera = false;
 
     // ── viewport manipulator (drag handles) ──────────────────────────────
     ViewportManipulator* m_manipulator = nullptr;

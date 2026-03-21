@@ -383,6 +383,12 @@ void Viewport3D::paintGL()
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         }
 
+        // Enable blending for semi-transparent bodies during sketch mode
+        if (m_sketchModeActive) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
+
         m_program->bind();
 
         QMatrix3x3 normalMatrix = model.normalMatrix();
@@ -418,7 +424,10 @@ void Viewport3D::paintGL()
         if (m_selectionMgr && m_selectionMgr->hasPreSelection())
             preSelectedFace = m_selectionMgr->preSelection()->faceIndex;
         m_program->setUniformValue("uPreSelectedFace", preSelectedFace);
-        m_program->setUniformValue("uAlpha", 1.0f);
+
+        // Ghost bodies at 30% opacity during sketch editing
+        float bodyAlpha = m_sketchModeActive ? 0.3f : 1.0f;
+        m_program->setUniformValue("uAlpha", bodyAlpha);
 
         // -- compute assembly center for exploded view -------------------
         QVector3D assemblyCenter(0, 0, 0);
@@ -480,6 +489,9 @@ void Viewport3D::paintGL()
 
         m_program->release();
 
+        if (m_sketchModeActive) {
+            glDisable(GL_BLEND);
+        }
         if (m_viewMode == ViewMode::HiddenLine) {
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
@@ -488,6 +500,10 @@ void Viewport3D::paintGL()
         // Legacy single-mesh fallback path
         if (m_viewMode == ViewMode::HiddenLine) {
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        }
+        if (m_sketchModeActive) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
 
         m_program->bind();
@@ -508,7 +524,7 @@ void Viewport3D::paintGL()
         m_program->setUniformValue("uLightDir",    lightDir);
         m_program->setUniformValue("uLightColor",  QVector3D(1.0f, 1.0f, 1.0f));
         m_program->setUniformValue("uObjectColor", QVector3D(0.6f, 0.65f, 0.7f));
-        m_program->setUniformValue("uAlpha", 1.0f);
+        m_program->setUniformValue("uAlpha", m_sketchModeActive ? 0.3f : 1.0f);
 
         int highlightCount = std::min(static_cast<int>(m_highlightedFaces.size()), 64);
         int highlightArray[64] = {};
@@ -531,6 +547,9 @@ void Viewport3D::paintGL()
 
         m_program->release();
 
+        if (m_sketchModeActive) {
+            glDisable(GL_BLEND);
+        }
         if (m_viewMode == ViewMode::HiddenLine) {
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
@@ -554,8 +573,12 @@ void Viewport3D::paintGL()
             edgeColor = QVector3D(0.1f, 0.1f, 0.1f);
 
         m_edgeProgram->setUniformValue("uEdgeColor", edgeColor);
-        m_edgeProgram->setUniformValue("uEdgeAlpha", 1.0f);
+        m_edgeProgram->setUniformValue("uEdgeAlpha", m_sketchModeActive ? 0.15f : 1.0f);
 
+        if (m_sketchModeActive) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
         glEnable(GL_LINE_SMOOTH);
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
         glLineWidth(1.5f);
@@ -570,6 +593,9 @@ void Viewport3D::paintGL()
         }
 
         glDisable(GL_LINE_SMOOTH);
+        if (m_sketchModeActive) {
+            glDisable(GL_BLEND);
+        }
 
         m_edgeProgram->release();
     }
@@ -589,8 +615,12 @@ void Viewport3D::paintGL()
             edgeColor = QVector3D(0.1f, 0.1f, 0.1f);
 
         m_edgeProgram->setUniformValue("uEdgeColor", edgeColor);
-        m_edgeProgram->setUniformValue("uEdgeAlpha", 1.0f);
+        m_edgeProgram->setUniformValue("uEdgeAlpha", m_sketchModeActive ? 0.15f : 1.0f);
 
+        if (m_sketchModeActive) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
         glEnable(GL_LINE_SMOOTH);
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
         glLineWidth(1.5f);
@@ -600,6 +630,9 @@ void Viewport3D::paintGL()
         m_edgeVao.release();
 
         glDisable(GL_LINE_SMOOTH);
+        if (m_sketchModeActive) {
+            glDisable(GL_BLEND);
+        }
 
         m_edgeProgram->release();
     }
@@ -1384,6 +1417,10 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
     if (!m_selectionMgr)
         return;
 
+    // Disable body/face picking during sketch mode -- only sketch entities should be pickable
+    if (m_sketchModeActive)
+        return;
+
     int pickId = pickAtScreenPos(screenPos);
 
     if (pickId <= 0) {
@@ -1451,6 +1488,10 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
 void Viewport3D::handlePreSelection(const QPoint& screenPos)
 {
     if (!m_selectionMgr)
+        return;
+
+    // Disable body/face hover during sketch mode
+    if (m_sketchModeActive)
         return;
 
     int pickId = pickAtScreenPos(screenPos);
@@ -1629,31 +1670,47 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         emit occurrenceDragged(delta.x(), delta.y(), delta.z());
     }
     else if (m_activeButton == Qt::LeftButton && m_isDragging) {
-        // -- Arcball rotation ------------------------------------------------
-        QVector3D va = arcballVector(m_lastMousePos);
-        QVector3D vb = arcballVector(pos);
+        if (m_lockRotation) {
+            // -- Pan instead of rotate when rotation is locked (sketch mode) --
+            const float dx2 = static_cast<float>(pos.x() - m_lastMousePos.x());
+            const float dy2 = static_cast<float>(pos.y() - m_lastMousePos.y());
 
-        float angle = std::acos(std::min(1.0f, QVector3D::dotProduct(va, vb)));
-        QVector3D axis = QVector3D::crossProduct(va, vb);
+            QVector3D forward = (m_center - m_eye).normalized();
+            QVector3D right   = QVector3D::crossProduct(forward, m_up).normalized();
+            QVector3D camUp   = QVector3D::crossProduct(right, forward).normalized();
 
-        // The axis is in screen/camera space -- transform to world space.
-        QMatrix4x4 viewMat;
-        viewMat.lookAt(m_eye, m_center, m_up);
-        QMatrix4x4 invView = viewMat.inverted();
+            const float panSpeed = m_orbitDistance * 0.002f;
+            QVector3D shift = (-dx2 * right + dy2 * camUp) * panSpeed;
 
-        // Transform axis from camera space to world space (rotation only)
-        QVector3D worldAxis = invView.mapVector(axis);
-        if (worldAxis.length() > 1e-6f) {
-            worldAxis.normalize();
+            m_eye    += shift;
+            m_center += shift;
+        } else {
+            // -- Arcball rotation ------------------------------------------------
+            QVector3D va = arcballVector(m_lastMousePos);
+            QVector3D vb = arcballVector(pos);
 
-            // Rotate eye around center
-            QVector3D offset = m_eye - m_center;
-            QMatrix4x4 rot;
-            rot.rotate(qRadiansToDegrees(angle) * 2.0f, worldAxis);
-            offset = rot.map(offset);
-            m_up   = rot.mapVector(m_up).normalized();
-            m_eye  = m_center + offset;
-            m_orbitDistance = offset.length();
+            float angle = std::acos(std::min(1.0f, QVector3D::dotProduct(va, vb)));
+            QVector3D axis = QVector3D::crossProduct(va, vb);
+
+            // The axis is in screen/camera space -- transform to world space.
+            QMatrix4x4 viewMat;
+            viewMat.lookAt(m_eye, m_center, m_up);
+            QMatrix4x4 invView = viewMat.inverted();
+
+            // Transform axis from camera space to world space (rotation only)
+            QVector3D worldAxis = invView.mapVector(axis);
+            if (worldAxis.length() > 1e-6f) {
+                worldAxis.normalize();
+
+                // Rotate eye around center
+                QVector3D offset = m_eye - m_center;
+                QMatrix4x4 rot;
+                rot.rotate(qRadiansToDegrees(angle) * 2.0f, worldAxis);
+                offset = rot.map(offset);
+                m_up   = rot.mapVector(m_up).normalized();
+                m_eye  = m_center + offset;
+                m_orbitDistance = offset.length();
+            }
         }
     }
     else if (m_activeButton == Qt::MiddleButton) {
@@ -1774,6 +1831,35 @@ void Viewport3D::setSketchEditor(SketchEditor* editor)
 {
     m_sketchEditor = editor;
     update();
+}
+
+void Viewport3D::setSketchMode(bool enabled)
+{
+    m_sketchModeActive = enabled;
+    m_lockRotation = enabled;
+    update();
+}
+
+void Viewport3D::saveCameraState()
+{
+    m_savedEye    = m_eye;
+    m_savedCenter = m_center;
+    m_savedUp     = m_up;
+    m_hasSavedCamera = true;
+}
+
+void Viewport3D::restoreCameraState(bool animate)
+{
+    if (!m_hasSavedCamera)
+        return;
+    if (animate) {
+        animateTo(m_savedEye, m_savedCenter, m_savedUp, 400);
+    } else {
+        m_eye    = m_savedEye;
+        m_center = m_savedCenter;
+        m_up     = m_savedUp;
+    }
+    m_hasSavedCamera = false;
 }
 
 QMatrix4x4 Viewport3D::viewMatrix() const
@@ -2025,24 +2111,84 @@ void Viewport3D::drawSketchOverlay()
     const QVector4D cBlue(0.2f, 0.5f, 1.0f, 1.0f);
     const QVector4D cOrange(0.6f, 0.4f, 0.1f, 0.7f);
     const QVector4D cWhite(1.0f, 1.0f, 1.0f, 1.0f);
-    const QVector4D cRubber(0.7f, 0.7f, 0.7f, 0.6f);
-    const QVector4D cGrid(0.35f, 0.35f, 0.35f, 0.25f);
+    const QVector4D cRubberGreen(0.2f, 1.0f, 0.2f, 0.9f);   // bright green preview
+    // Grid colors are now defined locally in the grid section below
 
     QVector4D lineColor = sk->isFullyConstrained() ? cGreen : cBlue;
 
-    // -- Grid ----------------------------------------------------------------
+    // -- Grid: 5mm minor, 25mm major, 200mm extent ─────────────────────────
     {
-        std::vector<float> gv;
-        for (double g = -100.0; g <= 100.0; g += 10.0) {
-            QVector3D h1 = skToWorld(-100, g), h2 = skToWorld(100, g);
-            gv.push_back(h1.x()); gv.push_back(h1.y()); gv.push_back(h1.z());
-            gv.push_back(h2.x()); gv.push_back(h2.y()); gv.push_back(h2.z());
-            QVector3D v1 = skToWorld(g, -100), v2 = skToWorld(g, 100);
-            gv.push_back(v1.x()); gv.push_back(v1.y()); gv.push_back(v1.z());
-            gv.push_back(v2.x()); gv.push_back(v2.y()); gv.push_back(v2.z());
+        constexpr double gridSize      = 5.0;
+        constexpr double majorGridSize = 25.0;
+        constexpr double extent        = 200.0;
+
+        // Minor grid lines (5mm spacing, very subtle)
+        const QVector4D cMinorGrid(0.35f, 0.35f, 0.4f, 0.3f);
+        std::vector<float> minorGv;
+        for (double g = -extent; g <= extent; g += gridSize) {
+            if (std::abs(g) < 0.01) continue;  // skip origin
+            // Skip positions that fall on major grid lines
+            double rem = std::fmod(std::abs(g), majorGridSize);
+            if (rem < 0.01 || rem > majorGridSize - 0.01) continue;
+            QVector3D h1 = skToWorld(-extent, g), h2 = skToWorld(extent, g);
+            minorGv.push_back(h1.x()); minorGv.push_back(h1.y()); minorGv.push_back(h1.z());
+            minorGv.push_back(h2.x()); minorGv.push_back(h2.y()); minorGv.push_back(h2.z());
+            QVector3D v1 = skToWorld(g, -extent), v2 = skToWorld(g, extent);
+            minorGv.push_back(v1.x()); minorGv.push_back(v1.y()); minorGv.push_back(v1.z());
+            minorGv.push_back(v2.x()); minorGv.push_back(v2.y()); minorGv.push_back(v2.z());
+        }
+        glLineWidth(0.5f);
+        uploadAndDraw(minorGv, cMinorGrid, GL_LINES);
+
+        // Major grid lines (25mm spacing, more visible)
+        const QVector4D cMajorGrid(0.4f, 0.4f, 0.5f, 0.5f);
+        std::vector<float> majorGv;
+        for (double g = -extent; g <= extent; g += majorGridSize) {
+            if (std::abs(g) < 0.01) continue;  // skip origin
+            QVector3D h1 = skToWorld(-extent, g), h2 = skToWorld(extent, g);
+            majorGv.push_back(h1.x()); majorGv.push_back(h1.y()); majorGv.push_back(h1.z());
+            majorGv.push_back(h2.x()); majorGv.push_back(h2.y()); majorGv.push_back(h2.z());
+            QVector3D v1 = skToWorld(g, -extent), v2 = skToWorld(g, extent);
+            majorGv.push_back(v1.x()); majorGv.push_back(v1.y()); majorGv.push_back(v1.z());
+            majorGv.push_back(v2.x()); majorGv.push_back(v2.y()); majorGv.push_back(v2.z());
         }
         glLineWidth(1.0f);
-        uploadAndDraw(gv, cGrid, GL_LINES);
+        uploadAndDraw(majorGv, cMajorGrid, GL_LINES);
+
+        // -- Sketch X axis (red) through origin ──────────────────────────
+        {
+            const QVector4D cAxisX(1.0f, 0.3f, 0.3f, 0.8f);
+            QVector3D ax1 = skToWorld(-extent, 0), ax2 = skToWorld(extent, 0);
+            std::vector<float> axv = {ax1.x(), ax1.y(), ax1.z(),
+                                      ax2.x(), ax2.y(), ax2.z()};
+            glLineWidth(2.0f);
+            uploadAndDraw(axv, cAxisX, GL_LINES);
+        }
+        // -- Sketch Y axis (green) through origin ────────────────────────
+        {
+            const QVector4D cAxisY(0.3f, 1.0f, 0.3f, 0.8f);
+            QVector3D ay1 = skToWorld(0, -extent), ay2 = skToWorld(0, extent);
+            std::vector<float> ayv = {ay1.x(), ay1.y(), ay1.z(),
+                                      ay2.x(), ay2.y(), ay2.z()};
+            glLineWidth(2.0f);
+            uploadAndDraw(ayv, cAxisY, GL_LINES);
+        }
+        // -- Light blue border rectangle around the sketch plane ──────────
+        {
+            const QVector4D cBorder(0.3f, 0.5f, 0.8f, 0.4f);
+            QVector3D b0 = skToWorld(-extent, -extent);
+            QVector3D b1 = skToWorld( extent, -extent);
+            QVector3D b2 = skToWorld( extent,  extent);
+            QVector3D b3 = skToWorld(-extent,  extent);
+            std::vector<float> bv = {
+                b0.x(), b0.y(), b0.z(), b1.x(), b1.y(), b1.z(),
+                b1.x(), b1.y(), b1.z(), b2.x(), b2.y(), b2.z(),
+                b2.x(), b2.y(), b2.z(), b3.x(), b3.y(), b3.z(),
+                b3.x(), b3.y(), b3.z(), b0.x(), b0.y(), b0.z()
+            };
+            glLineWidth(1.5f);
+            uploadAndDraw(bv, cBorder, GL_LINES);
+        }
     }
 
     // -- Lines ---------------------------------------------------------------
@@ -2262,7 +2408,7 @@ void Viewport3D::drawSketchOverlay()
             QVector3D w1 = skToWorld(rx1, ry1), w2 = skToWorld(rx2, ry2);
             rv = {w1.x(), w1.y(), w1.z(), w2.x(), w2.y(), w2.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawRectangle) {
             QVector3D c0 = skToWorld(rx1, ry1), c1 = skToWorld(rx2, ry1);
             QVector3D c2 = skToWorld(rx2, ry2), c3 = skToWorld(rx1, ry2);
@@ -2271,7 +2417,7 @@ void Viewport3D::drawSketchOverlay()
                   c2.x(), c2.y(), c2.z(), c3.x(), c3.y(), c3.z(),
                   c3.x(), c3.y(), c3.z(), c0.x(), c0.y(), c0.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawCircle) {
             double rdx = rx2 - rx1, rdy = ry2 - ry1;
             double rr = std::sqrt(rdx * rdx + rdy * rdy);
@@ -2287,12 +2433,12 @@ void Viewport3D::drawSketchOverlay()
                 rv.push_back(w2.x()); rv.push_back(w2.y()); rv.push_back(w2.z());
             }
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawArc) {
             QVector3D wc = skToWorld(rx1, ry1), wp = skToWorld(rx2, ry2);
             rv = {wc.x(), wc.y(), wc.z(), wp.x(), wp.y(), wp.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawSpline) {
             // Draw accumulated spline control points as a polyline + current mouse pos
             const auto& splPts = m_sketchEditor->splinePoints();
@@ -2309,7 +2455,7 @@ void Viewport3D::drawSketchOverlay()
                 rv.push_back(wLast.x()); rv.push_back(wLast.y()); rv.push_back(wLast.z());
                 rv.push_back(wCur.x());  rv.push_back(wCur.y());  rv.push_back(wCur.z());
                 glLineWidth(1.5f);
-                uploadAndDraw(rv, cRubber, GL_LINES);
+                uploadAndDraw(rv, cRubberGreen, GL_LINES);
             }
         } else if (tool == SketchTool::DrawEllipse) {
             // Ellipse rubber-band: show ellipse with major axis from center to cursor
@@ -2334,7 +2480,7 @@ void Viewport3D::drawSketchOverlay()
                 rv.push_back(w2.x()); rv.push_back(w2.y()); rv.push_back(w2.z());
             }
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawPolygon) {
             // Polygon rubber-band: show N-sided polygon from center to cursor
             double dx = rx2 - rx1, dy = ry2 - ry1;
@@ -2352,20 +2498,20 @@ void Viewport3D::drawSketchOverlay()
                 rv.push_back(w2.x()); rv.push_back(w2.y()); rv.push_back(w2.z());
             }
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawSlot) {
             // Slot rubber-band: show center1-center2 axis line + cursor
             QVector3D w1 = skToWorld(rx1, ry1), w2 = skToWorld(rx2, ry2);
             rv = {w1.x(), w1.y(), w1.z(), w2.x(), w2.y(), w2.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawCircle3Point ||
                    tool == SketchTool::DrawArc3Point) {
             // Show guide lines between clicked points and cursor
             QVector3D wc = skToWorld(rx1, ry1), wp = skToWorld(rx2, ry2);
             rv = {wc.x(), wc.y(), wc.z(), wp.x(), wp.y(), wp.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         } else if (tool == SketchTool::DrawRectangleCenter) {
             // Center rectangle rubber-band
             double dx = std::abs(rx2 - rx1), dy = std::abs(ry2 - ry1);
@@ -2378,7 +2524,7 @@ void Viewport3D::drawSketchOverlay()
                   c2.x(), c2.y(), c2.z(), c3.x(), c3.y(), c3.z(),
                   c3.x(), c3.y(), c3.z(), c0.x(), c0.y(), c0.z()};
             glLineWidth(1.5f);
-            uploadAndDraw(rv, cRubber, GL_LINES);
+            uploadAndDraw(rv, cRubberGreen, GL_LINES);
         }
     }
 
@@ -3226,13 +3372,16 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // ── Snap-to-point indicators (orange dot) ───────────────────────────
+    // ── Snap-to-point indicators (BRIGHT ORANGE circle with glow) ──────
     constexpr double snapThreshold = 5.0;   // sketch-space units
     constexpr double alignThreshold = 1.5;  // sketch-space units for H/V alignment
+    constexpr double gridSize = 5.0;        // must match the grid spacing
 
-    const QColor cSnapDot(255, 160, 0, 220);     // orange
-    const QColor cAlignLine(100, 220, 100, 120);  // green dashed
-    const QColor cAlignText(180, 255, 180, 200);
+    const QColor cSnapPoint(255, 140, 0, 255);    // bright orange
+    const QColor cSnapGlow(255, 160, 0, 80);      // subtle glow around snap
+    const QColor cSnapGrid(60, 140, 255, 230);    // blue for grid snap
+    const QColor cAlignLine(60, 220, 60, 160);    // bright green dashed
+    const QColor cAlignText(140, 255, 140, 220);
     const QColor cDimLive(200, 230, 255, 240);
     const QColor cDimLiveBg(30, 30, 30, 180);
 
@@ -3243,17 +3392,45 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
         double dy = cursorY - pt.y;
         double distSq = dx * dx + dy * dy;
 
-        // Point snap indicator
+        // Point snap indicator: bright orange circle with glow
         if (distSq < snapThreshold * snapThreshold) {
             QPointF screenPt = skToScreen(pt.x, pt.y);
-            painter.setPen(QPen(cSnapDot, 2.5));
-            painter.setBrush(cSnapDot);
-            painter.drawEllipse(screenPt, 6.0, 6.0);
+            // Outer glow
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(cSnapGlow);
+            painter.drawEllipse(screenPt, 14.0, 14.0);
+            // Inner bright circle
+            painter.setPen(QPen(cSnapPoint, 2.5));
+            painter.setBrush(QColor(255, 140, 0, 100));
+            painter.drawEllipse(screenPt, 8.0, 8.0);
+            // Center dot
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(cSnapPoint);
+            painter.drawEllipse(screenPt, 3.0, 3.0);
             snappedToPoint = true;
         }
     }
 
-    // ── H/V alignment indicators (dashed crosshair + H/V label) ────────
+    // ── Snap-to-grid indicator (BLUE cross at snapped grid intersection) ─
+    if (!snappedToPoint) {
+        double snappedX = std::round(cursorX / gridSize) * gridSize;
+        double snappedY = std::round(cursorY / gridSize) * gridSize;
+        double gdx = cursorX - snappedX;
+        double gdy = cursorY - snappedY;
+        if (gdx * gdx + gdy * gdy < (gridSize * 0.6) * (gridSize * 0.6)) {
+            QPointF screenSnap = skToScreen(snappedX, snappedY);
+            constexpr double crossSize = 6.0;
+            painter.setPen(QPen(cSnapGrid, 2.0));
+            painter.setBrush(Qt::NoBrush);
+            // Draw a cross (+) at the grid intersection
+            painter.drawLine(QPointF(screenSnap.x() - crossSize, screenSnap.y()),
+                             QPointF(screenSnap.x() + crossSize, screenSnap.y()));
+            painter.drawLine(QPointF(screenSnap.x(), screenSnap.y() - crossSize),
+                             QPointF(screenSnap.x(), screenSnap.y() + crossSize));
+        }
+    }
+
+    // ── H/V alignment indicators (DASHED GREEN lines + H/V label) ───────
     if (!snappedToPoint) {
         QFont alignFont("Monospace", 9, QFont::Bold);
         alignFont.setStyleHint(QFont::Monospace);
@@ -3264,7 +3441,7 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
             if (std::abs(cursorY - pt.y) < alignThreshold) {
                 QPointF s1 = skToScreen(pt.x, pt.y);
                 QPointF s2 = skToScreen(cursorX, cursorY);
-                QPen dashPen(cAlignLine, 1.0, Qt::DashLine);
+                QPen dashPen(cAlignLine, 1.5, Qt::DashLine);
                 painter.setPen(dashPen);
                 painter.drawLine(s1, s2);
 
@@ -3278,7 +3455,7 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
             if (std::abs(cursorX - pt.x) < alignThreshold) {
                 QPointF s1 = skToScreen(pt.x, pt.y);
                 QPointF s2 = skToScreen(cursorX, cursorY);
-                QPen dashPen(cAlignLine, 1.0, Qt::DashLine);
+                QPen dashPen(cAlignLine, 1.5, Qt::DashLine);
                 painter.setPen(dashPen);
                 painter.drawLine(s1, s2);
 

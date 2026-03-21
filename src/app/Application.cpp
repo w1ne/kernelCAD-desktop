@@ -48,12 +48,62 @@ void Application::setupDarkTheme()
         QMenu { background-color: #2d2d2d; color: #e0e0e0; border: 1px solid #555; }
         QMenu::item:selected { background-color: #5294e2; }
         QMenu::separator { height: 1px; background: #555; margin: 4px 8px; }
+
+        /* ── Default toolbar (sketch bar, etc.) ─────────────────────── */
         QToolBar { background-color: #2d2d2d; border: none; spacing: 2px; }
         QToolBar QToolButton { background: transparent; border: 1px solid transparent;
                                padding: 3px 6px; color: #e0e0e0; }
         QToolBar QToolButton:hover { background: #3c3f41; border: 1px solid #666;
                                      border-radius: 3px; }
         QToolBar QToolButton:pressed { background: #5294e2; }
+
+        /* ── Ribbon toolbar wrapper (no extra chrome) ───────────────── */
+        QToolBar#RibbonToolBar { background: transparent; border: none; padding: 0; margin: 0; }
+
+        /* ── Quick-access bar ───────────────────────────────────────── */
+        QWidget#QuickAccessBar { background-color: #2d2d2d; }
+        QToolButton#QuickAccessButton {
+            background: transparent; border: none; border-radius: 2px;
+        }
+        QToolButton#QuickAccessButton:hover {
+            background: #444; border: 1px solid #666;
+        }
+        QToolButton#QuickAccessButton:pressed { background: #5294e2; }
+
+        /* ── Ribbon tab widget ──────────────────────────────────────── */
+        QTabWidget#Ribbon::pane {
+            background: #353535; border: none; border-top: 1px solid #444;
+        }
+        QTabWidget#Ribbon > QTabBar::tab {
+            background: #2d2d2d; color: #888; padding: 4px 14px;
+            border: none; border-bottom: 2px solid transparent;
+            font-weight: bold; font-size: 11px; letter-spacing: 1px;
+        }
+        QTabWidget#Ribbon > QTabBar::tab:selected {
+            background: #353535; color: #ddd;
+            border-bottom: 2px solid #2a82da;
+        }
+        QTabWidget#Ribbon > QTabBar::tab:hover { color: #ccc; }
+
+        /* ── Ribbon buttons ─────────────────────────────────────────── */
+        QToolButton#RibbonButton {
+            background: transparent; border: 1px solid transparent;
+            border-radius: 4px;
+        }
+        QToolButton#RibbonButton:hover {
+            background: #444; border: 1px solid #666;
+        }
+        QToolButton#RibbonButton:pressed { background: #5294e2; }
+
+        /* ── Ribbon group label ─────────────────────────────────────── */
+        QLabel#RibbonGroupLabel {
+            font-size: 9px; color: #777; padding: 0; margin: 0;
+        }
+
+        /* ── Ribbon separator ───────────────────────────────────────── */
+        QFrame#RibbonSeparator { color: #555; }
+
+        /* ── Docks, status, trees ───────────────────────────────────── */
         QDockWidget { color: #e0e0e0; }
         QDockWidget::title { background-color: #2d2d2d; padding: 4px; }
         QStatusBar { background-color: #2d2d2d; color: #aaa; }

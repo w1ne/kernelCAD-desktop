@@ -4,6 +4,8 @@
 #include <QString>
 #include "../features/Feature.h"
 
+class QTabBar;
+
 namespace document {
     class Document;
     class Component;
@@ -23,6 +25,12 @@ public:
 
     /// Rebuild the entire tree from the document's timeline.
     void refresh();
+
+    /// Browser tab filter modes.
+    enum class BrowserTab { Model, Bodies, Sketches, Components };
+
+    /// Apply a filter to show only items matching the given tab.
+    void applyFilter(BrowserTab tab);
 
 signals:
     void featureSelected(const QString& featureId);
@@ -46,6 +54,9 @@ private:
 
     /// True while refresh() is rebuilding items (suppresses itemChanged signals).
     bool m_refreshing = false;
+
+    /// Current browser filter tab.
+    BrowserTab m_currentTab = BrowserTab::Model;
 
     /// Recursively build tree items for a component and its children.
     void buildComponentTree(QTreeWidgetItem* parentItem,

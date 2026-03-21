@@ -8,88 +8,63 @@
 #include <QMenu>
 #include <QString>
 
+#include "../features/Feature.h"
+
 #include <vector>
+#include <optional>
 #include <utility>
 
 // Forward declaration
 namespace document { struct TimelineGroup; }
 
 // --------------------------------------------------------------------
-// TimelineEntryWidget -- a small labeled box representing one feature
+// TimelineIconWidget -- compact 34x34 icon representing one feature
 // --------------------------------------------------------------------
-class TimelineEntryWidget : public QWidget
+class TimelineIconWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit TimelineEntryWidget(const QString& featureId,
-                                 const QString& featureName,
-                                 const QColor&  iconColor,
-                                 QWidget* parent = nullptr);
+    explicit TimelineIconWidget(const QString& featureId,
+                                features::FeatureType type,
+                                const QColor& iconColor,
+                                const QString& name,
+                                QWidget* parent = nullptr);
 
     QString featureId()   const { return m_featureId; }
-    QString featureName() const { return m_featureName; }
+    QString featureName() const { return m_name; }
 
-    void setDimmed(bool dimmed);
-    void setSuppressed(bool suppressed);
-    void setSelected(bool selected);
-    void setEditing(bool editing);
+    void setDimmed(bool d);
+    void setSuppressed(bool s);
+    void setError(bool e);
+    void setEditing(bool e);
+    void setSelected(bool s);
 
 signals:
     void doubleClicked(const QString& featureId);
 
 protected:
+    void paintEvent(QPaintEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void paintEvent(QPaintEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
 private:
+    void drawFeatureIcon(QPainter& p, const QRect& iconRect);
+
     QString m_featureId;
-    QString m_featureName;
+    features::FeatureType m_featureType;
     QColor  m_iconColor;
-    bool    m_dimmed     = false;
+    QString m_name;
+    bool    m_dimmed    = false;
     bool    m_suppressed = false;
-    bool    m_selected   = false;
-    bool    m_editing    = false;
+    bool    m_error     = false;
+    bool    m_editing   = false;
+    bool    m_selected  = false;
+    bool    m_hovered   = false;
 };
 
 // --------------------------------------------------------------------
-// TimelineGroupWidget -- a container box around grouped entries
-// --------------------------------------------------------------------
-class TimelineGroupWidget : public QWidget
-{
-    Q_OBJECT
-public:
-    explicit TimelineGroupWidget(const QString& groupId,
-                                 const QString& groupName,
-                                 bool collapsed,
-                                 bool suppressed,
-                                 QWidget* parent = nullptr);
-
-    QString groupId()   const { return m_groupId; }
-    QString groupName() const { return m_groupName; }
-    bool    isCollapsed() const { return m_collapsed; }
-
-    /// The inner layout where child entry widgets are placed.
-    QHBoxLayout* innerLayout() { return m_innerLayout; }
-
-signals:
-    void requestUngroup(const QString& groupId);
-    void requestToggleCollapse(const QString& groupId);
-    void requestSuppressGroup(const QString& groupId, bool suppress);
-
-protected:
-    void paintEvent(QPaintEvent* event) override;
-    void contextMenuEvent(QContextMenuEvent* event) override;
-
-private:
-    QString      m_groupId;
-    QString      m_groupName;
-    bool         m_collapsed   = false;
-    bool         m_suppressed  = false;
-    QHBoxLayout* m_innerLayout = nullptr;
-};
-
-// --------------------------------------------------------------------
-// TimelineMarker -- draggable vertical-line marker
+// TimelineMarker -- thin bright-blue draggable vertical bar
 // --------------------------------------------------------------------
 class TimelineMarker : public QWidget
 {
@@ -117,6 +92,8 @@ public:
         QString tooltip;       ///< Rich tooltip text (HTML supported)
         QColor  iconColor;     ///< Feature-type-based icon colour
         bool    suppressed = false;
+        bool    hasError   = false;
+        std::optional<features::FeatureType> featureType;
     };
 
     /// Populate the panel with full entry info (preferred).
@@ -189,11 +166,13 @@ private:
         QString tooltip;
         QColor  iconColor;
         bool    suppressed = false;
+        bool    hasError   = false;
+        std::optional<features::FeatureType> featureType;
     };
 
-    std::vector<EntryData>            m_data;
-    std::vector<GroupInfo>            m_groups;
-    std::vector<TimelineEntryWidget*> m_entryWidgets;
+    std::vector<EntryData>              m_data;
+    std::vector<GroupInfo>              m_groups;
+    std::vector<TimelineIconWidget*>    m_entryWidgets;
 
     QScrollArea*    m_scrollArea  = nullptr;
     QWidget*        m_container   = nullptr;
@@ -207,6 +186,9 @@ private:
 
     /// Draw the drag insertion indicator line on the container.
     void paintInsertionLine(QPainter& p);
+
+    /// Draw group bracket lines above icons.
+    void paintGroupBrackets(QPainter& p);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

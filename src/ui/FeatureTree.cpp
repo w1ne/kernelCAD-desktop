@@ -394,7 +394,79 @@ void FeatureTree::refresh()
     buildComponentTree(rootItem, root);
 
     expandAll();
+
+    // Re-apply the current tab filter after rebuilding
+    if (m_currentTab != BrowserTab::Model)
+        applyFilter(m_currentTab);
+
     m_refreshing = false;
+}
+
+// =====================================================================
+// applyFilter -- show/hide tree items based on the selected browser tab
+// =====================================================================
+
+void FeatureTree::applyFilter(BrowserTab tab)
+{
+    m_currentTab = tab;
+
+    if (!m_document || topLevelItemCount() == 0)
+        return;
+
+    QTreeWidgetItem* rootItem = topLevelItem(0);
+
+    // "Model" tab: show everything
+    if (tab == BrowserTab::Model) {
+        for (int i = 0; i < rootItem->childCount(); ++i)
+            rootItem->child(i)->setHidden(false);
+        return;
+    }
+
+    // For other tabs, iterate children of root and show/hide based on type
+    for (int i = 0; i < rootItem->childCount(); ++i) {
+        QTreeWidgetItem* child = rootItem->child(i);
+        QString text = child->text(0);
+
+        bool show = false;
+        switch (tab) {
+        case BrowserTab::Bodies:
+            show = (text == QStringLiteral("Bodies"));
+            break;
+        case BrowserTab::Sketches:
+            // Show items that are sketch features or the "Origin" group
+            if (text == QStringLiteral("Origin")) {
+                show = false;
+            } else if (text == QStringLiteral("Bodies")) {
+                show = false;
+            } else {
+                // Check if this is a sketch feature
+                QVariant featData = child->data(0, Qt::UserRole);
+                if (featData.isValid() && !featData.toString().isEmpty() && m_document) {
+                    auto& tl = m_document->timeline();
+                    for (size_t j = 0; j < tl.count(); ++j) {
+                        if (QString::fromStdString(tl.entry(j).id) == featData.toString()) {
+                            show = (tl.entry(j).feature &&
+                                    tl.entry(j).feature->type() == features::FeatureType::Sketch);
+                            break;
+                        }
+                    }
+                }
+            }
+            break;
+        case BrowserTab::Components: {
+            // Show only component occurrence items (those with ComponentIdRole)
+            QVariant compData = child->data(0, ComponentIdRole);
+            show = compData.isValid() && !compData.toString().isEmpty()
+                   && child != rootItem;  // exclude root itself
+            break;
+        }
+        default:
+            show = true;
+            break;
+        }
+
+        child->setHidden(!show);
+    }
 }
 
 void FeatureTree::onItemClicked(QTreeWidgetItem* item, int /*column*/)

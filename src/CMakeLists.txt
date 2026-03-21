@@ -72,6 +72,7 @@ add_executable(kernelCAD
   ui/MarkingMenu.cpp
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp
+  ui/IconFactory.cpp
 )
 
 target_include_directories(kernelCAD PRIVATE

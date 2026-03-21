@@ -4,6 +4,7 @@
 #include <QVariant>
 #include <QTimer>
 #include <vector>
+#include <string>
 #include <tuple>
 
 class QFormLayout;
@@ -50,6 +51,10 @@ public:
     /// populated with actual parameter values.
     void showFeature(const QString& featureId);
 
+    /// Display body statistics (volume, area, mass, CoG, bbox) and
+    /// appearance controls for the given body ID.
+    void showBodyProperties(const std::string& bodyId);
+
     /// Generic property setter: each tuple is (label, type, value).
     /// Supported types: "double", "int", "bool", "enum", "string".
     /// For "enum", value is a QStringList of choices; currentIndex controls
@@ -86,6 +91,9 @@ signals:
 
     /// Emitted when the user selects a different material from the dropdown.
     void materialChanged(const QString& bodyId, const QString& materialName);
+
+    /// Emitted when the user picks a new body color via the color picker.
+    void bodyColorChanged(const QString& bodyId, const QColor& color);
 
 private:
     void buildExtrudeForm(const QString& featureId, const features::ExtrudeFeature* feat);

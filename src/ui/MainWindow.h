@@ -16,6 +16,10 @@ class ViewportManipulator;
 namespace document { class Document; class PreviewEngine; class InteractiveCommand; class AutoSave; }
 
 class QToolBar;
+class QTabWidget;
+class QToolButton;
+class QHBoxLayout;
+class QFrame;
 
 class Viewport3D;
 class FeatureTree;
@@ -71,6 +75,9 @@ private:
 
     /// Cancel a pending command and restore default selection state.
     void onCancelPendingCommand();
+    void onConstructPlane();
+    void onConstructAxis();
+    void onConstructPoint();
     void onMirrorLastBody();
     void onCircularPattern();
     void onRectangularPattern();
@@ -183,9 +190,29 @@ private:
     void onClearSection();
     void onSectionSliderChanged(int value);
 
-    // Main toolbar
-    QToolBar* m_mainToolBar = nullptr;
+    // ── Ribbon toolbar (tabbed icon bar) ───────────────────────────────────
+    QWidget*    m_ribbonContainer = nullptr;  // top-level container for quick-access + ribbon
+    QTabWidget* m_ribbon          = nullptr;
+    QWidget*    m_quickAccessBar  = nullptr;
+    int         m_solidTabIndex   = 0;
+    int         m_sketchTabIndex  = 0;
+    int         m_assemblyTabIndex = 0;
     void setupToolBar();
+
+    /// Ribbon helper: describes a single tool button in a ribbon group.
+    struct ToolEntry {
+        QString      name;
+        QIcon        icon;
+        QString      tooltip;
+        std::function<void()> action;
+    };
+
+    /// Add a labelled group of tool buttons to a ribbon tab layout.
+    void addToolGroup(QHBoxLayout* parentLayout, const QString& groupName,
+                      const std::vector<ToolEntry>& tools);
+
+    /// Add a thin vertical separator between groups.
+    void addGroupSeparator(QHBoxLayout* layout);
 
     // Toolbar actions that also carry global shortcuts
     QAction* m_extrudeAction  = nullptr;

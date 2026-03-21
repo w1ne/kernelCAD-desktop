@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "IconFactory.h"
 #include "Viewport3D.h"
 #include "ViewportManipulator.h"
 #include "SketchEditor.h"
@@ -74,6 +75,11 @@
 #include <QTimer>
 #include <QShortcut>
 #include <QWidgetAction>
+#include <QTabWidget>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <QTabBar>
+#include <QFrame>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -222,117 +228,370 @@ void MainWindow::setupUI()
     setupConfirmBar();
 }
 
+// ─── Ribbon helpers ─────────────────────────────────────────────────────────
+
+void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupName,
+                               const std::vector<ToolEntry>& tools)
+{
+    auto* groupWidget = new QWidget;
+    groupWidget->setObjectName("RibbonGroup");
+    auto* groupLayout = new QVBoxLayout(groupWidget);
+    groupLayout->setContentsMargins(4, 0, 4, 0);
+    groupLayout->setSpacing(0);
+
+    // Button row
+    auto* buttonRow = new QHBoxLayout;
+    buttonRow->setSpacing(2);
+    for (const auto& tool : tools) {
+        auto* btn = new QToolButton;
+        btn->setIcon(tool.icon);
+        btn->setIconSize(QSize(32, 32));
+        btn->setToolTip(tool.tooltip);
+        btn->setAutoRaise(true);
+        btn->setFixedSize(40, 40);
+        btn->setObjectName("RibbonButton");
+        if (tool.action)
+            connect(btn, &QToolButton::clicked, this, tool.action);
+        buttonRow->addWidget(btn);
+
+        // Tag with tool name for hover-filter lookup
+        btn->setProperty("_toolName", tool.name);
+    }
+    groupLayout->addLayout(buttonRow);
+
+    // Group label (small text underneath)
+    auto* label = new QLabel(groupName);
+    label->setAlignment(Qt::AlignCenter);
+    label->setObjectName("RibbonGroupLabel");
+    groupLayout->addWidget(label);
+
+    parentLayout->addWidget(groupWidget);
+}
+
+void MainWindow::addGroupSeparator(QHBoxLayout* layout)
+{
+    auto* sep = new QFrame;
+    sep->setFrameShape(QFrame::VLine);
+    sep->setObjectName("RibbonSeparator");
+    sep->setFixedWidth(1);
+    sep->setFixedHeight(52);
+    layout->addWidget(sep);
+}
+
+// ─── Main ribbon setup ─────────────────────────────────────────────────────
+
 void MainWindow::setupToolBar()
 {
-    m_mainToolBar = addToolBar(tr("Main"));
-    m_mainToolBar->setMovable(false);
-    m_mainToolBar->setIconSize(QSize(24, 24));
+    // ── Overall container: quick-access bar on top, ribbon tabs below ────
+    m_ribbonContainer = new QWidget(this);
+    m_ribbonContainer->setObjectName("RibbonContainer");
+    auto* containerLayout = new QVBoxLayout(m_ribbonContainer);
+    containerLayout->setContentsMargins(0, 0, 0, 0);
+    containerLayout->setSpacing(0);
 
-    // Helper: create a toolbar action with a status-bar hint on hover.
-    auto addTB = [this](const QString& text, const QString& statusTip,
-                        auto slot) -> QAction* {
-        auto* act = m_mainToolBar->addAction(text, this, slot);
-        act->setStatusTip(statusTip);
-        act->setToolTip(statusTip);
-        return act;
+    // ── Quick-access toolbar (New, Open, Save, Undo, Redo) ──────────────
+    m_quickAccessBar = new QWidget;
+    m_quickAccessBar->setObjectName("QuickAccessBar");
+    m_quickAccessBar->setFixedHeight(26);
+    auto* qaLayout = new QHBoxLayout(m_quickAccessBar);
+    qaLayout->setContentsMargins(8, 2, 8, 2);
+    qaLayout->setSpacing(4);
+
+    auto makeQAButton = [this](const QString& iconName, const QString& tip,
+                                auto slot) -> QToolButton* {
+        auto* btn = new QToolButton;
+        btn->setIcon(IconFactory::createIcon(iconName, 16));
+        btn->setIconSize(QSize(16, 16));
+        btn->setToolTip(tip);
+        btn->setAutoRaise(true);
+        btn->setFixedSize(22, 22);
+        btn->setObjectName("QuickAccessButton");
+        connect(btn, &QToolButton::clicked, this, slot);
+        return btn;
     };
 
-    // ── File ─────────────────────────────────────────────────────────────
-    addTB(tr("New"),  tr("New (Ctrl+N) \u2014 Create a new empty document"),
-          &MainWindow::onNewDocument);
-    addTB(tr("Open"), tr("Open (Ctrl+O) \u2014 Open an existing document"),
-          &MainWindow::onOpenDocument);
-    addTB(tr("Save"), tr("Save (Ctrl+S) \u2014 Save the current document"),
-          &MainWindow::onSaveDocument);
-    m_mainToolBar->addSeparator();
+    qaLayout->addWidget(makeQAButton("new",  tr("New (Ctrl+N)"),  &MainWindow::onNewDocument));
+    qaLayout->addWidget(makeQAButton("open", tr("Open (Ctrl+O)"), &MainWindow::onOpenDocument));
+    qaLayout->addWidget(makeQAButton("save", tr("Save (Ctrl+S)"), &MainWindow::onSaveDocument));
 
-    // ── Primitives ───────────────────────────────────────────────────────
-    addTB(tr("Box"),      tr("Box \u2014 Create a parametric box primitive"),
-          &MainWindow::onCreateBox);
-    addTB(tr("Cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
-          &MainWindow::onCreateCylinder);
-    addTB(tr("Sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
-          &MainWindow::onCreateSphere);
-    m_mainToolBar->addSeparator();
+    // Small separator
+    auto* qaSep = new QFrame;
+    qaSep->setFrameShape(QFrame::VLine);
+    qaSep->setObjectName("RibbonSeparator");
+    qaSep->setFixedSize(1, 16);
+    qaLayout->addWidget(qaSep);
 
-    // ── Sketch ───────────────────────────────────────────────────────────
-    auto* createSketchAction = addTB(tr("Create Sketch"),
-          tr("Create Sketch (S) \u2014 Start a new 2D sketch on a plane"),
-          &MainWindow::onCreateSketch);
-    createSketchAction->setShortcut(QKeySequence(tr("S")));
-    addTB(tr("Edit Sketch"),   tr("Edit Sketch \u2014 Re-enter an existing sketch for editing"),
-          &MainWindow::onEditSketch);
-    m_mainToolBar->addSeparator();
+    qaLayout->addWidget(makeQAButton("undo", tr("Undo (Ctrl+Z)"), &MainWindow::onUndo));
+    qaLayout->addWidget(makeQAButton("redo", tr("Redo (Ctrl+Shift+Z)"), &MainWindow::onRedo));
 
-    // ── Features ─────────────────────────────────────────────────────────
-    m_extrudeAction = addTB(tr("Extrude"), tr("Extrude (E) \u2014 Extrude a sketch profile or face"),
-          &MainWindow::onExtrudeSketch);
+    qaLayout->addStretch();
+    containerLayout->addWidget(m_quickAccessBar);
+
+    // ── Ribbon tab widget ───────────────────────────────────────────────
+    m_ribbon = new QTabWidget;
+    m_ribbon->setObjectName("Ribbon");
+    m_ribbon->setTabPosition(QTabWidget::North);
+    m_ribbon->setFixedHeight(80);
+
+    // ════════════════════════════════════════════════════════════════════
+    // Tab 1: SOLID
+    // ════════════════════════════════════════════════════════════════════
+    {
+        auto* tab = new QWidget;
+        auto* layout = new QHBoxLayout(tab);
+        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setSpacing(2);
+
+        // Group: Create (primitives + sketch)
+        addToolGroup(layout, "Create", {
+            {"Box",      IconFactory::createIcon("box"),      tr("Box \u2014 Create a parametric box"),
+             [this]() { onCreateBox(); }},
+            {"Cylinder", IconFactory::createIcon("cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
+             [this]() { onCreateCylinder(); }},
+            {"Sphere",   IconFactory::createIcon("sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
+             [this]() { onCreateSphere(); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Form (extrude / revolve / sweep / loft)
+        addToolGroup(layout, "Form", {
+            {"Extrude", IconFactory::createIcon("extrude"), tr("Extrude (E) \u2014 Extrude a sketch or face"),
+             [this]() { onExtrudeSketch(); }},
+            {"Revolve", IconFactory::createIcon("revolve"), tr("Revolve \u2014 Revolve around an axis"),
+             [this]() { onRevolveSketch(); }},
+            {"Sweep",   IconFactory::createIcon("sweep"),   tr("Sweep \u2014 Sweep a profile along a path"),
+             [this]() { onSweepSketch(); }},
+            {"Loft",    IconFactory::createIcon("loft"),    tr("Loft \u2014 Solid between profiles"),
+             [this]() { onLoftTest(); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Modify
+        addToolGroup(layout, "Modify", {
+            {"Fillet",  IconFactory::createIcon("fillet"),  tr("Fillet (F) \u2014 Round selected edges"),
+             [this]() { onFillet(); }},
+            {"Chamfer", IconFactory::createIcon("chamfer"), tr("Chamfer \u2014 Bevel selected edges"),
+             [this]() { onChamfer(); }},
+            {"Shell",   IconFactory::createIcon("shell"),   tr("Shell \u2014 Hollow a body"),
+             [this]() { onShell(); }},
+            {"Draft",   IconFactory::createIcon("draft"),   tr("Draft (D) \u2014 Apply draft angle to faces"),
+             [this]() { onDraft(); }},
+            {"Hole",    IconFactory::createIcon("hole"),    tr("Hole (H) \u2014 Create a hole on a face"),
+             [this]() { onAddHole(); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Pattern
+        addToolGroup(layout, "Pattern", {
+            {"Mirror",       IconFactory::createIcon("mirror"),       tr("Mirror \u2014 Mirror across a plane"),
+             [this]() { onMirrorLastBody(); }},
+            {"Rect Pattern", IconFactory::createIcon("rect_pattern"), tr("Rect Pattern \u2014 Rectangular array"),
+             [this]() { onRectangularPattern(); }},
+            {"Circ Pattern", IconFactory::createIcon("circ_pattern"), tr("Circ Pattern \u2014 Circular array"),
+             [this]() { onCircularPattern(); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Construct (construction geometry)
+        addToolGroup(layout, "Construct", {
+            {"Plane", IconFactory::createIcon("plane"), tr("Construct Plane \u2014 Create a construction plane"),
+             [this]() { onConstructPlane(); }},
+            {"Axis",  IconFactory::createIcon("axis"),  tr("Construct Axis \u2014 Create a construction axis"),
+             [this]() { onConstructAxis(); }},
+            {"Point", IconFactory::createIcon("point"), tr("Construct Point \u2014 Create a construction point"),
+             [this]() { onConstructPoint(); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Inspect
+        addToolGroup(layout, "Inspect", {
+            {"Measure", IconFactory::createIcon("measure"), tr("Measure (M) \u2014 Measure distances"),
+             [this]() { onMeasure(); }},
+        });
+
+        layout->addStretch();
+        m_solidTabIndex = m_ribbon->addTab(tab, tr("SOLID"));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Tab 2: SKETCH (shown/auto-selected during sketch editing)
+    // ════════════════════════════════════════════════════════════════════
+    {
+        auto* tab = new QWidget;
+        auto* layout = new QHBoxLayout(tab);
+        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setSpacing(2);
+
+        // Group: Draw
+        addToolGroup(layout, "Draw", {
+            {"Line",      IconFactory::createIcon("line"),      tr("Line (L)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawLine); }},
+            {"Rectangle", IconFactory::createIcon("rectangle"), tr("Rectangle (R)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangle); }},
+            {"Circle",    IconFactory::createIcon("circle"),    tr("Circle (C)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle); }},
+            {"Arc",       IconFactory::createIcon("arc"),       tr("Arc (A)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc); }},
+            {"Ellipse",   IconFactory::createIcon("ellipse"),   tr("Ellipse"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawEllipse); }},
+            {"Polygon",   IconFactory::createIcon("polygon"),   tr("Polygon"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawPolygon); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Constrain
+        addToolGroup(layout, "Constrain", {
+            {"Coincident",    IconFactory::createIcon("coincident"),    tr("Coincident \u2014 Merge two points"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Parallel",      IconFactory::createIcon("parallel_c"),    tr("Parallel \u2014 Make lines parallel"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Perpendicular", IconFactory::createIcon("perpendicular"), tr("Perpendicular \u2014 Make lines perpendicular"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Tangent",       IconFactory::createIcon("tangent_c"),     tr("Tangent \u2014 Make curves tangent"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Equal",         IconFactory::createIcon("equal_c"),       tr("Equal \u2014 Equal length or radius"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Symmetric",     IconFactory::createIcon("symmetric_c"),   tr("Symmetric \u2014 Mirror about a line"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Fix",           IconFactory::createIcon("fix"),           tr("Fix \u2014 Lock a point in place"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+            {"Dimension",     IconFactory::createIcon("dimension"),     tr("Dimension \u2014 Set a parametric dimension"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Dimension); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Modify
+        addToolGroup(layout, "Modify", {
+            {"Trim",    IconFactory::createIcon("trim"),    tr("Trim (T)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Trim); }},
+            {"Extend",  IconFactory::createIcon("extend"),  tr("Extend (E)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Extend); }},
+            {"Offset",  IconFactory::createIcon("offset"),  tr("Offset (O)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Offset); }},
+            {"Fillet",  IconFactory::createIcon("fillet"),   tr("Sketch Fillet (F)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchFillet); }},
+            {"Chamfer", IconFactory::createIcon("chamfer"),  tr("Sketch Chamfer (G)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchChamfer); }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Reference
+        addToolGroup(layout, "Reference", {
+            {"Project",      IconFactory::createIcon("project"),      tr("Project Edge (P)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ProjectEdge); }},
+            {"Construction", IconFactory::createIcon("construction"), tr("Construction Mode (X)"),
+             [this]() { /* toggled via keyboard X in sketch editor */ }},
+        });
+        addGroupSeparator(layout);
+
+        // Group: Control
+        addToolGroup(layout, "Control", {
+            {"Select", IconFactory::createIcon("select"), tr("Select"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::None); }},
+            {"Finish", IconFactory::createIcon("finish"), tr("Finish Sketch"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->finishEditing(); }},
+        });
+
+        layout->addStretch();
+        m_sketchTabIndex = m_ribbon->addTab(tab, tr("SKETCH"));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Tab 3: ASSEMBLY
+    // ════════════════════════════════════════════════════════════════════
+    {
+        auto* tab = new QWidget;
+        auto* layout = new QHBoxLayout(tab);
+        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setSpacing(2);
+
+        addToolGroup(layout, "Assemble", {
+            {"Joint",         IconFactory::createIcon("joint"),     tr("Joint (J) \u2014 Click two faces to create a joint"),
+             [this]() { onAddJoint(); }},
+            {"New Component", IconFactory::createIcon("component"), tr("New Component \u2014 Add a new component"),
+             [this]() { onNewComponent(); }},
+            {"Insert .kcd",   IconFactory::createIcon("insert"),    tr("Insert Component \u2014 Import a .kcd file"),
+             [this]() { onInsertComponent(); }},
+        });
+        addGroupSeparator(layout);
+
+        addToolGroup(layout, "Inspect", {
+            {"Interference", IconFactory::createIcon("interference"), tr("Check Interference"),
+             [this]() { onCheckInterference(); }},
+        });
+
+        layout->addStretch();
+        m_assemblyTabIndex = m_ribbon->addTab(tab, tr("ASSEMBLY"));
+    }
+
+    containerLayout->addWidget(m_ribbon);
+
+    // Install the ribbon container into a toolbar-area wrapper so it sits
+    // above the central widget (below the menu bar).
+    auto* ribbonToolBar = new QToolBar(tr("Ribbon"), this);
+    ribbonToolBar->setObjectName("RibbonToolBar");
+    ribbonToolBar->setMovable(false);
+    ribbonToolBar->setFloatable(false);
+    ribbonToolBar->setAllowedAreas(Qt::TopToolBarArea);
+    ribbonToolBar->setContentsMargins(0, 0, 0, 0);
+    auto* ribbonWidgetAction = new QWidgetAction(this);
+    ribbonWidgetAction->setDefaultWidget(m_ribbonContainer);
+    ribbonToolBar->addAction(ribbonWidgetAction);
+    addToolBar(Qt::TopToolBarArea, ribbonToolBar);
+
+    // ── Global shortcut actions (invisible, keyboard-only) ──────────────
+    m_extrudeAction = new QAction(tr("Extrude"), this);
     m_extrudeAction->setShortcut(QKeySequence(tr("E")));
+    connect(m_extrudeAction, &QAction::triggered, this, &MainWindow::onExtrudeSketch);
+    addAction(m_extrudeAction);
 
-    addTB(tr("Revolve"), tr("Revolve \u2014 Revolve a sketch profile around an axis"),
-          &MainWindow::onRevolveSketch);
-    addTB(tr("Sweep"),   tr("Sweep \u2014 Sweep a profile along a path"),
-          &MainWindow::onSweepSketch);
-    addTB(tr("Loft"),    tr("Loft \u2014 Create a solid between multiple profiles"),
-          &MainWindow::onLoftTest);
-    m_mainToolBar->addSeparator();
-
-    // ── Modify ───────────────────────────────────────────────────────────
-    m_filletAction = addTB(tr("Fillet"), tr("Fillet (F) \u2014 Round selected edges"),
-          &MainWindow::onFillet);
+    m_filletAction = new QAction(tr("Fillet"), this);
     m_filletAction->setShortcut(QKeySequence(tr("F")));
+    connect(m_filletAction, &QAction::triggered, this, &MainWindow::onFillet);
+    addAction(m_filletAction);
 
-    m_chamferAction = addTB(tr("Chamfer"), tr("Chamfer (C) \u2014 Bevel selected edges"),
-          &MainWindow::onChamfer);
+    m_chamferAction = new QAction(tr("Chamfer"), this);
+    connect(m_chamferAction, &QAction::triggered, this, &MainWindow::onChamfer);
+    addAction(m_chamferAction);
 
-    m_shellAction = addTB(tr("Shell"),   tr("Shell \u2014 Hollow a body by removing faces"),
-          &MainWindow::onShell);
+    m_shellAction = new QAction(tr("Shell"), this);
+    connect(m_shellAction, &QAction::triggered, this, &MainWindow::onShell);
+    addAction(m_shellAction);
 
-    m_draftAction = addTB(tr("Draft"),   tr("Draft (D) \u2014 Apply a draft angle to selected faces"),
-          &MainWindow::onDraft);
+    m_draftAction = new QAction(tr("Draft"), this);
+    connect(m_draftAction, &QAction::triggered, this, &MainWindow::onDraft);
+    addAction(m_draftAction);
 
-    m_holeAction = addTB(tr("Hole"), tr("Hole (H) \u2014 Create a hole feature on a face"),
-          &MainWindow::onAddHole);
+    m_holeAction = new QAction(tr("Hole"), this);
     m_holeAction->setShortcut(QKeySequence(tr("H")));
-    m_mainToolBar->addSeparator();
+    connect(m_holeAction, &QAction::triggered, this, &MainWindow::onAddHole);
+    addAction(m_holeAction);
 
-    // ── Pattern ──────────────────────────────────────────────────────────
-    addTB(tr("Mirror"),       tr("Mirror \u2014 Mirror the last body across a plane"),
-          &MainWindow::onMirrorLastBody);
-    addTB(tr("Rect Pattern"), tr("Rect Pattern \u2014 Repeat bodies in a rectangular grid"),
-          &MainWindow::onRectangularPattern);
-    addTB(tr("Circ Pattern"), tr("Circ Pattern \u2014 Repeat bodies in a circular array"),
-          &MainWindow::onCircularPattern);
-    m_mainToolBar->addSeparator();
-
-    // ── Assembly ─────────────────────────────────────────────────────────
-    m_jointAction = addTB(tr("Joint"), tr("Joint (J) \u2014 Click two faces to create a joint"),
-          &MainWindow::onAddJoint);
+    m_jointAction = new QAction(tr("Joint"), this);
     m_jointAction->setShortcut(QKeySequence(tr("J")));
+    connect(m_jointAction, &QAction::triggered, this, &MainWindow::onAddJoint);
+    addAction(m_jointAction);
 
-    addTB(tr("New Component"), tr("New Component \u2014 Create a new component in the assembly"),
-          &MainWindow::onNewComponent);
-    addTB(tr("Insert .kcd"), tr("Insert Component \u2014 Import a .kcd file as a component"),
-          &MainWindow::onInsertComponent);
-    m_mainToolBar->addSeparator();
-
-    // ── Tools ────────────────────────────────────────────────────────────
-    m_measureAction = addTB(tr("Measure"), tr("Measure (M) \u2014 Measure distances between entities"),
-          &MainWindow::onMeasure);
+    m_measureAction = new QAction(tr("Measure"), this);
     m_measureAction->setShortcut(QKeySequence(tr("M")));
-    // I as an alias for Measure
+    connect(m_measureAction, &QAction::triggered, this, &MainWindow::onMeasure);
+    addAction(m_measureAction);
+
     auto* measureAliasI = new QAction(this);
     measureAliasI->setShortcut(QKeySequence(tr("I")));
     connect(measureAliasI, &QAction::triggered, this, &MainWindow::onMeasure);
     addAction(measureAliasI);
 
-    // Press/Pull alias (Q = same as Extrude for now)
+    auto* createSketchShortcut = new QAction(this);
+    createSketchShortcut->setShortcut(QKeySequence(tr("S")));
+    connect(createSketchShortcut, &QAction::triggered, this, &MainWindow::onCreateSketch);
+    addAction(createSketchShortcut);
+
     auto* pressPullAction = new QAction(this);
     pressPullAction->setShortcut(QKeySequence(tr("Q")));
     connect(pressPullAction, &QAction::triggered, this, &MainWindow::onExtrudeSketch);
     addAction(pressPullAction);
 
-    // Delete selected feature
     m_deleteAction = new QAction(tr("Delete"), this);
     m_deleteAction->setShortcut(QKeySequence::Delete);
     m_deleteAction->setStatusTip(tr("Delete \u2014 Delete the selected feature"));
@@ -684,10 +943,35 @@ void MainWindow::setupMenuBar()
 
 void MainWindow::setupDocks()
 {
-    // Feature tree -- left
+    // Feature tree -- left, with browser tab bar above it
     m_featureTree = new FeatureTree(this);
+
+    auto* browserContainer = new QWidget(this);
+    auto* browserLayout = new QVBoxLayout(browserContainer);
+    browserLayout->setContentsMargins(0, 0, 0, 0);
+    browserLayout->setSpacing(0);
+
+    auto* browserTabBar = new QTabBar(browserContainer);
+    browserTabBar->addTab(tr("Model"));
+    browserTabBar->addTab(tr("Bodies"));
+    browserTabBar->addTab(tr("Sketches"));
+    browserTabBar->addTab(tr("Components"));
+    browserTabBar->setCurrentIndex(0);
+    browserTabBar->setExpanding(false);
+    browserLayout->addWidget(browserTabBar);
+    browserLayout->addWidget(m_featureTree, 1);
+
+    connect(browserTabBar, &QTabBar::currentChanged, this, [this](int index) {
+        switch (index) {
+        case 0: m_featureTree->applyFilter(FeatureTree::BrowserTab::Model);      break;
+        case 1: m_featureTree->applyFilter(FeatureTree::BrowserTab::Bodies);     break;
+        case 2: m_featureTree->applyFilter(FeatureTree::BrowserTab::Sketches);   break;
+        case 3: m_featureTree->applyFilter(FeatureTree::BrowserTab::Components); break;
+        }
+    });
+
     auto* leftDock = new QDockWidget(tr("Browser"), this);
-    leftDock->setWidget(m_featureTree);
+    leftDock->setWidget(browserContainer);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
@@ -707,6 +991,13 @@ void MainWindow::setupDocks()
 
 void MainWindow::connectSignals()
 {
+    // Ribbon tab changed -> update window title to show current workspace
+    if (m_ribbon) {
+        connect(m_ribbon, &QTabWidget::currentChanged, this, [this](int) {
+            updateWindowTitle();
+        });
+    }
+
     // Timeline marker moved -> roll-back / roll-forward and refresh
     connect(m_timeline, &TimelinePanel::markerMoved, this, [this](int index) {
         m_document->timeline().setMarker(static_cast<size_t>(index));
@@ -865,6 +1156,20 @@ void MainWindow::connectSignals()
             // "Default" — clear the assignment
             m_document->appearances().clearBody(bodyId.toStdString());
         }
+        m_document->setModified(true);
+        updateViewport();
+        updateWindowTitle();
+    });
+
+    // Body color changed from properties panel color picker
+    connect(m_properties, &PropertiesPanel::bodyColorChanged, this,
+            [this](const QString& bodyId, const QColor& color) {
+        kernel::Material mat = m_document->appearances().bodyMaterial(bodyId.toStdString());
+        mat.baseR = static_cast<float>(color.redF());
+        mat.baseG = static_cast<float>(color.greenF());
+        mat.baseB = static_cast<float>(color.blueF());
+        mat.name = "Custom";
+        m_document->appearances().setBodyMaterial(bodyId.toStdString(), mat);
         m_document->setModified(true);
         updateViewport();
         updateWindowTitle();
@@ -1950,6 +2255,25 @@ void MainWindow::onCancelPendingCommand()
     }
 }
 
+// =============================================================================
+// Construction geometry stubs
+// =============================================================================
+
+void MainWindow::onConstructPlane()
+{
+    statusBar()->showMessage(tr("Construct Plane -- not yet implemented"));
+}
+
+void MainWindow::onConstructAxis()
+{
+    statusBar()->showMessage(tr("Construct Axis -- not yet implemented"));
+}
+
+void MainWindow::onConstructPoint()
+{
+    statusBar()->showMessage(tr("Construct Point -- not yet implemented"));
+}
+
 void MainWindow::onMirrorLastBody()
 {
     auto& brep = m_document->brepModel();
@@ -2286,11 +2610,19 @@ void MainWindow::onRedo()
 
 void MainWindow::updateWindowTitle()
 {
-    QString title = "kernelCAD";
+    QString title = QStringLiteral("kernelCAD");
     if (!m_document->name().empty())
-        title += " — " + QString::fromStdString(m_document->name());
+        title += QStringLiteral(" \u2014 ") + QString::fromStdString(m_document->name());
     if (m_document->isModified())
-        title += " *";
+        title += QStringLiteral(" *");
+
+    // Append current workspace tab name (SOLID / SKETCH / ASSEMBLY)
+    if (m_ribbon) {
+        QString tabName = m_ribbon->tabText(m_ribbon->currentIndex()).trimmed();
+        if (!tabName.isEmpty())
+            title += QStringLiteral(" \u2014 ") + tabName;
+    }
+
     setWindowTitle(title);
 }
 
@@ -2402,12 +2734,22 @@ void MainWindow::onSelectionChanged()
 
     if (!m_selectionMgr->hasSelection()) {
         m_properties->clear();
+        updateStatusBarInfo();
         statusBar()->showMessage(tr("Selection cleared"));
         return;
     }
 
     const auto& sel = m_selectionMgr->selection();
     const auto& hit = sel.front();
+
+    // Body-level selection (no face or edge): show rich body properties panel
+    if (!hit.bodyId.empty() && hit.faceIndex < 0 && hit.edgeIndex < 0) {
+        m_properties->showBodyProperties(hit.bodyId);
+        updateStatusBarInfo();
+        statusBar()->showMessage(
+            tr("Selected body %1").arg(QString::fromStdString(hit.bodyId)));
+        return;
+    }
 
     // Build a properties display for the selected entity
     std::vector<std::tuple<QString, QString, QVariant>> props;
@@ -2588,6 +2930,9 @@ void MainWindow::onSelectionChanged()
         msg = tr("Selected %1 entities").arg(sel.size());
     }
     statusBar()->showMessage(msg);
+
+    // Refresh status bar center (body count + selection count)
+    updateStatusBarInfo();
 }
 
 // Map feature type to a consistent colour used in both FeatureTree icons and timeline entries.
@@ -2697,6 +3042,11 @@ void MainWindow::refreshAllPanels()
         ei.tooltip     = buildEntryTooltip(e);
         ei.iconColor   = e.feature ? featureTypeColor(e.feature->type()) : QColor(160, 165, 170);
         ei.suppressed  = e.isSuppressed;
+        if (e.feature) {
+            ei.featureType = e.feature->type();
+            ei.hasError = (e.feature->healthState() == features::HealthState::Error ||
+                           e.feature->healthState() == features::HealthState::Warning);
+        }
         entries.push_back(std::move(ei));
     }
     m_timeline->setEntriesEx(entries);
@@ -2804,113 +3154,89 @@ void MainWindow::updateViewport()
 void MainWindow::setupSketchToolBar()
 {
     m_sketchToolBar = new QToolBar(tr("Sketch Tools"), this);
+    m_sketchToolBar->setMovable(false);
+    m_sketchToolBar->setIconSize(QSize(28, 28));
     m_sketchToolBar->setObjectName("SketchToolBar");
+    m_sketchToolBar->setStyleSheet(
+        "#SketchToolBar { background: #353535; border: none; spacing: 2px; padding: 2px; }"
+        "#SketchToolBar QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px; }"
+        "#SketchToolBar QToolButton:hover { background: #4a4a4a; border: 1px solid #666; }"
+        "#SketchToolBar QToolButton:checked { background: #2a82da; border: 1px solid #4a9ae0; }"
+    );
 
-    auto* lineAction = m_sketchToolBar->addAction(tr("Line (L)"));
-    connect(lineAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawLine);
-    });
+    auto addBtn = [this](const QString& iconName, const QString& tooltip, SketchTool tool) {
+        auto* btn = new QToolButton;
+        btn->setIcon(IconFactory::createIcon(iconName, 28));
+        btn->setToolTip(tooltip);
+        btn->setCheckable(true);
+        btn->setAutoExclusive(true);
+        connect(btn, &QToolButton::clicked, [this, tool]() {
+            m_sketchEditor->setTool(tool);
+        });
+        m_sketchToolBar->addWidget(btn);
+        return btn;
+    };
 
-    auto* rectAction = m_sketchToolBar->addAction(tr("Rectangle (R)"));
-    connect(rectAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawRectangle);
-    });
-
-    auto* circleAction = m_sketchToolBar->addAction(tr("Circle (C)"));
-    connect(circleAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawCircle);
-    });
-
-    auto* arcAction = m_sketchToolBar->addAction(tr("Arc (A)"));
-    connect(arcAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawArc);
-    });
-
-    auto* ellipseAction = m_sketchToolBar->addAction(tr("Ellipse"));
-    connect(ellipseAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawEllipse);
-    });
-
-    auto* polygonAction = m_sketchToolBar->addAction(tr("Polygon"));
-    connect(polygonAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawPolygon);
-    });
-
-    auto* slotAction = m_sketchToolBar->addAction(tr("Slot"));
-    connect(slotAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawSlot);
-    });
-
-    auto* circle3PtAction = m_sketchToolBar->addAction(tr("3pt Circle"));
-    connect(circle3PtAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawCircle3Point);
-    });
-
-    auto* arc3PtAction = m_sketchToolBar->addAction(tr("3pt Arc"));
-    connect(arc3PtAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawArc3Point);
-    });
-
-    auto* centerRectAction = m_sketchToolBar->addAction(tr("Center Rect"));
-    connect(centerRectAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::DrawRectangleCenter);
-    });
+    // Draw tools
+    addBtn("line", "Line (L)", SketchTool::DrawLine);
+    addBtn("rectangle", "Rectangle (R)", SketchTool::DrawRectangle);
+    addBtn("center_rectangle", "Center Rectangle", SketchTool::DrawRectangleCenter);
+    addBtn("circle", "Circle (C)", SketchTool::DrawCircle);
+    addBtn("circle_3point", "3-Point Circle", SketchTool::DrawCircle3Point);
+    addBtn("arc", "Arc (A)", SketchTool::DrawArc);
+    addBtn("arc_3point", "3-Point Arc", SketchTool::DrawArc3Point);
+    addBtn("ellipse", "Ellipse", SketchTool::DrawEllipse);
+    addBtn("polygon", "Polygon", SketchTool::DrawPolygon);
+    addBtn("slot", "Slot", SketchTool::DrawSlot);
+    addBtn("spline", "Spline (S)", SketchTool::DrawSpline);
 
     m_sketchToolBar->addSeparator();
 
-    auto* constructionAction = m_sketchToolBar->addAction(tr("Construction (X)"));
-    constructionAction->setCheckable(true);
-    connect(constructionAction, &QAction::toggled, this, [this](bool checked) {
-        m_sketchEditor->setConstructionMode(checked);
-    });
+    // Modify tools
+    addBtn("trim", "Trim (T)", SketchTool::Trim);
+    addBtn("extend", "Extend (E)", SketchTool::Extend);
+    addBtn("offset", "Offset (O)", SketchTool::Offset);
+    addBtn("project", "Project Edge (P)", SketchTool::ProjectEdge);
+    addBtn("fillet_sketch", "Fillet (F)", SketchTool::SketchFillet);
+    addBtn("chamfer_sketch", "Chamfer (G)", SketchTool::SketchChamfer);
 
     m_sketchToolBar->addSeparator();
 
-    auto* trimAction = m_sketchToolBar->addAction(tr("Trim (T)"));
-    connect(trimAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::Trim);
-    });
-
-    auto* extendAction = m_sketchToolBar->addAction(tr("Extend (E)"));
-    connect(extendAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::Extend);
-    });
-
-    auto* offsetAction = m_sketchToolBar->addAction(tr("Offset (O)"));
-    connect(offsetAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::Offset);
-    });
-
-    auto* projectEdgeAction = m_sketchToolBar->addAction(tr("Project Edge (P)"));
-    connect(projectEdgeAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::ProjectEdge);
-    });
+    // Constraint tools
+    addBtn("dimension", "Dimension (D)", SketchTool::Dimension);
+    addBtn("constraint", "Constraint (K)", SketchTool::AddConstraint);
 
     m_sketchToolBar->addSeparator();
 
-    auto* filletAction = m_sketchToolBar->addAction(tr("Fillet (F)"));
-    connect(filletAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::SketchFillet);
+    // Construction toggle (checkable, not auto-exclusive)
+    auto* constructionBtn = new QToolButton;
+    constructionBtn->setIcon(IconFactory::createIcon("construction", 28));
+    constructionBtn->setToolTip("Toggle Construction (X)");
+    constructionBtn->setCheckable(true);
+    connect(constructionBtn, &QToolButton::toggled, [this](bool on) {
+        m_sketchEditor->setConstructionMode(on);
     });
-
-    auto* chamferAction = m_sketchToolBar->addAction(tr("Chamfer (G)"));
-    connect(chamferAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::SketchChamfer);
-    });
+    m_sketchToolBar->addWidget(constructionBtn);
 
     m_sketchToolBar->addSeparator();
 
-    auto* selectAction = m_sketchToolBar->addAction(tr("Select"));
-    connect(selectAction, &QAction::triggered, this, [this]() {
-        m_sketchEditor->setTool(SketchTool::None);
-    });
+    // Select (pointer mode)
+    addBtn("select", "Select", SketchTool::None);
 
     m_sketchToolBar->addSeparator();
 
-    auto* finishAction = m_sketchToolBar->addAction(tr("Finish Sketch"));
-    connect(finishAction, &QAction::triggered, this, [this]() {
+    // Finish sketch
+    auto* finishBtn = new QToolButton;
+    finishBtn->setIcon(IconFactory::createIcon("finish", 28));
+    finishBtn->setToolTip("Finish Sketch (Esc)");
+    finishBtn->setStyleSheet(
+        "QToolButton { background: #2a5a2a; border-radius: 4px; padding: 4px; }"
+        "QToolButton:hover { background: #3a7a3a; }"
+    );
+    connect(finishBtn, &QToolButton::clicked, [this]() {
         m_sketchEditor->finishEditing();
     });
+    m_sketchToolBar->addWidget(finishBtn);
 
     addToolBar(Qt::TopToolBarArea, m_sketchToolBar);
     m_sketchToolBar->setVisible(false);
@@ -2931,6 +3257,27 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     m_sketchEditor->beginEditing(&sketchFeat->sketch(), m_viewport);
     m_sketchEditor->setTool(SketchTool::DrawLine);  // default to line tool
 
+    // Save camera state and animate to face the sketch plane head-on
+    m_viewport->saveCameraState();
+
+    double nx, ny, nz;
+    sketchFeat->sketch().planeNormal(nx, ny, nz);
+    double ox, oy, oz;
+    sketchFeat->sketch().planeOrigin(ox, oy, oz);
+
+    QVector3D normal(static_cast<float>(nx), static_cast<float>(ny), static_cast<float>(nz));
+    QVector3D origin(static_cast<float>(ox), static_cast<float>(oy), static_cast<float>(oz));
+    QVector3D targetEye = origin + normal * m_viewport->orbitDistance();
+    QVector3D targetUp(0.0f, 1.0f, 0.0f);
+    // If looking along Y axis, use Z as up to avoid gimbal lock
+    if (std::abs(static_cast<float>(ny)) > 0.9f)
+        targetUp = QVector3D(0.0f, 0.0f, -1.0f);
+
+    m_viewport->animateTo(targetEye, origin, targetUp, 400);
+
+    // Ghost bodies and lock rotation during sketch editing
+    m_viewport->setSketchMode(true);
+
     // Disable feature shortcuts that conflict with sketch tool keys
     // (E=extend, F=fillet, S=spline, C=circle, etc.)
     if (m_extrudeAction)  m_extrudeAction->setEnabled(false);
@@ -2941,14 +3288,24 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     if (m_deleteAction)   m_deleteAction->setEnabled(false);
 
     showSketchToolBar(true);
+    // Auto-switch ribbon to SKETCH tab
+    if (m_ribbon) m_ribbon->setCurrentIndex(m_sketchTabIndex);
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Editing sketch -- L=Line, R=Rect, C=Circle, A=Arc, X=Construction, T=Trim, E=Extend, O=Offset, Esc=Finish"));
 }
 
 void MainWindow::onSketchEditingFinished()
 {
+    // Restore bodies to full opacity and re-enable rotation
+    m_viewport->setSketchMode(false);
+
+    // Restore camera to pre-sketch position (smooth animation)
+    m_viewport->restoreCameraState(/*animate=*/true);
+
     showSketchToolBar(false);
     hideConfirmBar();
+    // Auto-switch ribbon back to SOLID tab
+    if (m_ribbon) m_ribbon->setCurrentIndex(m_solidTabIndex);
 
     // Re-enable feature shortcuts that were disabled during sketch editing
     if (m_extrudeAction)  m_extrudeAction->setEnabled(true);
@@ -3274,9 +3631,9 @@ void MainWindow::setupStatusBar()
     statusBar()->addWidget(m_statusCenter, 1);
     statusBar()->addPermanentWidget(m_statusRight);
 
-    m_statusLeft->setText(tr("Bodies: 0"));
-    m_statusCenter->setText(tr("Model"));
-    m_statusRight->setText(tr("Grid: On | mm"));
+    m_statusLeft->setText(tr("Ready"));
+    m_statusCenter->setText(tr("0 bodies, 0 selected"));
+    m_statusRight->setText(tr("Grid: On | Solid+Edges | Persp"));
 }
 
 void MainWindow::updateStatusBarInfo()
@@ -3288,65 +3645,73 @@ void MainWindow::updateStatusBarInfo()
     auto ids = brep.bodyIds();
     int bodyCount = static_cast<int>(ids.size());
 
-    // Total face count across all bodies
-    int totalFaces = 0;
-    for (const auto& bid : ids) {
-        try {
-            auto q = brep.query(bid);
-            totalFaces += q.faceCount();
-        } catch (...) {}
-    }
-
-    // If something is selected, show rich selection info
-    const auto& sel = m_selectionMgr->selection();
-    if (!sel.empty() && !sel[0].bodyId.empty()) {
-        const auto& hit = sel[0];
-        QString selInfo;
-        if (hit.faceIndex >= 0) {
-            selInfo = tr("Selected: Face %1 on %2").arg(hit.faceIndex)
-                          .arg(QString::fromStdString(hit.bodyId));
-            try {
-                auto q = brep.query(hit.bodyId);
-                auto fi = q.faceInfo(hit.faceIndex);
-                selInfo += QStringLiteral(" (")
-                         + QString::fromLatin1(kernel::surfaceTypeName(fi.surfaceType))
-                         + QStringLiteral(")");
-                selInfo += tr(" | Area: %1 mm%2").arg(fi.area, 0, 'f', 2)
-                               .arg(QChar(0x00B2));
-            } catch (...) {}
-        } else if (hit.edgeIndex >= 0) {
-            selInfo = tr("Selected: Edge %1 on %2").arg(hit.edgeIndex)
-                          .arg(QString::fromStdString(hit.bodyId));
-            try {
-                auto q = brep.query(hit.bodyId);
-                auto ei = q.edgeInfo(hit.edgeIndex);
-                selInfo += QStringLiteral(" (")
-                         + QString::fromLatin1(kernel::curveTypeName(ei.curveType))
-                         + QStringLiteral(")");
-                selInfo += tr(" | Length: %1 mm").arg(ei.length, 0, 'f', 2);
-            } catch (...) {}
-        } else {
-            selInfo = tr("Selected: %1").arg(QString::fromStdString(hit.bodyId));
-        }
-        m_statusLeft->setText(selInfo);
-    } else {
-        m_statusLeft->setText(tr("%1 bodies | %2 faces | Grid: 5mm | Units: mm")
-                                  .arg(bodyCount).arg(totalFaces));
-    }
-
-    // Center: current mode
-    QString mode = tr("Model");
+    // --- Left: Current status / active command ---
+    QString leftText;
     if (m_sketchEditor && m_sketchEditor->isEditing())
-        mode = tr("Sketch");
+        leftText = tr("Sketch editing");
     else if (!m_editingFeatureId.isEmpty())
-        mode = tr("Edit Feature");
+        leftText = tr("Editing feature");
     else if (m_pendingCommand != PendingCommand::None)
-        mode = tr("Command Active");
-    m_statusCenter->setText(mode);
+        leftText = tr("Command active");
+    else {
+        const auto& sel = m_selectionMgr->selection();
+        if (!sel.empty() && !sel[0].bodyId.empty()) {
+            const auto& hit = sel[0];
+            if (hit.faceIndex >= 0) {
+                leftText = tr("Selected: Face %1 on %2").arg(hit.faceIndex)
+                               .arg(QString::fromStdString(hit.bodyId));
+                try {
+                    auto q = brep.query(hit.bodyId);
+                    auto fi = q.faceInfo(hit.faceIndex);
+                    leftText += QStringLiteral(" (")
+                              + QString::fromLatin1(kernel::surfaceTypeName(fi.surfaceType))
+                              + QStringLiteral(")");
+                } catch (...) {}
+            } else if (hit.edgeIndex >= 0) {
+                leftText = tr("Selected: Edge %1 on %2").arg(hit.edgeIndex)
+                               .arg(QString::fromStdString(hit.bodyId));
+                try {
+                    auto q = brep.query(hit.bodyId);
+                    auto ei = q.edgeInfo(hit.edgeIndex);
+                    leftText += QStringLiteral(" (")
+                              + QString::fromLatin1(kernel::curveTypeName(ei.curveType))
+                              + QStringLiteral(")");
+                } catch (...) {}
+            } else {
+                leftText = tr("Selected: %1").arg(QString::fromStdString(hit.bodyId));
+            }
+        } else {
+            leftText = tr("Ready");
+        }
+    }
+    m_statusLeft->setText(leftText);
 
-    // Right: grid status + units
+    // --- Center: body count + selection count ---
+    int selCount = static_cast<int>(m_selectionMgr->selection().size());
+    m_statusCenter->setText(
+        tr("%1 %2, %3 selected")
+            .arg(bodyCount)
+            .arg(bodyCount == 1 ? tr("body") : tr("bodies"))
+            .arg(selCount));
+
+    // --- Right: Grid + View mode + Projection ---
     bool gridOn = m_viewport->showGrid();
-    m_statusRight->setText(tr("Grid: %1 | mm").arg(gridOn ? tr("On") : tr("Off")));
+
+    QString viewModeName;
+    switch (m_viewport->viewMode()) {
+    case ViewMode::SolidWithEdges: viewModeName = tr("Solid+Edges"); break;
+    case ViewMode::Solid:          viewModeName = tr("Solid");       break;
+    case ViewMode::Wireframe:      viewModeName = tr("Wireframe");   break;
+    default:                       viewModeName = tr("Solid+Edges"); break;
+    }
+
+    QString projName = m_viewport->isPerspective() ? tr("Persp") : tr("Ortho");
+
+    m_statusRight->setText(
+        tr("Grid: %1 | %2 | %3")
+            .arg(gridOn ? tr("On") : tr("Off"))
+            .arg(viewModeName)
+            .arg(projName));
 }
 
 // =============================================================================
@@ -3743,30 +4108,32 @@ void MainWindow::hideManipulator()
 
 void MainWindow::installToolBarHoverFilters()
 {
-    // Install event filters on command toolbar actions.
+    // Install event filters on ribbon tool buttons.
     // When the user hovers over a command button, we temporarily switch
     // the selection filter to match what that command needs, guiding
     // the user to pre-select the right entity type.
 
-    auto installHoverFilter = [this](QAction* action, SelectionFilter filter) {
-        if (!action) return;
-        // Find the associated widget(s) in the toolbar
-        QWidget* widget = m_mainToolBar->widgetForAction(action);
-        if (widget) {
-            widget->installEventFilter(this);
-            widget->setProperty("_hoverFilter", static_cast<int>(filter));
-        }
+    // Map tool names to their required selection filter
+    QHash<QString, SelectionFilter> filterMap = {
+        {"Fillet",  SelectionFilter::Edges},
+        {"Chamfer", SelectionFilter::Edges},
+        {"Extrude", SelectionFilter::Faces},
+        {"Shell",   SelectionFilter::Faces},
+        {"Draft",   SelectionFilter::Faces},
+        {"Hole",    SelectionFilter::Faces},
     };
 
-    // Edge-based commands
-    installHoverFilter(m_filletAction,  SelectionFilter::Edges);
-    installHoverFilter(m_chamferAction, SelectionFilter::Edges);
-
-    // Face-based commands
-    installHoverFilter(m_extrudeAction, SelectionFilter::Faces);
-    installHoverFilter(m_shellAction,   SelectionFilter::Faces);
-    installHoverFilter(m_draftAction,   SelectionFilter::Faces);
-    installHoverFilter(m_holeAction,    SelectionFilter::Faces);
+    // Find all QToolButtons in the ribbon that match these tool names
+    if (!m_ribbonContainer) return;
+    const auto buttons = m_ribbonContainer->findChildren<QToolButton*>("RibbonButton");
+    for (auto* btn : buttons) {
+        QString toolName = btn->property("_toolName").toString();
+        auto it = filterMap.find(toolName);
+        if (it != filterMap.end()) {
+            btn->installEventFilter(this);
+            btn->setProperty("_hoverFilter", static_cast<int>(it.value()));
+        }
+    }
 }
 
 void MainWindow::restoreHoverFilter()

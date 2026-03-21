@@ -151,6 +151,7 @@ bool SketchEditor::screenToSketch(const QPoint& screenPos, double& sx, double& s
 
 double SketchEditor::snapToGrid(double val, double gridSize)
 {
+    if (!m_gridSnap) return val;
     return std::round(val / gridSize) * gridSize;
 }
 
@@ -660,6 +661,10 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
 
     // ── Drag mode: move point and re-solve ──────────────────────────────
     if (m_isDragging && !m_dragPointId.empty()) {
+        // Snap to grid during drag
+        sx = snapToGrid(sx);
+        sy = snapToGrid(sy);
+
         // Use solver drag target for constraint-respecting drag
         m_sketch->solve();  // ensure solver state is fresh
 
@@ -685,7 +690,11 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
 
     // ── Rubber-band for draw tools ──────────────────────────────────────
     if (!m_drawingInProgress) {
+        // Still track snapped cursor position for snap indicators
+        m_currentX = snapToGrid(sx);
+        m_currentY = snapToGrid(sy);
         m_inferenceLines.clear();
+        if (m_viewport) m_viewport->update();
         return false;
     }
 
