@@ -1493,6 +1493,10 @@ void MainWindow::onPropertyChanged(const QString& featureId,
 
     std::string fid = featureId.toStdString();
 
+    // Rebuild dependency edges from the edited feature's updated params
+    // before recomputing, so the dirty set includes any newly-referenced bodies.
+    m_document->updateDependenciesFromParams(fid);
+
     if (!m_editingFeatureId.isEmpty()) {
         // During edit mode, use incremental recompute from the edited feature
         // for better performance -- only downstream features are recalculated.

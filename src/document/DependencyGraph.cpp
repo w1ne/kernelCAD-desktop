@@ -59,6 +59,21 @@ void DependencyGraph::removeEdge(const std::string& dependencyId, const std::str
         it->second.erase(dependencyId);
 }
 
+void DependencyGraph::removeIncomingEdges(const std::string& nodeId)
+{
+    // Remove all edges where nodeId is the dependent (i.e. it depends on others).
+    auto it = m_dependencies.find(nodeId);
+    if (it == m_dependencies.end())
+        return;
+
+    for (const auto& parent : it->second) {
+        auto depIt = m_dependents.find(parent);
+        if (depIt != m_dependents.end())
+            depIt->second.erase(nodeId);
+    }
+    it->second.clear();
+}
+
 std::vector<std::string> DependencyGraph::dependenciesOf(const std::string& featureId) const
 {
     std::vector<std::string> result;

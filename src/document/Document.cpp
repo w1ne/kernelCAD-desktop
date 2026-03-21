@@ -101,6 +101,171 @@ std::string Document::featureForBody(const std::string& bodyId) const
     return {};
 }
 
+void Document::updateDependenciesFromParams(const std::string& featureId)
+{
+    // Remove all existing incoming edges for this feature
+    m_depGraph.removeIncomingEdges(featureId);
+
+    // Find the feature in the timeline
+    for (size_t i = 0; i < m_timeline->count(); ++i) {
+        auto& entry = m_timeline->entry(i);
+        if (entry.id != featureId || !entry.feature)
+            continue;
+
+        auto* feat = entry.feature.get();
+        using FT = features::FeatureType;
+
+        // Helper lambda: add dependency edge from the feature that owns a body
+        auto dependOnBody = [&](const std::string& bodyId) {
+            if (bodyId.empty()) return;
+            std::string ownerFeat = featureForBody(bodyId);
+            if (!ownerFeat.empty())
+                m_depGraph.addEdge(ownerFeat, featureId);
+        };
+
+        // Helper lambda: add dependency edge from a sketch feature
+        auto dependOnSketch = [&](const std::string& sketchId) {
+            if (sketchId.empty()) return;
+            if (m_depGraph.hasNode(sketchId))
+                m_depGraph.addEdge(sketchId, featureId);
+        };
+
+        switch (feat->type()) {
+        case FT::Extrude: {
+            auto* f = static_cast<features::ExtrudeFeature*>(feat);
+            dependOnSketch(f->params().sketchId);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Revolve: {
+            auto* f = static_cast<features::RevolveFeature*>(feat);
+            dependOnSketch(f->params().sketchId);
+            break;
+        }
+        case FT::Fillet: {
+            auto* f = static_cast<features::FilletFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Chamfer: {
+            auto* f = static_cast<features::ChamferFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Shell: {
+            auto* f = static_cast<features::ShellFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Sweep: {
+            auto* f = static_cast<features::SweepFeature*>(feat);
+            dependOnSketch(f->params().sketchId);
+            dependOnSketch(f->params().pathSketchId);
+            break;
+        }
+        case FT::Loft: {
+            auto* f = static_cast<features::LoftFeature*>(feat);
+            for (const auto& sid : f->params().sectionSketchIds)
+                dependOnSketch(sid);
+            break;
+        }
+        case FT::Mirror: {
+            auto* f = static_cast<features::MirrorFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::RectangularPattern: {
+            auto* f = static_cast<features::RectangularPatternFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::CircularPattern: {
+            auto* f = static_cast<features::CircularPatternFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Hole: {
+            auto* f = static_cast<features::HoleFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Combine: {
+            auto* f = static_cast<features::CombineFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            dependOnBody(f->params().toolBodyId);
+            break;
+        }
+        case FT::SplitBody: {
+            auto* f = static_cast<features::SplitBodyFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            if (!f->params().usePlane)
+                dependOnBody(f->params().splittingToolId);
+            break;
+        }
+        case FT::OffsetFaces: {
+            auto* f = static_cast<features::OffsetFacesFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Move: {
+            auto* f = static_cast<features::MoveFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Draft: {
+            auto* f = static_cast<features::DraftFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Thicken: {
+            auto* f = static_cast<features::ThickenFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Thread: {
+            auto* f = static_cast<features::ThreadFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::Scale: {
+            auto* f = static_cast<features::ScaleFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::PathPattern: {
+            auto* f = static_cast<features::PathPatternFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            dependOnBody(f->params().pathBodyId);
+            break;
+        }
+        case FT::Coil: {
+            auto* f = static_cast<features::CoilFeature*>(feat);
+            dependOnBody(f->params().profileBodyId);
+            break;
+        }
+        case FT::DeleteFace: {
+            auto* f = static_cast<features::DeleteFaceFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        case FT::ReplaceFace: {
+            auto* f = static_cast<features::ReplaceFaceFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            dependOnBody(f->params().replacementBodyId);
+            break;
+        }
+        case FT::ReverseNormal: {
+            auto* f = static_cast<features::ReverseNormalFeature*>(feat);
+            dependOnBody(f->params().targetBodyId);
+            break;
+        }
+        default:
+            break;
+        }
+        break; // found the feature, stop searching
+    }
+}
+
 std::string Document::generateFeatureName(features::FeatureType type) const
 {
     // Map FeatureType to its base display name
@@ -1797,6 +1962,10 @@ void Document::recompute()
             feat->setHealthState(features::HealthState::Healthy);
             feat->setErrorMessage("");
 
+            // Rebuild dependency edges from this feature's current params
+            // so the graph stays in sync after any param changes.
+            updateDependenciesFromParams(feat->id());
+
             // Update last-good snapshots after successful execution
             for (const auto& [bid, _] : m_bodyToFeature) {
                 if (m_brepModel->hasBody(bid))
@@ -1895,6 +2064,9 @@ void Document::recompute(const std::vector<std::string>& dirtyFeatureIds)
                 feat->setErrorMessage("");
                 m_erroredFeatureIds.erase(feat->id());
                 m_featureInputHashes[feat->id()] = currentHash;
+
+                // Rebuild dependency edges from this feature's current params
+                updateDependenciesFromParams(feat->id());
 
                 // Update last-good snapshots
                 for (const auto& [bid, _] : m_bodyToFeature) {

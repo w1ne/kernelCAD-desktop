@@ -201,6 +201,11 @@ public:
     /// Lookup which feature last created/modified a body.
     std::string featureForBody(const std::string& bodyId) const;
 
+    /// Rebuild the dependency edges for a feature from its current params.
+    /// Removes all existing incoming edges and re-adds them based on the
+    /// feature's sketchId, targetBodyId, or other reference fields.
+    void updateDependenciesFromParams(const std::string& featureId);
+
     /// Append a feature to the timeline with an auto-generated numbered name.
     void appendFeatureToTimeline(std::shared_ptr<features::Feature> feature);
 

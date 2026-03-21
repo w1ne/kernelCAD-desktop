@@ -6,25 +6,41 @@ class TopoDS_Shape;
 
 namespace kernel {
 
-/// Geometric signature for a face — centroid + normal + area.
+/// Surface type classification for matching.
+enum class SurfaceKind : int {
+    Planar = 0, Cylindrical = 1, Conical = 2,
+    Spherical = 3, Toroidal = 4, Other = 5
+};
+
+/// Curve type classification for matching.
+enum class CurveKind : int {
+    Line = 0, Circle = 1, Other = 2
+};
+
+/// Geometric signature for a face — centroid + normal + area + surface type.
 /// Used to identify a face across recomputation without relying on
 /// volatile integer indices.
 struct FaceSignature {
     double cx = 0, cy = 0, cz = 0;   // centroid
     double nx = 0, ny = 0, nz = 0;   // average outward normal
     double area = 0;
+    SurfaceKind surfaceType = SurfaceKind::Planar;
 
-    /// Serialise to a compact string "cx,cy,cz;nx,ny,nz;area".
+    /// Serialise to a compact string "cx,cy,cz;nx,ny,nz;area;surfType".
     std::string toString() const;
     /// Parse from a string produced by toString().
     static FaceSignature fromString(const std::string& s);
 };
 
-/// Geometric signature for an edge — midpoint + tangent + length.
+/// Geometric signature for an edge — midpoint + tangent + length + type + adjacent face normals.
 struct EdgeSignature {
     double mx = 0, my = 0, mz = 0;   // midpoint on the curve
     double tx = 0, ty = 0, tz = 0;   // tangent at midpoint (unit vector)
     double length = 0;
+    CurveKind edgeType = CurveKind::Line;
+    // Adjacent face normals (topological context for disambiguation)
+    double adjNormal1X = 0, adjNormal1Y = 0, adjNormal1Z = 0;
+    double adjNormal2X = 0, adjNormal2Y = 0, adjNormal2Z = 0;
 
     std::string toString() const;
     static EdgeSignature fromString(const std::string& s);
@@ -85,14 +101,37 @@ public:
 
     /// Remap face indices using pre-computed signatures (avoids redundant
     /// recomputation when signatures are already stored in the feature).
+    /// If @p matchedFlags is non-null, it is filled with true/false per entry.
     static std::vector<int> remapFacesFromSignatures(
         const std::vector<FaceSignature>& signatures,
-        const TopoDS_Shape& newShape);
+        const TopoDS_Shape& newShape,
+        std::vector<bool>* matchedFlags = nullptr);
 
     /// Remap edge indices using pre-computed signatures.
+    /// If @p matchedFlags is non-null, it is filled with true/false per entry.
     static std::vector<int> remapEdgesFromSignatures(
         const std::vector<EdgeSignature>& signatures,
-        const TopoDS_Shape& newShape);
+        const TopoDS_Shape& newShape,
+        std::vector<bool>* matchedFlags = nullptr);
+
+private:
+    /// Match a face and also return the match score (lower = better).
+    /// Returns -1 and sets score to a large value if no match.
+    static int matchFaceScored(const FaceSignature& target,
+                               const std::vector<FaceSignature>& candidates,
+                               double tolerance, double& outScore);
+
+    /// Match an edge and also return the match score.
+    static int matchEdgeScored(const EdgeSignature& target,
+                               const std::vector<EdgeSignature>& candidates,
+                               double tolerance, double& outScore);
+
+    /// Resolve duplicate matches: when multiple old signatures map to the
+    /// same new index, keep the best-scoring one and mark others as -1.
+    /// @p scores[i] is the match score for result[i] (lower = better).
+    static void resolveAmbiguities(std::vector<int>& result,
+                                   const std::vector<double>& scores,
+                                   std::vector<bool>* matchedFlags);
 };
 
 } // namespace kernel

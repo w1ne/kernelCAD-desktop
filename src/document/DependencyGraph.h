@@ -22,6 +22,10 @@ public:
     /// Remove a dependency edge.
     void removeEdge(const std::string& dependencyId, const std::string& dependentId);
 
+    /// Remove all incoming dependency edges for a node (what it depends on).
+    /// The node itself and its outgoing edges (dependents) are preserved.
+    void removeIncomingEdges(const std::string& nodeId);
+
     /// Get all direct dependencies of a feature (what it depends on).
     std::vector<std::string> dependenciesOf(const std::string& featureId) const;
 

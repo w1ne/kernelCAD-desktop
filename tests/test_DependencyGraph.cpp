@@ -95,6 +95,57 @@ private slots:
         QVERIFY(deptsOfA.empty());
     }
 
+    void testRemoveIncomingEdges()
+    {
+        // A -> C, B -> C, C -> D
+        document::DependencyGraph g;
+        g.addEdge("A", "C");
+        g.addEdge("B", "C");
+        g.addEdge("C", "D");
+
+        g.removeIncomingEdges("C");
+
+        // C should have no dependencies
+        auto depsOfC = g.dependenciesOf("C");
+        QVERIFY(depsOfC.empty());
+
+        // A and B should have no dependents
+        auto deptsOfA = g.dependentsOf("A");
+        QVERIFY(deptsOfA.empty());
+        auto deptsOfB = g.dependentsOf("B");
+        QVERIFY(deptsOfB.empty());
+
+        // C -> D should still exist
+        auto deptsOfC = g.dependentsOf("C");
+        QCOMPARE(deptsOfC.size(), size_t(1));
+        QCOMPARE(deptsOfC[0], std::string("D"));
+
+        // D should still depend on C
+        auto depsOfD = g.dependenciesOf("D");
+        QCOMPARE(depsOfD.size(), size_t(1));
+        QCOMPARE(depsOfD[0], std::string("C"));
+    }
+
+    void testRemoveIncomingEdgesAndReAdd()
+    {
+        // Simulate changing a dependency: C depends on A, then we change it to B
+        document::DependencyGraph g;
+        g.addEdge("A", "C");
+        g.addEdge("B", "C"); // C depends on both A and B
+
+        // Remove all incoming edges of C, then add only B -> C
+        g.removeIncomingEdges("C");
+        g.addEdge("B", "C");
+
+        auto depsOfC = g.dependenciesOf("C");
+        QCOMPARE(depsOfC.size(), size_t(1));
+        QCOMPARE(depsOfC[0], std::string("B"));
+
+        // A should have no dependents
+        auto deptsOfA = g.dependentsOf("A");
+        QVERIFY(deptsOfA.empty());
+    }
+
     // ── propagateDirty ──────────────────────────────────────────────────────
 
     void testPropagateDirtyLinearChain()
