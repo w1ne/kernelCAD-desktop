@@ -11,6 +11,7 @@
 #include <QSurfaceFormat>
 #include <QOpenGLFramebufferObject>
 #include <QPainter>
+#include <QPainterPath>
 #include <QtMath>
 #include <algorithm>
 #include <cmath>
@@ -1864,11 +1865,33 @@ void Viewport3D::wheelEvent(QWheelEvent* event)
 {
     // angleDelta().y() is typically +/-120 per notch
     const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
-    const float factor = 1.0f - delta * 0.1f;           // 10 % per notch
+    const float factor = std::pow(1.1f, delta);  // zoom factor per notch
+
+    // Compute the world-space point under the cursor for zoom-to-cursor
+    QPointF cursorPos = event->position();
+    float ndcX = (2.0f * static_cast<float>(cursorPos.x())) / width() - 1.0f;
+    float ndcY = 1.0f - (2.0f * static_cast<float>(cursorPos.y())) / height();
+
+    QMatrix4x4 view, proj;
+    view.lookAt(m_eye, m_center, m_up);
+    buildProjectionMatrix(proj);
+    QMatrix4x4 invVP = (proj * view).inverted();
+
+    QVector4D nearPt = invVP * QVector4D(ndcX, ndcY, 0.0f, 1.0f);
+    if (std::abs(nearPt.w()) > 1e-7f) nearPt /= nearPt.w();
+    QVector3D cursorWorld = nearPt.toVector3D();
+
+    // Compute new orbit distance
+    float newDist = m_orbitDistance / factor;
+    newDist = std::max(m_near * 2.0f, std::min(100000.0f, newDist));
+
+    // Shift the orbit center toward the cursor on zoom-in, away on zoom-out
+    float shiftAmount = (1.0f - 1.0f / factor) * 0.3f;
+    QVector3D centerShift = (cursorWorld - m_center) * shiftAmount;
+    m_center += centerShift;
 
     QVector3D direction = (m_eye - m_center).normalized();
-    m_orbitDistance *= factor;
-    m_orbitDistance  = std::max(m_near * 2.0f, m_orbitDistance);  // clamp
+    m_orbitDistance = newDist;
     m_eye = m_center + direction * m_orbitDistance;
 
     update();
@@ -3151,11 +3174,6 @@ void Viewport3D::drawSketchConstraintOverlay()
     if (!sk)
         return;
 
-    const auto& constraints = sk->constraints();
-    if (constraints.empty() && !m_sketchEditor->isDragging() &&
-        !m_sketchEditor->hasFirstPick())
-        return;
-
     // Helper: sketch 2D -> screen 2D
     auto skToScreen = [&](double ssx, double ssy) -> QPointF {
         double wx, wy, wz;
@@ -3167,6 +3185,80 @@ void Viewport3D::drawSketchConstraintOverlay()
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+
+    // ── Profile region shading (semi-transparent blue for closed loops) ──
+    {
+        auto profiles = sk->detectProfiles();
+        for (const auto& profile : profiles) {
+            std::vector<QPointF> boundary;
+            for (const auto& curveId : profile) {
+                // Try line
+                try {
+                    const auto& ln = sk->line(curveId);
+                    if (ln.isConstruction) continue;
+                    const auto& p1 = sk->point(ln.startPointId);
+                    const auto& p2 = sk->point(ln.endPointId);
+                    boundary.push_back(skToScreen(p1.x, p1.y));
+                    boundary.push_back(skToScreen(p2.x, p2.y));
+                    continue;
+                } catch (...) {}
+                // Try circle (full circle = closed profile by itself)
+                try {
+                    const auto& circ = sk->circle(curveId);
+                    if (circ.isConstruction) continue;
+                    const auto& cp = sk->point(circ.centerPointId);
+                    constexpr int N = 48;
+                    for (int i = 0; i < N; ++i) {
+                        double angle = 2.0 * M_PI * i / N;
+                        double px = cp.x + circ.radius * std::cos(angle);
+                        double py = cp.y + circ.radius * std::sin(angle);
+                        boundary.push_back(skToScreen(px, py));
+                    }
+                    continue;
+                } catch (...) {}
+                // Try arc
+                try {
+                    const auto& a = sk->arc(curveId);
+                    if (a.isConstruction) continue;
+                    const auto& cp = sk->point(a.centerPointId);
+                    const auto& sp = sk->point(a.startPointId);
+                    const auto& ep = sk->point(a.endPointId);
+                    double startAngle = std::atan2(sp.y - cp.y, sp.x - cp.x);
+                    double endAngle   = std::atan2(ep.y - cp.y, ep.x - cp.x);
+                    // Ensure CCW sweep
+                    if (endAngle <= startAngle) endAngle += 2.0 * M_PI;
+                    double sweep = endAngle - startAngle;
+                    constexpr int N = 32;
+                    for (int i = 0; i <= N; ++i) {
+                        double t = startAngle + sweep * i / N;
+                        double px = cp.x + a.radius * std::cos(t);
+                        double py = cp.y + a.radius * std::sin(t);
+                        boundary.push_back(skToScreen(px, py));
+                    }
+                    continue;
+                } catch (...) {}
+            }
+
+            if (boundary.size() >= 3) {
+                QPainterPath path;
+                path.moveTo(boundary[0]);
+                for (size_t i = 1; i < boundary.size(); ++i)
+                    path.lineTo(boundary[i]);
+                path.closeSubpath();
+
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(42, 130, 218, 25));
+                painter.drawPath(path);
+            }
+        }
+    }
+
+    const auto& constraints = sk->constraints();
+    if (constraints.empty() && !m_sketchEditor->isDragging() &&
+        !m_sketchEditor->hasFirstPick()) {
+        painter.end();
+        return;
+    }
 
     // Fonts
     QFont dimFont("Monospace", 10);
@@ -4068,6 +4160,54 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
                 QPointF mid((s1.x() + s2.x()) / 2.0 + 8.0, (s1.y() + s2.y()) / 2.0);
                 painter.setPen(cAlignText);
                 painter.drawText(mid, "V");
+            }
+        }
+    }
+
+    // ── Inference guide lines during rubber-band drawing ────────────────
+    if (m_sketchEditor->isDrawingInProgress()) {
+        double sx = m_sketchEditor->rubberStartX();
+        double sy = m_sketchEditor->rubberStartY();
+        double cx = cursorX;
+        double cy = cursorY;
+
+        double angle = std::atan2(std::abs(cy - sy), std::abs(cx - sx)) * 180.0 / M_PI;
+        QPen guidePen(QColor(100, 200, 100, 150), 0.5, Qt::DotLine);
+
+        // H/V guide from the rubber-band start point
+        if (angle < 5.0 && std::abs(cx - sx) > 1.0) {
+            // Horizontal guide across viewport
+            QPointF left  = skToScreen(std::min(sx, cx) - 200.0, sy);
+            QPointF right = skToScreen(std::max(sx, cx) + 200.0, sy);
+            painter.setPen(guidePen);
+            painter.drawLine(left, right);
+        }
+        if (std::abs(angle - 90.0) < 5.0 && std::abs(cy - sy) > 1.0) {
+            // Vertical guide across viewport
+            QPointF top = skToScreen(sx, std::max(sy, cy) + 200.0);
+            QPointF bot = skToScreen(sx, std::min(sy, cy) - 200.0);
+            painter.setPen(guidePen);
+            painter.drawLine(top, bot);
+        }
+
+        // Alignment guides with existing points (beyond the snap system)
+        for (const auto& [pid, pt] : sk->points()) {
+            // Skip the start point itself
+            if (std::abs(pt.x - sx) < 0.01 && std::abs(pt.y - sy) < 0.01)
+                continue;
+            // Vertical alignment between cursor and existing point
+            if (std::abs(cx - pt.x) < 0.5 && std::abs(cy - pt.y) > 1.0) {
+                QPointF p1 = skToScreen(pt.x, std::min(cy, pt.y) - 10.0);
+                QPointF p2 = skToScreen(pt.x, std::max(cy, pt.y) + 10.0);
+                painter.setPen(QPen(QColor(100, 200, 100, 120), 0.5, Qt::DotLine));
+                painter.drawLine(p1, p2);
+            }
+            // Horizontal alignment between cursor and existing point
+            if (std::abs(cy - pt.y) < 0.5 && std::abs(cx - pt.x) > 1.0) {
+                QPointF p1 = skToScreen(std::min(cx, pt.x) - 10.0, pt.y);
+                QPointF p2 = skToScreen(std::max(cx, pt.x) + 10.0, pt.y);
+                painter.setPen(QPen(QColor(100, 200, 100, 120), 0.5, Qt::DotLine));
+                painter.drawLine(p1, p2);
             }
         }
     }

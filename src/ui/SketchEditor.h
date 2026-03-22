@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include <optional>
+#include <chrono>
 
 class QMouseEvent;
 class QKeyEvent;
@@ -25,8 +26,18 @@ enum class SketchTool {
     DrawCircle3Point,  // 3 clicks define a circle through those points
     DrawArc3Point,     // 3 clicks (start, mid, end) define an arc
     DrawRectangleCenter, // click center -> click corner (symmetric rectangle)
-    AddConstraint,     // pick entities to auto-constrain
+    AddConstraint,     // pick entities to auto-constrain (infers type)
     Dimension,         // pick entity, enter value
+    // Specific constraint tools (user knows exactly what they're applying)
+    ConstrainCoincident,
+    ConstrainParallel,
+    ConstrainPerpendicular,
+    ConstrainTangent,
+    ConstrainEqual,
+    ConstrainSymmetric,
+    ConstrainHorizontal,
+    ConstrainVertical,
+    ConstrainConcentric,
     Trim,              // click on curve segment to remove it
     Extend,            // click near endpoint to extend to nearest intersection
     Offset,            // select curve, specify distance to create parallel copy
@@ -180,6 +191,7 @@ private:
     // ── Constraint / Dimension tool state ───────────────────────────────
     SketchPickResult m_firstPick;   // first entity picked for two-entity tools
     std::string m_selectedConstraintId;
+    std::chrono::steady_clock::time_point m_lastConstraintClickTime;  // for double-click detection
 
     // ── Offset tool state ────────────────────────────────────────────────
     std::string m_offsetEntityId;   // entity selected for offset

@@ -171,6 +171,15 @@ MainWindow::MainWindow(QWidget* parent)
         case SketchTool::SketchChamfer:       toolName = "Chamfer"; break;
         case SketchTool::Dimension:           toolName = "Dimension"; break;
         case SketchTool::AddConstraint:       toolName = "Constraint"; break;
+        case SketchTool::ConstrainCoincident:  toolName = "Coincident"; break;
+        case SketchTool::ConstrainParallel:    toolName = "Parallel"; break;
+        case SketchTool::ConstrainPerpendicular: toolName = "Perpendicular"; break;
+        case SketchTool::ConstrainTangent:     toolName = "Tangent"; break;
+        case SketchTool::ConstrainEqual:       toolName = "Equal"; break;
+        case SketchTool::ConstrainSymmetric:   toolName = "Symmetric"; break;
+        case SketchTool::ConstrainHorizontal:  toolName = "Horizontal"; break;
+        case SketchTool::ConstrainVertical:    toolName = "Vertical"; break;
+        case SketchTool::ConstrainConcentric:  toolName = "Concentric"; break;
         default:                              toolName = "Select"; break;
         }
         statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
@@ -565,17 +574,17 @@ void MainWindow::setupToolBar()
         // Group: Constrain
         addToolGroup(layout, "Constrain", {
             {"Coincident",    IconFactory::createIcon("coincident"),    tr("Coincident \u2014 Merge two points"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainCoincident); }},
             {"Parallel",      IconFactory::createIcon("parallel_c"),    tr("Parallel \u2014 Make lines parallel"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainParallel); }},
             {"Perpendicular", IconFactory::createIcon("perpendicular"), tr("Perpendicular \u2014 Make lines perpendicular"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainPerpendicular); }},
             {"Tangent",       IconFactory::createIcon("tangent_c"),     tr("Tangent \u2014 Make curves tangent"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainTangent); }},
             {"Equal",         IconFactory::createIcon("equal_c"),       tr("Equal \u2014 Equal length or radius"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainEqual); }},
             {"Symmetric",     IconFactory::createIcon("symmetric_c"),   tr("Symmetric \u2014 Mirror about a line"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainSymmetric); }},
             {"Fix",           IconFactory::createIcon("fix"),           tr("Fix \u2014 Lock a point in place"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
             {"Dimension",     IconFactory::createIcon("dimension"),     tr("Dimension \u2014 Set a parametric dimension"),
@@ -1758,6 +1767,7 @@ void MainWindow::onNewDocument()
     m_properties->clear();
     m_selectionMgr->clearSelection();
     m_selectionMgr->clearPreSelection();
+    m_firstBodyFitDone = false;
     refreshAllPanels();
 }
 
@@ -3889,6 +3899,16 @@ static QString buildEntryTooltip(const document::TimelineEntry& entry)
 
 void MainWindow::refreshAllPanels()
 {
+    // Auto-fit viewport when the first body appears (like professional CAD apps)
+    {
+        auto& brep = m_document->brepModel();
+        if (!m_firstBodyFitDone && !brep.bodyIds().empty()) {
+            m_firstBodyFitDone = true;
+            // Defer fitAll so the mesh is uploaded first
+            QTimer::singleShot(0, m_viewport, &Viewport3D::fitAll);
+        }
+    }
+
     // Refresh the feature tree
     m_featureTree->refresh();
 

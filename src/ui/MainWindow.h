@@ -358,6 +358,10 @@ private:
     SelectionFilter m_savedHoverFilter = SelectionFilter::All;
     bool m_hoverFilterActive = false;
 
+    /// True once the first body has been created and fitAll() was called.
+    /// Reset on New Document so the next first body triggers auto-fit again.
+    bool m_firstBodyFitDone = false;
+
     /// Install event filters on toolbar actions for hover-based filter switching.
     void installToolBarHoverFilters();
 

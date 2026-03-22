@@ -11,6 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <chrono>
 
 SketchEditor::SketchEditor(QObject* parent)
     : QObject(parent)
@@ -516,15 +517,19 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
         // Try to pick a constraint near the click (dimension labels, etc.)
         std::string hitConstraintId = findNearestConstraint(sx, sy, 8.0);
         if (!hitConstraintId.empty()) {
-            if (m_selectedConstraintId == hitConstraintId) {
-                // Clicked same constraint again — open edit dialog
+            auto now = std::chrono::steady_clock::now();
+            if (hitConstraintId == m_selectedConstraintId &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - m_lastConstraintClickTime).count() < 400) {
+                // Double-click on same constraint -- edit it inline
                 editSelectedConstraint();
             } else {
-                // Select the constraint
+                // First click -- select the constraint
                 m_selectedConstraintId = hitConstraintId;
                 emit constraintSelected(
                     QString::fromStdString(hitConstraintId), "", "");
             }
+            m_lastConstraintClickTime = now;
             if (m_viewport) m_viewport->update();
             return true;
         }
@@ -551,6 +556,46 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
         SketchPickResult pick = pickEntity(sx, sy);
         handleConstraintPick(pick);
         if (m_viewport) m_viewport->update();
+        return true;
+    }
+
+    // ── Specific constraint tools (user picks entities, constraint type is fixed) ──
+    if (m_tool >= SketchTool::ConstrainCoincident && m_tool <= SketchTool::ConstrainConcentric) {
+        SketchPickResult pick = pickEntity(sx, sy);
+        if (pick.kind == SketchPickResult::Nothing) return true;
+
+        if (!m_firstPick.entityId.empty()) {
+            // Second pick — apply the specific constraint
+            sketch::ConstraintType ctype;
+            switch (m_tool) {
+            case SketchTool::ConstrainCoincident:    ctype = sketch::ConstraintType::Coincident; break;
+            case SketchTool::ConstrainParallel:      ctype = sketch::ConstraintType::Parallel; break;
+            case SketchTool::ConstrainPerpendicular: ctype = sketch::ConstraintType::Perpendicular; break;
+            case SketchTool::ConstrainTangent:       ctype = sketch::ConstraintType::Tangent; break;
+            case SketchTool::ConstrainEqual:         ctype = sketch::ConstraintType::Equal; break;
+            case SketchTool::ConstrainSymmetric:     ctype = sketch::ConstraintType::Symmetric; break;
+            case SketchTool::ConstrainConcentric:    ctype = sketch::ConstraintType::Concentric; break;
+            default: ctype = sketch::ConstraintType::Coincident; break;
+            }
+            m_sketch->addConstraint(ctype, {m_firstPick.entityId, pick.entityId});
+            m_sketch->solve();
+            m_firstPick = {};
+            if (m_viewport) m_viewport->update();
+            emit sketchChanged();
+        } else if (m_tool == SketchTool::ConstrainHorizontal || m_tool == SketchTool::ConstrainVertical) {
+            // H/V only need one line
+            if (pick.kind == SketchPickResult::Line) {
+                auto ctype = (m_tool == SketchTool::ConstrainHorizontal)
+                    ? sketch::ConstraintType::Horizontal : sketch::ConstraintType::Vertical;
+                m_sketch->addConstraint(ctype, {pick.entityId});
+                m_sketch->solve();
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+            }
+        } else {
+            // First pick — store it, wait for second
+            m_firstPick = pick;
+        }
         return true;
     }
 
@@ -688,6 +733,16 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
     // ── Draw tools: snap to grid ────────────────────────────────────────
     sx = snapToGrid(sx);
     sy = snapToGrid(sy);
+
+    // Snap to nearest existing point if close enough
+    {
+        std::string nearPt = findNearestPoint(sx, sy, m_snapTolerance * 2.0);
+        if (!nearPt.empty()) {
+            const auto& p = m_sketch->point(nearPt);
+            sx = p.x;
+            sy = p.y;
+        }
+    }
 
     if (m_tool == SketchTool::DrawSpline) {
         // Double-click (close to last point) finalizes the spline
@@ -880,12 +935,51 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
         m_currentX = snapToGrid(sx);
         m_currentY = snapToGrid(sy);
         m_inferenceLines.clear();
+
+        // Context-aware cursor feedback based on what is under the pointer
+        if (m_viewport && m_tool == SketchTool::None) {
+            std::string ptNear = findNearestPoint(sx, sy, 5.0);
+            if (!ptNear.empty()) {
+                m_viewport->setCursor(Qt::OpenHandCursor);
+            } else {
+                std::string circNear = findNearestCircle(sx, sy, 5.0);
+                std::string arcNear = circNear.empty() ? findNearestArc(sx, sy, 5.0) : "";
+                if (!circNear.empty() || !arcNear.empty()) {
+                    m_viewport->setCursor(Qt::SizeAllCursor);
+                } else {
+                    std::string lineNear = findNearestLine(sx, sy, 5.0);
+                    if (!lineNear.empty()) {
+                        m_viewport->setCursor(Qt::PointingHandCursor);
+                    } else {
+                        m_viewport->setCursor(Qt::CrossCursor);
+                    }
+                }
+            }
+        } else if (m_viewport && m_tool != SketchTool::None) {
+            m_viewport->setCursor(Qt::CrossCursor);
+        }
+
         if (m_viewport) m_viewport->update();
         return false;
     }
 
     sx = snapToGrid(sx);
     sy = snapToGrid(sy);
+
+    // Snap to existing geometry (points take priority)
+    {
+        std::string nearPt = findNearestPoint(sx, sy, m_snapTolerance * 3.0);
+        if (!nearPt.empty()) {
+            const auto& p = m_sketch->point(nearPt);
+            sx = p.x;
+            sy = p.y;
+            m_inferenceLines.push_back({
+                static_cast<float>(sx - 3), static_cast<float>(sy),
+                static_cast<float>(sx + 3), static_cast<float>(sy),
+                InferenceLine::Midpoint
+            });
+        }
+    }
 
     // Compute inference lines and apply snap adjustments
     auto snapped = computeInferences(sx, sy);
@@ -906,6 +1000,26 @@ bool SketchEditor::handleMouseRelease(QMouseEvent* event)
 
     // ── End drag ────────────────────────────────────────────────────────
     if (m_isDragging) {
+        // Auto-coincident: if a point was dragged near another point, merge them
+        if (m_sketch && m_dragMode == DragMode::Point && !m_dragPointId.empty()) {
+            const auto& draggedPt = m_sketch->point(m_dragPointId);
+            double dsx = draggedPt.x;
+            double dsy = draggedPt.y;
+            for (const auto& [pid, pt] : m_sketch->points()) {
+                if (pid == m_dragPointId) continue;
+                double dx = pt.x - dsx;
+                double dy = pt.y - dsy;
+                double dist = std::sqrt(dx * dx + dy * dy);
+                if (dist < m_snapTolerance * 2.0) {
+                    m_sketch->addConstraint(
+                        sketch::ConstraintType::Coincident,
+                        {m_dragPointId, pid}, 0.0);
+                    m_sketch->solve();
+                    break;
+                }
+            }
+        }
+
         // Final solve
         if (m_sketch) {
             m_sketch->solve();
@@ -1486,7 +1600,24 @@ void SketchEditor::finalizeLine()
         return;
     }
 
-    std::string lineId = m_sketch->addLine(x1, y1, x2, y2);
+    // Reuse existing points when snapping, instead of always creating new ones
+    std::string startPtId;
+    std::string nearStart = findNearestPoint(x1, y1, m_snapTolerance * 2.0);
+    if (!nearStart.empty()) {
+        startPtId = nearStart;
+    } else {
+        startPtId = m_sketch->addPoint(x1, y1);
+    }
+
+    std::string endPtId;
+    std::string nearEnd = findNearestPoint(x2, y2, m_snapTolerance * 2.0);
+    if (!nearEnd.empty()) {
+        endPtId = nearEnd;
+    } else {
+        endPtId = m_sketch->addPoint(x2, y2);
+    }
+
+    std::string lineId = m_sketch->addLine(startPtId, endPtId);
     m_sketch->solve();
 
     // Always auto-apply H/V constraints to nearly-aligned lines
@@ -1494,9 +1625,8 @@ void SketchEditor::finalizeLine()
 
     // Auto-dimension: add a Distance constraint showing the line length
     {
-        const auto& ln = m_sketch->line(lineId);
         m_sketch->addConstraint(sketch::ConstraintType::Distance,
-                                {ln.startPointId, ln.endPointId}, len);
+                                {startPtId, endPtId}, len);
     }
 
     if (m_autoConstrain)
