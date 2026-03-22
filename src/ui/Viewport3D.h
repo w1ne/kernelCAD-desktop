@@ -155,6 +155,7 @@ public:
     /// Access camera matrices (needed by SketchEditor for ray-plane intersection).
     QMatrix4x4 viewMatrix() const;
     QMatrix4x4 projectionMatrix() const;
+    QPointF worldToScreen(const QVector3D& worldPt) const;
 
     /// Enable/disable a section (clipping) plane.
     void setSectionPlane(bool enabled,
@@ -340,8 +341,6 @@ private:
     /// Called after drawSketchOverlay() to layer 2D text on the GL surface.
     void drawSketchConstraintOverlay();
 
-    /// Project a 3D world point to 2D widget coordinates.
-    QPointF worldToScreen(const QVector3D& worldPt) const;
 
     // ── section / clipping plane ────────────────────────────────────────
     bool m_clipEnabled = false;

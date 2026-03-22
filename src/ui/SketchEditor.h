@@ -9,9 +9,11 @@
 
 class QMouseEvent;
 class QKeyEvent;
+class QLineEdit;
 class Viewport3D;
 
 namespace sketch { class Sketch; }
+#include "../sketch/SketchConstraint.h"
 
 enum class SketchTool {
     None,              // default pointer/select mode
@@ -298,6 +300,23 @@ private:
     // ── Snap/inference system ───────────────────────────────────────────
     std::vector<InferenceLine> m_inferenceLines;
     float m_snapTolerance = 2.0f;  // sketch-space units
+
+    // ── Line chain close-to-first-point (auto-close profile) ────────────
+    std::string m_chainFirstPointId;  // ID of the first point in the current line chain
+    double m_chainFirstX = 0, m_chainFirstY = 0;  // position for snap detection
+
+    // ── Inline dimension input (replaces QInputDialog popups) ───────────
+    QLineEdit* m_inlineInput = nullptr;
+    std::string m_inlineDimConstraintId;  // constraint being edited (edit mode)
+    std::string m_inlineDimEntityId;      // entity being dimensioned
+    std::vector<std::string> m_inlineDimEntityIds;  // entity IDs for new constraint
+    sketch::ConstraintType m_inlineDimType;  // constraint type for new dimension
+    double m_inlineDimX = 0, m_inlineDimY = 0;  // position in sketch coords
+    enum class InlineInputMode { None, NewDimension, EditDimension } m_inlineInputMode = InlineInputMode::None;
+
+    void showInlineInput(double screenX, double screenY, double defaultValue, InlineInputMode mode);
+    void commitInlineInput();
+    void cancelInlineInput();
     SnapType m_currentSnapType = SnapType::None;
     double m_snapX = 0.0, m_snapY = 0.0;
 

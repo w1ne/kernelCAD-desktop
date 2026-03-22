@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QMatrix4x4>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QWidget>
 #include <QtMath>
 #include <cmath>
@@ -487,28 +488,30 @@ void SketchEditor::editSelectedConstraint()
                         con.type == sketch::ConstraintType::AngleBetween);
     if (!isDimension) return;
 
-    QString label;
-    switch (con.type) {
-        case sketch::ConstraintType::Radius: label = "Radius (mm):"; break;
-        case sketch::ConstraintType::FixedAngle:
-        case sketch::ConstraintType::AngleBetween: label = "Angle (deg):"; break;
-        default: label = "Distance (mm):"; break;
+    // Compute screen position for inline input near the constraint
+    double labelX = 0, labelY = 0;
+    if (!con.entityIds.empty()) {
+        try {
+            const auto& pt = m_sketch->point(con.entityIds[0]);
+            labelX = pt.x; labelY = pt.y;
+        } catch (...) {
+            try {
+                const auto& ln = m_sketch->line(con.entityIds[0]);
+                const auto& p1 = m_sketch->point(ln.startPointId);
+                const auto& p2 = m_sketch->point(ln.endPointId);
+                labelX = (p1.x + p2.x) / 2.0;
+                labelY = (p1.y + p2.y) / 2.0;
+            } catch (...) {}
+        }
     }
 
-    bool ok = false;
-    double newVal = QInputDialog::getDouble(
-        m_viewport, "Edit Dimension", label, con.value, 0.001, 1e6, 3, &ok);
-    if (ok && newVal > 0) {
-        auto entityIds = con.entityIds;
-        auto type = con.type;
-        m_sketch->removeConstraint(m_selectedConstraintId);
-        m_sketch->addConstraint(type, entityIds, newVal);
-        m_selectedConstraintId.clear();
-        m_sketch->solve();
-        if (m_viewport) m_viewport->update();
-        emit constraintSelected("", "", "");
-        emit sketchChanged();
-    }
+    double wx, wy, wz;
+    m_sketch->sketchToWorld(labelX, labelY, wx, wy, wz);
+    QPointF screenPt = m_viewport->worldToScreen(
+        QVector3D(static_cast<float>(wx), static_cast<float>(wy), static_cast<float>(wz)));
+
+    m_inlineDimConstraintId = m_selectedConstraintId;
+    showInlineInput(screenPt.x(), screenPt.y() - 20, con.value, InlineInputMode::EditDimension);
 }
 
 SketchPickResult SketchEditor::pickEntity(double sx, double sy, double threshold)
@@ -1057,6 +1060,34 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
         m_currentX = sx;
         m_currentY = sy;
 
+        // Check if clicking near the first point of the line chain (close profile)
+        if (m_tool == SketchTool::DrawLine && !m_chainFirstPointId.empty()) {
+            double dx = sx - m_chainFirstX;
+            double dy = sy - m_chainFirstY;
+            if (std::sqrt(dx*dx + dy*dy) < m_snapTolerance * 2.0) {
+                // Close the profile: create line from current chain end to first point
+                std::string startPtId;
+                std::string nearStart = findNearestPoint(m_startX, m_startY, m_snapTolerance * 2.0);
+                if (!nearStart.empty()) {
+                    startPtId = nearStart;
+                } else {
+                    startPtId = m_sketch->addPoint(m_startX, m_startY);
+                }
+                std::string lineId = m_sketch->addLine(startPtId, m_chainFirstPointId);
+                m_sketchUndoStack.push_back({SketchAction::AddEntity, lineId, ""});
+                m_sketch->solve();
+
+                // Reset chain and drawing state
+                m_chainFirstPointId.clear();
+                m_drawingInProgress = false;
+
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+                emit statusHint(tr("Profile closed"));
+                return true;
+            }
+        }
+
         switch (m_tool) {
         case SketchTool::DrawLine:            finalizeLine();            break;
         case SketchTool::DrawRectangle:       finalizeRectangle();       break;
@@ -1239,6 +1270,28 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
         }
     }
 
+    // Show close-profile snap indicator when near chain first point
+    if (m_tool == SketchTool::DrawLine && !m_chainFirstPointId.empty()) {
+        double cdx = sx - m_chainFirstX;
+        double cdy = sy - m_chainFirstY;
+        if (std::sqrt(cdx*cdx + cdy*cdy) < m_snapTolerance * 2.0) {
+            m_currentSnapType = SnapType::Endpoint;
+            m_snapX = m_chainFirstX;
+            m_snapY = m_chainFirstY;
+            // Add a distinctive inference marker at the chain start (X shape)
+            m_inferenceLines.push_back({
+                static_cast<float>(m_chainFirstX - 4), static_cast<float>(m_chainFirstY - 4),
+                static_cast<float>(m_chainFirstX + 4), static_cast<float>(m_chainFirstY + 4),
+                InferenceLine::Midpoint
+            });
+            m_inferenceLines.push_back({
+                static_cast<float>(m_chainFirstX + 4), static_cast<float>(m_chainFirstY - 4),
+                static_cast<float>(m_chainFirstX - 4), static_cast<float>(m_chainFirstY + 4),
+                InferenceLine::Midpoint
+            });
+        }
+    }
+
     m_currentX = sx;
     m_currentY = sy;
 
@@ -1301,7 +1354,11 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
 
     switch (event->key()) {
     case Qt::Key_Escape:
-        if (m_drawingInProgress) {
+        if (m_inlineInputMode != InlineInputMode::None) {
+            // Cancel the inline dimension input
+            cancelInlineInput();
+            if (m_viewport) m_viewport->update();
+        } else if (m_drawingInProgress) {
             // First Escape while drawing: cancel current draw, stay in same tool
             cancelDraw();
             if (m_viewport) m_viewport->update();
@@ -1507,60 +1564,56 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
 
 void SketchEditor::handleDimensionPick(const SketchPickResult& pick)
 {
-    if (!m_sketch) return;
+    if (!m_sketch || !m_viewport) return;
 
     // If nothing was picked and we have no first pick, ignore
     if (pick.kind == SketchPickResult::Nothing && m_firstPick.kind == SketchPickResult::Nothing)
         return;
 
-    // ── Single-entity dimension: circle/arc → Radius ────────────────────
+    // Helper: convert sketch coords to screen position for inline input
+    auto skToScreenPos = [this](double skX, double skY) -> QPointF {
+        double wx, wy, wz;
+        m_sketch->sketchToWorld(skX, skY, wx, wy, wz);
+        return m_viewport->worldToScreen(
+            QVector3D(static_cast<float>(wx), static_cast<float>(wy), static_cast<float>(wz)));
+    };
+
+    // Helper: show inline input for a new dimension constraint
+    auto showDimInput = [this, &skToScreenPos](double skX, double skY, double defaultVal,
+                                                sketch::ConstraintType ctype,
+                                                const std::vector<std::string>& entityIds) {
+        QPointF sp = skToScreenPos(skX, skY);
+        m_inlineDimType = ctype;
+        m_inlineDimEntityIds = entityIds;
+        m_firstPick = {};
+        showInlineInput(sp.x(), sp.y() - 20, defaultVal, InlineInputMode::NewDimension);
+    };
+
+    // ── Single-entity dimension: circle/arc -> Radius ────────────────────
     if (m_firstPick.kind == SketchPickResult::Nothing) {
         // First pick
         if (pick.kind == SketchPickResult::Circle) {
-            // Radius constraint on a circle — single pick is enough
             const auto& circ = m_sketch->circle(pick.entityId);
-            bool ok = false;
-            double val = QInputDialog::getDouble(
-                m_viewport, "Radius", "Enter radius value:",
-                circ.radius, 0.001, 1e6, 3, &ok);
-            if (ok) {
-                m_sketch->addConstraint(
-                    sketch::ConstraintType::Radius,
-                    {pick.entityId}, val);
-                m_sketch->solve();
-                emit sketchChanged();
-            }
-            m_firstPick = {};
+            const auto& cp = m_sketch->point(circ.centerPointId);
+            showDimInput(cp.x + circ.radius * 0.5, cp.y, circ.radius,
+                         sketch::ConstraintType::Radius, {pick.entityId});
             return;
         }
 
         if (pick.kind == SketchPickResult::Arc) {
             const auto& a = m_sketch->arc(pick.entityId);
-            bool ok = false;
-            double val = QInputDialog::getDouble(
-                m_viewport, "Radius", "Enter arc radius value:",
-                a.radius, 0.001, 1e6, 3, &ok);
-            if (ok) {
-                m_sketch->addConstraint(
-                    sketch::ConstraintType::Radius,
-                    {pick.entityId}, val);
-                m_sketch->solve();
-                emit sketchChanged();
-            }
-            m_firstPick = {};
+            const auto& cp = m_sketch->point(a.centerPointId);
+            showDimInput(cp.x + a.radius * 0.5, cp.y, a.radius,
+                         sketch::ConstraintType::Radius, {pick.entityId});
             return;
         }
 
         if (pick.kind == SketchPickResult::Line) {
-            // Line solo → Distance constraint (line length).
-            // But user might want to pick a second entity, so store as first pick.
-            // If the user clicks empty space next, we treat it as line-length.
             m_firstPick = pick;
             return;
         }
 
         if (pick.kind == SketchPickResult::Point) {
-            // Store as first pick, wait for second
             m_firstPick = pick;
             return;
         }
@@ -1569,7 +1622,7 @@ void SketchEditor::handleDimensionPick(const SketchPickResult& pick)
 
     // ── Second pick ─────────────────────────────────────────────────────
 
-    // First pick was a Line, second pick is Nothing → line length
+    // First pick was a Line, second pick is Nothing -> line length
     if (m_firstPick.kind == SketchPickResult::Line &&
         pick.kind == SketchPickResult::Nothing) {
         const auto& ln = m_sketch->line(m_firstPick.entityId);
@@ -1577,51 +1630,30 @@ void SketchEditor::handleDimensionPick(const SketchPickResult& pick)
         const auto& p2 = m_sketch->point(ln.endPointId);
         double len = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
                                (p2.y - p1.y) * (p2.y - p1.y));
-        bool ok = false;
-        double val = QInputDialog::getDouble(
-            m_viewport, "Distance", "Enter line length:",
-            len, 0.001, 1e6, 3, &ok);
-        if (ok) {
-            m_sketch->addConstraint(
-                sketch::ConstraintType::Distance,
-                {ln.startPointId, ln.endPointId}, val);
-            m_sketch->solve();
-            emit sketchChanged();
-        }
-        m_firstPick = {};
+        showDimInput((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0, len,
+                     sketch::ConstraintType::Distance, {ln.startPointId, ln.endPointId});
         return;
     }
 
-    // Two points → Distance
+    // Two points -> Distance
     if (m_firstPick.kind == SketchPickResult::Point &&
         pick.kind == SketchPickResult::Point) {
         const auto& p1 = m_sketch->point(m_firstPick.entityId);
         const auto& p2 = m_sketch->point(pick.entityId);
         double dist = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
                                 (p2.y - p1.y) * (p2.y - p1.y));
-        bool ok = false;
-        double val = QInputDialog::getDouble(
-            m_viewport, "Distance", "Enter distance between points:",
-            dist, 0.001, 1e6, 3, &ok);
-        if (ok) {
-            m_sketch->addConstraint(
-                sketch::ConstraintType::Distance,
-                {m_firstPick.entityId, pick.entityId}, val);
-            m_sketch->solve();
-            emit sketchChanged();
-        }
-        m_firstPick = {};
+        showDimInput((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0, dist,
+                     sketch::ConstraintType::Distance, {m_firstPick.entityId, pick.entityId});
         return;
     }
 
-    // Point + Line → DistancePointLine
+    // Point + Line -> DistancePointLine
     if ((m_firstPick.kind == SketchPickResult::Point && pick.kind == SketchPickResult::Line) ||
         (m_firstPick.kind == SketchPickResult::Line && pick.kind == SketchPickResult::Point)) {
         std::string ptId = (m_firstPick.kind == SketchPickResult::Point)
                                ? m_firstPick.entityId : pick.entityId;
         std::string lnId = (m_firstPick.kind == SketchPickResult::Line)
                                ? m_firstPick.entityId : pick.entityId;
-        // Compute current distance
         const auto& pt = m_sketch->point(ptId);
         const auto& ln = m_sketch->line(lnId);
         const auto& lp1 = m_sketch->point(ln.startPointId);
@@ -1632,44 +1664,26 @@ void SketchEditor::handleDimensionPick(const SketchPickResult& pick)
         if (lenSq > 1e-12) {
             dist = std::abs((pt.x - lp1.x) * ly - (pt.y - lp1.y) * lx) / std::sqrt(lenSq);
         }
-        bool ok = false;
-        double val = QInputDialog::getDouble(
-            m_viewport, "Distance", "Enter point-to-line distance:",
-            dist, 0.0, 1e6, 3, &ok);
-        if (ok) {
-            m_sketch->addConstraint(
-                sketch::ConstraintType::DistancePointLine,
-                {ptId, lnId}, val);
-            m_sketch->solve();
-            emit sketchChanged();
-        }
-        m_firstPick = {};
+        double midX = (pt.x + (lp1.x + lp2.x) / 2.0) / 2.0;
+        double midY = (pt.y + (lp1.y + lp2.y) / 2.0) / 2.0;
+        showDimInput(midX, midY, dist,
+                     sketch::ConstraintType::DistancePointLine, {ptId, lnId});
         return;
     }
 
-    // Line + second pick is Nothing → line length (same as above)
+    // Line + second pick is Nothing -> line length (same as above)
     if (m_firstPick.kind == SketchPickResult::Line) {
         const auto& ln = m_sketch->line(m_firstPick.entityId);
         const auto& p1 = m_sketch->point(ln.startPointId);
         const auto& p2 = m_sketch->point(ln.endPointId);
         double len = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
                                (p2.y - p1.y) * (p2.y - p1.y));
-        bool ok = false;
-        double val = QInputDialog::getDouble(
-            m_viewport, "Distance", "Enter line length:",
-            len, 0.001, 1e6, 3, &ok);
-        if (ok) {
-            m_sketch->addConstraint(
-                sketch::ConstraintType::Distance,
-                {ln.startPointId, ln.endPointId}, val);
-            m_sketch->solve();
-            emit sketchChanged();
-        }
-        m_firstPick = {};
+        showDimInput((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0, len,
+                     sketch::ConstraintType::Distance, {ln.startPointId, ln.endPointId});
         return;
     }
 
-    // Point + empty → just reset (no meaningful single-point dimension)
+    // Point + empty -> just reset (no meaningful single-point dimension)
     m_firstPick = {};
 }
 
@@ -1964,6 +1978,13 @@ void SketchEditor::finalizeLine()
 
     // Record for sketch-local undo
     m_sketchUndoStack.push_back({SketchAction::AddEntity, lineId, ""});
+
+    // Track the first point of the line chain for auto-close
+    if (m_chainFirstPointId.empty()) {
+        m_chainFirstPointId = startPtId;
+        m_chainFirstX = x1;
+        m_chainFirstY = y1;
+    }
 
     m_sketch->solve();
 
@@ -2458,6 +2479,8 @@ void SketchEditor::cancelDraw()
     m_offsetEntityId.clear();
     m_slotClickCount = 0;
     m_threePointClickCount = 0;
+    m_chainFirstPointId.clear();
+    cancelInlineInput();
     if (m_viewport) m_viewport->update();
 }
 
@@ -2624,4 +2647,90 @@ std::pair<double,double> SketchEditor::computeInferences(double sketchX, double 
     }
 
     return {snappedX, snappedY};
+}
+
+// =============================================================================
+// Inline dimension input (replaces QInputDialog popups)
+// =============================================================================
+
+void SketchEditor::showInlineInput(double screenX, double screenY, double defaultValue, InlineInputMode mode)
+{
+    if (!m_viewport) return;
+
+    if (!m_inlineInput) {
+        m_inlineInput = new QLineEdit(m_viewport);
+        m_inlineInput->setAlignment(Qt::AlignCenter);
+        m_inlineInput->setStyleSheet(
+            "QLineEdit { background: #2a2a2a; color: #e0e0e0; border: 2px solid #5294e2; "
+            "border-radius: 4px; padding: 4px 8px; font-size: 12px; font-weight: bold; "
+            "min-width: 80px; }");
+        m_inlineInput->setFixedWidth(100);
+
+        connect(m_inlineInput, &QLineEdit::returnPressed, this, [this]() {
+            commitInlineInput();
+        });
+    }
+
+    m_inlineInputMode = mode;
+
+    // Position on screen (clamp to viewport bounds)
+    int posX = std::max(4, std::min(static_cast<int>(screenX) - 50, m_viewport->width() - 104));
+    int posY = std::max(4, std::min(static_cast<int>(screenY) - 14, m_viewport->height() - 30));
+    m_inlineInput->move(posX, posY);
+    m_inlineInput->setText(QString::number(defaultValue, 'f', 2));
+    m_inlineInput->selectAll();
+    m_inlineInput->show();
+    m_inlineInput->setFocus();
+}
+
+void SketchEditor::commitInlineInput()
+{
+    if (!m_inlineInput || m_inlineInputMode == InlineInputMode::None) return;
+
+    bool ok;
+    double value = m_inlineInput->text().toDouble(&ok);
+    if (!ok || value <= 0) {
+        m_inlineInput->hide();
+        m_inlineInputMode = InlineInputMode::None;
+        return;
+    }
+
+    if (m_inlineInputMode == InlineInputMode::EditDimension) {
+        // Edit existing constraint
+        if (!m_inlineDimConstraintId.empty() && m_sketch) {
+            auto conIt = m_sketch->constraints().find(m_inlineDimConstraintId);
+            if (conIt != m_sketch->constraints().end()) {
+                auto entityIds = conIt->second.entityIds;
+                auto type = conIt->second.type;
+                m_sketch->removeConstraint(m_inlineDimConstraintId);
+                m_sketch->addConstraint(type, entityIds, value);
+                m_selectedConstraintId.clear();
+                emit constraintSelected("", "", "");
+            }
+        }
+    } else if (m_inlineInputMode == InlineInputMode::NewDimension) {
+        // Create new dimension constraint
+        if (m_sketch && !m_inlineDimEntityIds.empty()) {
+            m_sketch->addConstraint(m_inlineDimType, m_inlineDimEntityIds, value);
+        }
+    }
+
+    m_inlineInput->hide();
+    m_inlineInputMode = InlineInputMode::None;
+    m_inlineDimConstraintId.clear();
+    m_inlineDimEntityIds.clear();
+
+    if (m_sketch) m_sketch->solve();
+    if (m_viewport) m_viewport->update();
+    emit sketchChanged();
+}
+
+void SketchEditor::cancelInlineInput()
+{
+    if (m_inlineInput) {
+        m_inlineInput->hide();
+    }
+    m_inlineInputMode = InlineInputMode::None;
+    m_inlineDimConstraintId.clear();
+    m_inlineDimEntityIds.clear();
 }
