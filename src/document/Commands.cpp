@@ -31,15 +31,10 @@ void AddExtrudeCommand::execute(Document& doc)
 
 void AddExtrudeCommand::undo(Document& doc)
 {
-    fprintf(stderr, "UNDO Extrude: featureId=%s bodyId=%s timeline=%zu bodies=%zu\n",
-             m_featureId.c_str(), m_bodyId.c_str(),
-             doc.timeline().count(), doc.brepModel().bodyIds().size());
     doc.timeline().remove(m_featureId);
     doc.brepModel().removeBody(m_bodyId);
     doc.recompute();
     doc.setModified(true);
-    fprintf(stderr, "UNDO DONE: timeline=%zu bodies=%zu\n",
-             doc.timeline().count(), doc.brepModel().bodyIds().size());
 }
 
 // ── AddRevolveCommand ─────────────────────────────────────────────────────────
