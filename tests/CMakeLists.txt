@@ -42,3 +42,13 @@ target_include_directories(test_paramstore PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_paramstore PRIVATE
   kernelcad_compiler_options Qt6::Core Qt6::Test)
 add_test(NAME ParameterStore COMMAND test_paramstore)
+
+# ── Sketch button tests ─────────────────────────────────────────────────────
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+add_executable(test_sketch_buttons
+  test_SketchButtons.cpp
+)
+target_include_directories(test_sketch_buttons PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_sketch_buttons PRIVATE
+  kernelcad_compiler_options Qt6::Core Qt6::Test Qt6::Widgets)
+add_test(NAME SketchButtons COMMAND test_sketch_buttons)

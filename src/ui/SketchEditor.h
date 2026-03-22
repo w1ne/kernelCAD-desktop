@@ -152,11 +152,24 @@ signals:
     /// Emitted with context-specific hint text for the status bar.
     void statusHint(const QString& hint);
 
+    /// Undo the last sketch action (line draw, constraint add, etc.)
+    /// Returns true if something was undone.
+    bool undoLastAction();
+
 private:
     sketch::Sketch* m_sketch = nullptr;
     Viewport3D* m_viewport = nullptr;
     SketchTool m_tool = SketchTool::None;
     bool m_isEditing = false;
+
+    // Sketch-local undo stack: stores IDs of entities/constraints added
+    struct SketchAction {
+        enum Type { AddEntity, AddConstraint, RemoveEntity, RemoveConstraint };
+        Type type;
+        std::string entityId;       // for AddEntity/RemoveEntity
+        std::string constraintId;   // for AddConstraint/RemoveConstraint
+    };
+    std::vector<SketchAction> m_sketchUndoStack;
 
     // In-progress drawing state
     bool m_drawingInProgress = false;

@@ -85,6 +85,7 @@
 #include <QWidgetAction>
 #include <QTabWidget>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QInputDialog>
 #include <QVBoxLayout>
 #include <QTabBar>
@@ -184,34 +185,16 @@ MainWindow::MainWindow(QWidget* parent)
         }
         statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
 
-        // Sync toolbar buttons: match by stored _sketchTool property.
-        // Block signals to prevent feedback loops from auto-exclusive unchecking.
+        // Sync sketch toolbar via QButtonGroup
         if (m_sketchToolBar) {
             int toolInt = static_cast<int>(tool);
-            // First pass: find and check the matching button
-            QToolButton* matchBtn = nullptr;
-            for (auto* widget : m_sketchToolBar->findChildren<QToolButton*>()) {
-                QVariant prop = widget->property("_sketchTool");
-                if (prop.isValid() && prop.toInt() == toolInt) {
-                    matchBtn = widget;
-                    break;
-                }
-            }
-            if (matchBtn) {
-                matchBtn->blockSignals(true);
-                matchBtn->setChecked(true);
-                matchBtn->blockSignals(false);
-            }
-        }
-        // Also sync ribbon SKETCH tab buttons (they use _toolName property)
-        if (m_ribbon) {
-            for (auto* widget : m_ribbon->findChildren<QToolButton*>()) {
-                QVariant prop = widget->property("_toolName");
-                if (prop.isValid() && widget->isCheckable()) {
-                    bool match = (prop.toString() == toolName);
-                    widget->blockSignals(true);
-                    widget->setChecked(match);
-                    widget->blockSignals(false);
+            auto* group = m_sketchToolBar->findChild<QButtonGroup*>();
+            if (group) {
+                QAbstractButton* btn = group->button(toolInt);
+                if (btn) {
+                    btn->blockSignals(true);
+                    btn->setChecked(true);
+                    btn->blockSignals(false);
                 }
             }
         }
@@ -3534,23 +3517,39 @@ void MainWindow::onCreateDrawing()
 
 void MainWindow::onUndo()
 {
-    if (m_document->history().canUndo()) {
+    if (!m_document->history().canUndo()) return;
+    try {
+        // Cancel any active editing/sketch mode before undoing
+        if (m_sketchEditor && m_sketchEditor->isEditing())
+            m_sketchEditor->finishEditing();
+        if (!m_editingFeatureId.isEmpty())
+            onFinishEditing();
+
         std::string desc = m_document->history().undoDescription();
         m_document->history().undo(*m_document);
         statusBar()->showMessage(
             tr("Undo: %1").arg(QString::fromStdString(desc)));
         refreshAllPanels();
+    } catch (const std::exception& e) {
+        statusBar()->showMessage(tr("Undo failed: %1").arg(e.what()));
+    } catch (...) {
+        statusBar()->showMessage(tr("Undo failed (unknown error)"));
     }
 }
 
 void MainWindow::onRedo()
 {
-    if (m_document->history().canRedo()) {
+    if (!m_document->history().canRedo()) return;
+    try {
         std::string desc = m_document->history().redoDescription();
         m_document->history().redo(*m_document);
         statusBar()->showMessage(
             tr("Redo: %1").arg(QString::fromStdString(desc)));
         refreshAllPanels();
+    } catch (const std::exception& e) {
+        statusBar()->showMessage(tr("Redo failed: %1").arg(e.what()));
+    } catch (...) {
+        statusBar()->showMessage(tr("Redo failed (unknown error)"));
     }
 }
 
@@ -4184,20 +4183,24 @@ void MainWindow::setupSketchToolBar()
         "#SketchToolBar { background: #353535; border: none; spacing: 2px; padding: 2px; }"
         "#SketchToolBar QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px; }"
         "#SketchToolBar QToolButton:hover { background: #4a4a4a; border: 1px solid #666; }"
-        "#SketchToolBar QToolButton:checked { background: #2a82da; border: 1px solid #4a9ae0; }"
+        "#SketchToolBar QToolButton:checked { background-color: #2a82da; border: 2px solid #5cb8ff; color: white; }"
     );
 
-    auto addBtn = [this](const QString& iconName, const QString& tooltip, SketchTool tool) {
+    // Button group ensures exactly one button is checked at a time (radio behavior).
+    // We DON'T use setAutoExclusive because QToolBar reparents widgets,
+    // breaking Qt's auto-exclusive logic.
+    auto* sketchBtnGroup = new QButtonGroup(m_sketchToolBar);
+    sketchBtnGroup->setExclusive(true);
+
+    auto addBtn = [this, sketchBtnGroup](const QString& iconName, const QString& tooltip, SketchTool tool) {
         auto* btn = new QToolButton;
         btn->setIcon(IconFactory::createIcon(iconName, 28));
         btn->setToolTip(tooltip);
         btn->setCheckable(true);
-        btn->setAutoExclusive(true);
         btn->setProperty("_sketchTool", static_cast<int>(tool));
-        connect(btn, &QToolButton::clicked, [this, tool, btn]() {
+        sketchBtnGroup->addButton(btn, static_cast<int>(tool));
+        connect(btn, &QToolButton::clicked, [this, tool]() {
             m_sketchEditor->setTool(tool);
-            // Force this button to stay checked
-            btn->setChecked(true);
         });
         m_sketchToolBar->addWidget(btn);
         return btn;

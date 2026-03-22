@@ -43,6 +43,7 @@ void SketchEditor::beginEditing(sketch::Sketch* sketch, Viewport3D* viewport)
     m_inferenceLines.clear();
     m_slotClickCount = 0;
     m_threePointClickCount = 0;
+    m_sketchUndoStack.clear();
 
     // Tell the viewport about the sketch overlay
     m_viewport->setSketchEditor(this);
@@ -1481,9 +1482,16 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
         return true;
 
     case Qt::Key_Z:
-        // Ctrl+Z = undo (bubble up to MainWindow)
-        if (event->modifiers() & Qt::ControlModifier)
-            return false; // let MainWindow handle undo
+        if (event->modifiers() & Qt::ControlModifier) {
+            // Ctrl+Z in sketch mode = undo last sketch action (not the whole sketch)
+            if (undoLastAction()) {
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+                return true;
+            }
+            // If nothing to undo in sketch, don't bubble up
+            return true;
+        }
         return false;
 
     default:
@@ -1888,6 +1896,36 @@ void SketchEditor::autoConstrainLastEntity(const std::string& entityId)
 }
 
 // =============================================================================
+// Sketch-local undo
+// =============================================================================
+
+bool SketchEditor::undoLastAction()
+{
+    if (m_sketchUndoStack.empty() || !m_sketch)
+        return false;
+
+    SketchAction action = m_sketchUndoStack.back();
+    m_sketchUndoStack.pop_back();
+
+    try {
+        switch (action.type) {
+        case SketchAction::AddEntity:
+            m_sketch->removeEntity(action.entityId);
+            break;
+        case SketchAction::AddConstraint:
+            m_sketch->removeConstraint(action.constraintId);
+            break;
+        default:
+            break;
+        }
+        m_sketch->solve();
+    } catch (...) {
+        // Entity might already be gone
+    }
+    return true;
+}
+
+// =============================================================================
 // Finalize operations
 // =============================================================================
 
@@ -1923,19 +1961,16 @@ void SketchEditor::finalizeLine()
     }
 
     std::string lineId = m_sketch->addLine(startPtId, endPtId);
+
+    // Record for sketch-local undo
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, lineId, ""});
+
     m_sketch->solve();
 
-    // Always auto-apply H/V constraints to nearly-aligned lines
-    if (m_autoConstrain) autoConstrainLastEntity(lineId);
-
-    // Auto-dimension: add a Distance constraint showing the line length
-    {
-        m_sketch->addConstraint(sketch::ConstraintType::Distance,
-                                {startPtId, endPtId}, len);
-    }
-
-    if (m_autoConstrain)
+    if (m_autoConstrain) {
+        autoConstrainLastEntity(lineId);
         m_sketch->autoConstrain();
+    }
 
     m_drawingInProgress = false;
     emit sketchChanged();
