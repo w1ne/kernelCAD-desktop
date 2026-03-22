@@ -15,7 +15,7 @@ enum class FeatureType {
     PathPattern, Coil,
     DeleteFace, ReplaceFace, ReverseNormal,
     Joint,
-    Stitch, SplitFace, Patch, Rib, Web,
+    Stitch, SplitFace, Patch, Rib, Web, PressPull,
     BaseFeature
 };
 

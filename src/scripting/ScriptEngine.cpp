@@ -223,6 +223,8 @@ std::string ScriptEngine::Impl::helpCommand(int id, const std::string& about)
         {"undo", "{}", "{}", "Undo last operation."},
         {"redo", "{}", "{}", "Redo."},
         {"state", "{}", "{bodies,features,sketches}", "Dump current document state — use this to understand what you have."},
+        {"getMesh", "{bodyId?,deflection?}", "{vertexCount,triangleCount,bbox,sampleVertices}", "Get mesh data. Returns bounding box + 100 sample vertices for spatial reasoning."},
+        {"screenshot", "{path,width?,height?}", "{stlPath,bodies:[{volume,size,cog}]}", "Export STL + return body descriptions. LLM can reason about shape from dimensions."},
         {"help", "{about?}", "{commands:[...]}", "This command. Pass about='extrude' for specific help."},
     };
 
@@ -1118,6 +1120,107 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
         if (cmdName == "recompute") {
             doc.recompute();
             return okResponse(id, nullptr);
+        }
+
+        // ── Mesh data (for LLM vision) ────────────────────────────────
+        if (cmdName == "getMesh") {
+            std::string bodyId = cmd.getString("bodyId");
+            if (bodyId.empty()) {
+                // Use first body
+                auto ids = doc.brepModel().bodyIds();
+                if (ids.empty()) return errResponse(id, "No bodies exist");
+                bodyId = ids[0];
+            }
+            if (!doc.brepModel().hasBody(bodyId))
+                return errResponse(id, "Body not found: " + bodyId);
+
+            double deflection = cmd.getNumber("deflection", 0.5);
+            auto mesh = doc.kernel().tessellate(doc.brepModel().getShape(bodyId), deflection);
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeNumber("vertexCount", static_cast<double>(mesh.vertices.size() / 3));
+                w.writeNumber("triangleCount", static_cast<double>(mesh.indices.size() / 3));
+
+                // Bounding box from vertices
+                float minX = 1e18f, minY = 1e18f, minZ = 1e18f;
+                float maxX = -1e18f, maxY = -1e18f, maxZ = -1e18f;
+                for (size_t i = 0; i + 2 < mesh.vertices.size(); i += 3) {
+                    minX = std::min(minX, mesh.vertices[i]);
+                    minY = std::min(minY, mesh.vertices[i+1]);
+                    minZ = std::min(minZ, mesh.vertices[i+2]);
+                    maxX = std::max(maxX, mesh.vertices[i]);
+                    maxY = std::max(maxY, mesh.vertices[i+1]);
+                    maxZ = std::max(maxZ, mesh.vertices[i+2]);
+                }
+                w.writeNumber("bboxMinX", minX); w.writeNumber("bboxMinY", minY); w.writeNumber("bboxMinZ", minZ);
+                w.writeNumber("bboxMaxX", maxX); w.writeNumber("bboxMaxY", maxY); w.writeNumber("bboxMaxZ", maxZ);
+                w.writeNumber("sizeX", maxX - minX); w.writeNumber("sizeY", maxY - minY); w.writeNumber("sizeZ", maxZ - minZ);
+
+                // Sample vertices (first 100 for overview, not all)
+                size_t sampleCount = std::min<size_t>(mesh.vertices.size() / 3, 100);
+                size_t stride = mesh.vertices.size() / 3 / std::max<size_t>(sampleCount, 1);
+                w.beginArray("sampleVertices");
+                for (size_t i = 0; i < sampleCount; ++i) {
+                    size_t idx = i * stride * 3;
+                    if (idx + 2 >= mesh.vertices.size()) break;
+                    w.beginObject();
+                    w.writeNumber("x", mesh.vertices[idx]);
+                    w.writeNumber("y", mesh.vertices[idx+1]);
+                    w.writeNumber("z", mesh.vertices[idx+2]);
+                    w.endObject();
+                }
+                w.endArray();
+            });
+        }
+
+        // ── Screenshot (offscreen render to PNG) ────────────────────────
+        if (cmdName == "screenshot") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'. Example: {\"cmd\":\"screenshot\",\"path\":\"/tmp/preview.png\"}");
+
+            int width = cmd.getInt("width", 800);
+            int height = cmd.getInt("height", 600);
+
+            // Use OCCT's built-in STL export + external renderer is complex.
+            // Instead, export a simple OBJ file that any viewer can render,
+            // or describe the geometry textually for the LLM.
+            // For a true screenshot, we'd need QOffscreenSurface + QOpenGLFramebufferObject
+            // which requires a QApplication (not available in CLI mode).
+
+            // Practical approach: export STL + return mesh summary
+            auto ids = doc.brepModel().bodyIds();
+            if (ids.empty()) return errResponse(id, "No bodies to screenshot");
+
+            // Export to STL at the given path (LLM can use external viewer)
+            std::string stlPath = path;
+            if (stlPath.find(".png") != std::string::npos)
+                stlPath = stlPath.substr(0, stlPath.rfind('.')) + ".stl";
+
+            auto compound = compoundAllBodies();
+            doc.kernel().exportSTL(compound, stlPath, 0.1);
+
+            // Return a text description the LLM can use
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("stlPath", stlPath);
+                w.writeNumber("bodyCount", static_cast<double>(ids.size()));
+
+                // Describe each body's shape and position
+                w.beginArray("bodies");
+                for (const auto& bid : ids) {
+                    auto props = doc.brepModel().getProperties(bid);
+                    w.beginObject();
+                    w.writeString("id", bid);
+                    w.writeNumber("volume", props.volume);
+                    w.writeNumber("surfaceArea", props.surfaceArea);
+                    w.writeNumber("faces", static_cast<double>(doc.kernel().faceCount(doc.brepModel().getShape(bid))));
+                    w.writeNumber("cogX", props.cogX); w.writeNumber("cogY", props.cogY); w.writeNumber("cogZ", props.cogZ);
+                    w.writeNumber("sizeX", props.bboxMaxX - props.bboxMinX);
+                    w.writeNumber("sizeY", props.bboxMaxY - props.bboxMinY);
+                    w.writeNumber("sizeZ", props.bboxMaxZ - props.bboxMinZ);
+                    w.endObject();
+                }
+                w.endArray();
+            });
         }
 
         return errResponse(id, "Unknown command: " + cmdName);

@@ -12,7 +12,7 @@ PressPullFeature::PressPullFeature(std::string id, PressPullParams params)
 TopoDS_Shape PressPullFeature::execute(kernel::OCCTKernel& kernel,
                                         const TopoDS_Shape& targetShape) const
 {
-    return kernel.pressPull(targetShape, m_params.faceIndex, m_params.distance);
+    return kernel.offsetFaces(targetShape, {m_params.faceIndex}, m_params.distance);
 }
 
 } // namespace features
