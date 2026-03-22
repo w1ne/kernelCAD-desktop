@@ -282,6 +282,14 @@ Viewport3D::Viewport3D(QWidget* parent)
             m_up = rot.mapVector(m_up).normalized();
             m_eye = m_center + offset;
             m_orbitDistance = offset.length();
+
+            // Clamp up vector to prevent barrel roll
+            QVector3D fwd = (m_center - m_eye).normalized();
+            QVector3D worldUp(0.0f, 1.0f, 0.0f);
+            if (std::abs(QVector3D::dotProduct(fwd, worldUp)) < 0.95f) {
+                QVector3D rt = QVector3D::crossProduct(fwd, worldUp).normalized();
+                m_up = QVector3D::crossProduct(rt, fwd).normalized();
+            }
         }
         m_momentumDx *= 0.9f;
         m_momentumDy *= 0.9f;
@@ -1911,6 +1919,14 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
                 m_up   = rot.mapVector(m_up).normalized();
                 m_eye  = m_center + offset;
                 m_orbitDistance = offset.length();
+
+                // Clamp up vector to prevent barrel roll (keep world-up stable)
+                QVector3D fwd = (m_center - m_eye).normalized();
+                QVector3D worldUp(0.0f, 1.0f, 0.0f);
+                if (std::abs(QVector3D::dotProduct(fwd, worldUp)) < 0.95f) {
+                    QVector3D rt = QVector3D::crossProduct(fwd, worldUp).normalized();
+                    m_up = QVector3D::crossProduct(rt, fwd).normalized();
+                }
             }
         }
     }
@@ -3710,10 +3726,66 @@ void Viewport3D::drawSketchConstraintOverlay()
                 continue;
             }
 
+        } else if (con.type == CT::Tangent || con.type == CT::Equal) {
+            // Draw a labeled marker at the midpoint of the first entity (line/circle/arc)
+            if (con.entityIds.empty()) continue;
+            try {
+                double mx = 0, my = 0;
+                bool found = false;
+                // Try line first
+                try {
+                    const auto& ln = sk->line(con.entityIds[0]);
+                    const auto& p1 = sk->point(ln.startPointId);
+                    const auto& p2 = sk->point(ln.endPointId);
+                    mx = (p1.x + p2.x) / 2.0;
+                    my = (p1.y + p2.y) / 2.0;
+                    found = true;
+                } catch (...) {}
+                // Try circle
+                if (!found) try {
+                    const auto& circ = sk->circle(con.entityIds[0]);
+                    const auto& cp = sk->point(circ.centerPointId);
+                    mx = cp.x; my = cp.y + circ.radius;
+                    found = true;
+                } catch (...) {}
+                // Try arc
+                if (!found) try {
+                    const auto& a = sk->arc(con.entityIds[0]);
+                    const auto& cp = sk->point(a.centerPointId);
+                    mx = cp.x; my = cp.y;
+                    found = true;
+                } catch (...) {}
+                // Fall back to point
+                if (!found) {
+                    const auto& pt = sk->point(con.entityIds[0]);
+                    mx = pt.x; my = pt.y;
+                }
+
+                QPointF sMid = skToScreen(mx, my);
+                sMid.setY(sMid.y() - 14.0);
+
+                QString sym = (con.type == CT::Tangent) ? "T" : "=";
+
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(60, 30, 100, 180));
+                painter.drawRoundedRect(QRectF(sMid.x() - 10, sMid.y() - 8, 20, 16), 3, 3);
+
+                painter.setFont(iconFont);
+                painter.setPen(cConMarker);
+                QRectF iconRect(sMid.x() - 10, sMid.y() - 8, 20, 16);
+                painter.drawText(iconRect, Qt::AlignCenter, sym);
+
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRoundedRect(iconRect.adjusted(-3, -3, 3, 3), 4, 4);
+                }
+            } catch (...) {
+                continue;
+            }
+
         } else if (con.type == CT::Coincident || con.type == CT::PointOnLine ||
-                   con.type == CT::PointOnCircle || con.type == CT::Concentric ||
-                   con.type == CT::Tangent || con.type == CT::Equal ||
-                   con.type == CT::Symmetric || con.type == CT::Midpoint) {
+                   con.type == CT::PointOnCircle || con.type == CT::Concentric) {
             // Draw a small dot marker at the first entity (point)
             if (con.entityIds.empty()) continue;
             try {
@@ -3723,10 +3795,67 @@ void Viewport3D::drawSketchConstraintOverlay()
                 painter.setBrush(cConMarker);
                 painter.drawEllipse(sPt, 4.0, 4.0);
 
+                // For Concentric, draw a second concentric ring
+                if (con.type == CT::Concentric) {
+                    painter.setPen(QPen(cConMarker, 1.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawEllipse(sPt, 7.0, 7.0);
+                }
+
                 if (isSelected) {
                     painter.setPen(QPen(QColor(255, 100, 100), 2.5));
                     painter.setBrush(Qt::NoBrush);
-                    painter.drawEllipse(sPt, 8.0, 8.0);
+                    painter.drawEllipse(sPt, 10.0, 10.0);
+                }
+            } catch (...) {
+                continue;
+            }
+
+        } else if (con.type == CT::Symmetric || con.type == CT::Midpoint) {
+            // Draw a labeled marker at the constrained point
+            if (con.entityIds.empty()) continue;
+            try {
+                const auto& pt = sk->point(con.entityIds[0]);
+                QPointF sPt = skToScreen(pt.x, pt.y);
+                sPt.setY(sPt.y() - 14.0);
+
+                QString sym = (con.type == CT::Symmetric)
+                    ? QString(QChar(0x2225))   // parallel bars for symmetry
+                    : QString("M");            // midpoint
+
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(60, 30, 100, 180));
+                painter.drawRoundedRect(QRectF(sPt.x() - 10, sPt.y() - 8, 20, 16), 3, 3);
+
+                painter.setFont(iconFont);
+                painter.setPen(cConMarker);
+                QRectF iconRect(sPt.x() - 10, sPt.y() - 8, 20, 16);
+                painter.drawText(iconRect, Qt::AlignCenter, sym);
+
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRoundedRect(iconRect.adjusted(-3, -3, 3, 3), 4, 4);
+                }
+            } catch (...) {
+                continue;
+            }
+
+        } else if (con.type == CT::Fix) {
+            // Draw a small square at the fixed point
+            if (con.entityIds.empty()) continue;
+            try {
+                const auto& pt = sk->point(con.entityIds[0]);
+                QPointF sPt = skToScreen(pt.x, pt.y);
+
+                painter.setPen(QPen(cConMarker, 1.5));
+                painter.setBrush(QColor(60, 30, 100, 140));
+                painter.drawRect(QRectF(sPt.x() - 5, sPt.y() - 5, 10, 10));
+
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRect(QRectF(sPt.x() - 8, sPt.y() - 8, 16, 16));
                 }
             } catch (...) {
                 continue;
@@ -4241,6 +4370,32 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
             painter.setBrush(cSnapPoint);
             painter.drawEllipse(screenPt, 3.0, 3.0);
             snappedToPoint = true;
+        }
+    }
+
+    // ── Snap type tooltip (small label near the snap indicator) ───────────
+    if (m_sketchEditor->snapType() != SnapType::None) {
+        QPointF screenPos = skToScreen(m_sketchEditor->snapX(), m_sketchEditor->snapY());
+
+        QString label;
+        switch (m_sketchEditor->snapType()) {
+            case SnapType::Endpoint: label = QStringLiteral("Endpoint"); break;
+            case SnapType::Midpoint: label = QStringLiteral("Midpoint"); break;
+            case SnapType::Center:   label = QStringLiteral("Center"); break;
+            case SnapType::OnEdge:   label = QStringLiteral("On Edge"); break;
+            default: break;
+        }
+
+        if (!label.isEmpty()) {
+            QFont tooltipFont("", 8);
+            painter.setFont(tooltipFont);
+            QRect textRect = painter.fontMetrics().boundingRect(label);
+            textRect.moveTopLeft(screenPos.toPoint() + QPoint(14, -8));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(40, 40, 40, 210));
+            painter.drawRoundedRect(textRect.adjusted(-4, -2, 4, 2), 3, 3);
+            painter.setPen(QColor(220, 220, 220));
+            painter.drawText(textRect, Qt::AlignCenter, label);
         }
     }
 

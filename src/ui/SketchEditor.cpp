@@ -571,9 +571,11 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
     if (!screenToSketch(event->pos(), sx, sy))
         return false;
 
-    // ── DRAG: always try drag first, regardless of active tool ──────────
-    // In Fusion 360, you can grab and drag any sketch entity at any time.
-    // Points drag directly; circles/arcs drag to change radius.
+    // ── DRAG: try drag first, but NOT when a constraint/dimension tool is active ──
+    // In constraint mode, clicks should pick entities for the constraint, not drag them.
+    bool isConstraintTool = (m_tool >= SketchTool::AddConstraint && m_tool <= SketchTool::ConstrainConcentric)
+                         || m_tool == SketchTool::Dimension;
+    if (!isConstraintTool)
     {
         // 1. Try dragging a point (endpoint, center, control point)
         std::string ptId = findNearestPoint(sx, sy, 5.0);
@@ -671,7 +673,35 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
     // ── Specific constraint tools (user picks entities, constraint type is fixed) ──
     if (m_tool >= SketchTool::ConstrainCoincident && m_tool <= SketchTool::ConstrainConcentric) {
         SketchPickResult pick = pickEntity(sx, sy);
-        if (pick.kind == SketchPickResult::Nothing) return true;
+        qDebug() << "Constraint tool pick: kind=" << (int)pick.kind
+                 << "entityId=" << QString::fromStdString(pick.entityId)
+                 << "firstPick=" << QString::fromStdString(m_firstPick.entityId)
+                 << "tool=" << (int)m_tool;
+        if (pick.kind == SketchPickResult::Nothing) {
+            // Check if the click is near the sketch origin (0,0) — the origin
+            // is rendered visually but isn't a sketch entity. If user clicks
+            // near it, create a fixed point at the origin so it can participate
+            // in constraints.
+            if (std::abs(sx) < 3.0 && std::abs(sy) < 3.0) {
+                // Find or create a fixed origin point
+                std::string originPtId;
+                for (const auto& [pid, pt] : m_sketch->points()) {
+                    if (pt.isFixed && std::abs(pt.x) < 0.01 && std::abs(pt.y) < 0.01) {
+                        originPtId = pid;
+                        break;
+                    }
+                }
+                if (originPtId.empty()) {
+                    originPtId = m_sketch->addPoint(0, 0, true);  // fixed origin point
+                }
+                pick.kind = SketchPickResult::Point;
+                pick.entityId = originPtId;
+                qDebug() << "  -> Picked origin point:" << QString::fromStdString(originPtId);
+            } else {
+                qDebug() << "  -> Nothing picked, ignoring";
+                return true;
+            }
+        }
 
         if (!m_firstPick.entityId.empty()) {
             // Second pick — apply the specific constraint
@@ -711,8 +741,14 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
                 id2 = resolveToPoint(id2);
             }
 
+            qDebug() << "  -> Applying constraint type=" << (int)ctype
+                     << "id1=" << QString::fromStdString(id1)
+                     << "id2=" << QString::fromStdString(id2);
             m_sketch->addConstraint(ctype, {id1, id2});
-            m_sketch->solve();
+            auto result = m_sketch->solve();
+            qDebug() << "  -> Solve result: status=" << (int)result.status
+                     << "iterations=" << result.iterations
+                     << "residual=" << result.residual;
             m_firstPick = {};
             if (m_viewport) m_viewport->update();
             emit sketchChanged();
@@ -1086,6 +1122,8 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
     }
 
     // ── Rubber-band for draw tools ──────────────────────────────────────
+    m_currentSnapType = SnapType::None;
+
     if (!m_drawingInProgress) {
         // Still track snapped cursor position for snap indicators
         m_currentX = snapToGrid(sx);
@@ -1123,12 +1161,30 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
     sy = snapToGrid(sy);
 
     // Snap to existing geometry (points take priority)
+    bool snappedToGeometry = false;
     {
         std::string nearPt = findNearestPoint(sx, sy, m_snapTolerance * 3.0);
         if (!nearPt.empty()) {
             const auto& p = m_sketch->point(nearPt);
             sx = p.x;
             sy = p.y;
+
+            // Determine snap type: Endpoint, Center, or generic point
+            // Check if this point is a circle/arc center
+            bool isCenter = false;
+            for (const auto& [cid, circ] : m_sketch->circles()) {
+                if (circ.centerPointId == nearPt) { isCenter = true; break; }
+            }
+            if (!isCenter) {
+                for (const auto& [aid, arc] : m_sketch->arcs()) {
+                    if (arc.centerPointId == nearPt) { isCenter = true; break; }
+                }
+            }
+            m_currentSnapType = isCenter ? SnapType::Center : SnapType::Endpoint;
+            m_snapX = sx;
+            m_snapY = sy;
+            snappedToGeometry = true;
+
             m_inferenceLines.push_back({
                 static_cast<float>(sx - 3), static_cast<float>(sy),
                 static_cast<float>(sx + 3), static_cast<float>(sy),
@@ -1137,10 +1193,50 @@ bool SketchEditor::handleMouseMove(QMouseEvent* event)
         }
     }
 
+    // On-curve snap: if no point snap, try snapping to nearest line/circle curve
+    if (!snappedToGeometry) {
+        std::string nearLine = findNearestLine(sx, sy, m_snapTolerance * 3.0);
+        if (!nearLine.empty()) {
+            const auto& ln = m_sketch->line(nearLine);
+            const auto& p1 = m_sketch->point(ln.startPointId);
+            const auto& p2 = m_sketch->point(ln.endPointId);
+
+            double dx = p2.x - p1.x, dy = p2.y - p1.y;
+            double len2 = dx * dx + dy * dy;
+            if (len2 > 1e-12) {
+                double t = ((sx - p1.x) * dx + (sy - p1.y) * dy) / len2;
+                t = std::max(0.0, std::min(1.0, t));
+                sx = p1.x + t * dx;
+                sy = p1.y + t * dy;
+                m_currentSnapType = SnapType::OnEdge;
+
+                // Check if near midpoint specifically
+                if (std::abs(t - 0.5) < 0.05) {
+                    m_currentSnapType = SnapType::Midpoint;
+                }
+                m_snapX = sx;
+                m_snapY = sy;
+                snappedToGeometry = true;
+            }
+        }
+    }
+
     // Compute inference lines and apply snap adjustments
     auto snapped = computeInferences(sx, sy);
     sx = snapped.first;
     sy = snapped.second;
+
+    // Check if computeInferences found a midpoint snap (override snap type)
+    if (m_currentSnapType == SnapType::None) {
+        for (const auto& inf : m_inferenceLines) {
+            if (inf.type == InferenceLine::Midpoint) {
+                m_currentSnapType = SnapType::Midpoint;
+                m_snapX = sx;
+                m_snapY = sy;
+                break;
+            }
+        }
+    }
 
     m_currentX = sx;
     m_currentY = sy;
@@ -1327,15 +1423,68 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
     }
 
     case Qt::Key_Delete:
-        // Remove selected constraint
-        if (!m_selectedConstraintId.empty() && m_sketch) {
+    case Qt::Key_Backspace:
+        if (!m_sketch) return true;
+
+        // 1. If a constraint is selected, delete the constraint
+        if (!m_selectedConstraintId.empty()) {
             m_sketch->removeConstraint(m_selectedConstraintId);
             m_selectedConstraintId.clear();
+            emit constraintSelected("", "", "");
             m_sketch->solve();
             if (m_viewport) m_viewport->update();
             emit sketchChanged();
+            return true;
+        }
+
+        // 2. If a sketch entity is near the cursor, delete it
+        {
+            double sx = m_currentX, sy = m_currentY;
+
+            // Try to find nearest entity to delete
+            std::string lineId = findNearestLine(sx, sy, 8.0);
+            if (!lineId.empty()) {
+                // Don't delete construction origin axes
+                const auto& ln = m_sketch->line(lineId);
+                if (ln.isConstruction) {
+                    const auto& sp = m_sketch->point(ln.startPointId);
+                    if (sp.isFixed && std::abs(sp.x) < 0.01 && std::abs(sp.y) < 0.01)
+                        return true; // protect origin axes
+                }
+                m_sketch->removeEntity(lineId);
+                m_sketch->solve();
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+                return true;
+            }
+
+            std::string circId = findNearestCircle(sx, sy, 8.0);
+            if (!circId.empty()) {
+                m_sketch->removeEntity(circId);
+                m_sketch->solve();
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+                return true;
+            }
+
+            std::string arcId = findNearestArc(sx, sy, 8.0);
+            if (!arcId.empty()) {
+                m_sketch->removeEntity(arcId);
+                m_sketch->solve();
+                if (m_viewport) m_viewport->update();
+                emit sketchChanged();
+                return true;
+            }
+
+            // Points are not directly deletable (they're owned by curves)
         }
         return true;
+
+    case Qt::Key_Z:
+        // Ctrl+Z = undo (bubble up to MainWindow)
+        if (event->modifiers() & Qt::ControlModifier)
+            return false; // let MainWindow handle undo
+        return false;
 
     default:
         break;

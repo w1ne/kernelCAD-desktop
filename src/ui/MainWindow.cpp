@@ -184,12 +184,34 @@ MainWindow::MainWindow(QWidget* parent)
         }
         statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
 
-        // Sync toolbar buttons: uncheck all, check the one matching current tool
+        // Sync toolbar buttons: match by stored _sketchTool property.
+        // Block signals to prevent feedback loops from auto-exclusive unchecking.
         if (m_sketchToolBar) {
+            int toolInt = static_cast<int>(tool);
+            // First pass: find and check the matching button
+            QToolButton* matchBtn = nullptr;
             for (auto* widget : m_sketchToolBar->findChildren<QToolButton*>()) {
-                if (widget->isCheckable() && widget->autoExclusive()) {
-                    // Match by tooltip containing the tool name
-                    widget->setChecked(widget->toolTip().contains(toolName, Qt::CaseInsensitive));
+                QVariant prop = widget->property("_sketchTool");
+                if (prop.isValid() && prop.toInt() == toolInt) {
+                    matchBtn = widget;
+                    break;
+                }
+            }
+            if (matchBtn) {
+                matchBtn->blockSignals(true);
+                matchBtn->setChecked(true);
+                matchBtn->blockSignals(false);
+            }
+        }
+        // Also sync ribbon SKETCH tab buttons (they use _toolName property)
+        if (m_ribbon) {
+            for (auto* widget : m_ribbon->findChildren<QToolButton*>()) {
+                QVariant prop = widget->property("_toolName");
+                if (prop.isValid() && widget->isCheckable()) {
+                    bool match = (prop.toString() == toolName);
+                    widget->blockSignals(true);
+                    widget->setChecked(match);
+                    widget->blockSignals(false);
                 }
             }
         }
@@ -1765,6 +1787,15 @@ void MainWindow::keyPressEvent(QKeyEvent* event)
         }
         if (event->key() == Qt::Key_Escape) {
             onCancelPendingCommand();
+            return;
+        }
+    }
+
+    // Forward number keys to the feature dialog's distance field
+    if (m_featureDialog && m_featureDialog->isActive()) {
+        if ((event->key() >= Qt::Key_0 && event->key() <= Qt::Key_9) ||
+             event->key() == Qt::Key_Period || event->key() == Qt::Key_Minus) {
+            m_featureDialog->forwardKeyToDistance(event);
             return;
         }
     }
@@ -4162,8 +4193,11 @@ void MainWindow::setupSketchToolBar()
         btn->setToolTip(tooltip);
         btn->setCheckable(true);
         btn->setAutoExclusive(true);
-        connect(btn, &QToolButton::clicked, [this, tool]() {
+        btn->setProperty("_sketchTool", static_cast<int>(tool));
+        connect(btn, &QToolButton::clicked, [this, tool, btn]() {
             m_sketchEditor->setTool(tool);
+            // Force this button to stay checked
+            btn->setChecked(true);
         });
         m_sketchToolBar->addWidget(btn);
         return btn;
@@ -4246,7 +4280,35 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
         return;
 
     m_activeSketchFeature = sketchFeat;
-    m_sketchEditor->beginEditing(&sketchFeat->sketch(), m_viewport);
+
+    // Ensure the sketch has origin geometry (fixed origin point + construction axes)
+    // This matches Fusion 360 where every sketch shows the origin as pickable entities.
+    auto& sk = sketchFeat->sketch();
+    bool hasOriginPt = false;
+    for (const auto& [pid, pt] : sk.points()) {
+        if (pt.isFixed && std::abs(pt.x) < 0.01 && std::abs(pt.y) < 0.01) {
+            hasOriginPt = true;
+            break;
+        }
+    }
+    if (!hasOriginPt) {
+        // Add fixed origin point at (0,0)
+        sk.addPoint(0, 0, true);
+        // Add construction X and Y axis lines through origin
+        auto xPt = sk.addPoint(100, 0, true);
+        auto yPt = sk.addPoint(0, 100, true);
+        auto oxPt = sk.addPoint(0, 0, true);  // shared origin for axes
+        // Use the first fixed origin point
+        for (const auto& [pid, pt] : sk.points()) {
+            if (pt.isFixed && std::abs(pt.x) < 0.01 && std::abs(pt.y) < 0.01) {
+                auto xLine = sk.addLine(pid, xPt, true);  // construction
+                auto yLine = sk.addLine(pid, yPt, true);  // construction
+                break;
+            }
+        }
+    }
+
+    m_sketchEditor->beginEditing(&sk, m_viewport);
     m_sketchEditor->setTool(SketchTool::DrawLine);  // default to line tool
 
     // Save camera state and animate to face the sketch plane head-on

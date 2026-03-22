@@ -54,6 +54,9 @@ struct SketchPickResult {
     double sx = 0, sy = 0;    // sketch coords of the pick location
 };
 
+/// Type of geometric snap point for tooltip display.
+enum class SnapType { None, Endpoint, Midpoint, Center, OnEdge, Intersection, Grid };
+
 /// Visual inference line shown during sketch drawing to aid snapping.
 struct InferenceLine {
     float x1, y1, x2, y2;  // sketch-plane coordinates
@@ -133,6 +136,11 @@ public:
 
     /// Active inference lines (computed each mouse move, used by overlay renderer).
     const std::vector<InferenceLine>& inferenceLines() const { return m_inferenceLines; }
+
+    /// Current snap type and position (for tooltip rendering in the viewport).
+    SnapType snapType() const { return m_currentSnapType; }
+    double snapX() const { return m_snapX; }
+    double snapY() const { return m_snapY; }
 
 signals:
     void sketchChanged();
@@ -276,6 +284,8 @@ private:
     // ── Snap/inference system ───────────────────────────────────────────
     std::vector<InferenceLine> m_inferenceLines;
     float m_snapTolerance = 2.0f;  // sketch-space units
+    SnapType m_currentSnapType = SnapType::None;
+    double m_snapX = 0.0, m_snapY = 0.0;
 
     /// Compute inference lines for the given cursor position and return
     /// the snapped position (cursor may be adjusted to align H/V/midpoint).

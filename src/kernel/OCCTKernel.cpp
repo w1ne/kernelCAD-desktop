@@ -1,6 +1,8 @@
 #include "OCCTKernel.h"
 
 #include <cmath>
+#include <queue>
+#include <set>
 #include <unordered_set>
 
 // OCCT includes
@@ -431,6 +433,102 @@ TopoDS_Shape OCCTKernel::chamfer(const TopoDS_Shape& shape,
 
     throw std::runtime_error("Chamfer failed: distance " + std::to_string(distance)
         + " mm is too large for the selected edges");
+}
+
+std::vector<int> OCCTKernel::expandTangentChain(const TopoDS_Shape& shape,
+                                                 const std::vector<int>& seedEdges,
+                                                 double angleTolerance) const
+{
+    if (seedEdges.empty())
+        return seedEdges;
+
+    TopTools_IndexedMapOfShape edgeMap;
+    TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+
+    if (edgeMap.Extent() == 0)
+        return seedEdges;
+
+    // Convert angle tolerance from degrees to radians for comparison
+    const double cosThreshold = std::cos(angleTolerance * M_PI / 180.0);
+
+    std::set<int> result(seedEdges.begin(), seedEdges.end());
+    std::queue<int> queue;
+    for (int idx : seedEdges)
+        queue.push(idx);
+
+    while (!queue.empty()) {
+        int current = queue.front();
+        queue.pop();
+
+        if (current < 0 || current >= edgeMap.Extent())
+            continue;
+
+        const TopoDS_Edge& edge = TopoDS::Edge(edgeMap(current + 1));
+
+        // Get vertices of this edge
+        TopoDS_Vertex v1, v2;
+        TopExp::Vertices(edge, v1, v2);
+        if (v1.IsNull() && v2.IsNull())
+            continue;
+
+        // Check all other edges for tangent connection
+        for (int i = 0; i < edgeMap.Extent(); ++i) {
+            if (result.count(i))
+                continue;
+
+            const TopoDS_Edge& other = TopoDS::Edge(edgeMap(i + 1));
+
+            TopoDS_Vertex ov1, ov2;
+            TopExp::Vertices(other, ov1, ov2);
+
+            // Find shared vertex
+            TopoDS_Vertex shared;
+            if (!v1.IsNull() && !ov1.IsNull() && v1.IsSame(ov1)) shared = v1;
+            else if (!v1.IsNull() && !ov2.IsNull() && v1.IsSame(ov2)) shared = v1;
+            else if (!v2.IsNull() && !ov1.IsNull() && v2.IsSame(ov1)) shared = v2;
+            else if (!v2.IsNull() && !ov2.IsNull() && v2.IsSame(ov2)) shared = v2;
+            else continue;
+
+            // Check tangency at the shared vertex
+            try {
+                gp_Pnt sharedPt = BRep_Tool::Pnt(shared);
+
+                BRepAdaptor_Curve c1(edge);
+                BRepAdaptor_Curve c2(other);
+
+                // Find parameter on each curve at the shared vertex
+                double param1 = (sharedPt.Distance(c1.Value(c1.FirstParameter())) <
+                                 sharedPt.Distance(c1.Value(c1.LastParameter())))
+                    ? c1.FirstParameter() : c1.LastParameter();
+                double param2 = (sharedPt.Distance(c2.Value(c2.FirstParameter())) <
+                                 sharedPt.Distance(c2.Value(c2.LastParameter())))
+                    ? c2.FirstParameter() : c2.LastParameter();
+
+                // Get tangent vectors
+                gp_Pnt p1, p2;
+                gp_Vec t1, t2;
+                c1.D1(param1, p1, t1);
+                c2.D1(param2, p2, t2);
+
+                if (t1.Magnitude() < 1e-10 || t2.Magnitude() < 1e-10)
+                    continue;
+
+                t1.Normalize();
+                t2.Normalize();
+
+                // Check if tangent vectors are aligned (or anti-aligned)
+                double dot = std::abs(t1.Dot(t2));
+                if (dot >= cosThreshold) {
+                    result.insert(i);
+                    queue.push(i);
+                }
+            } catch (...) {
+                continue;
+            }
+        }
+    }
+
+    return std::vector<int>(result.begin(), result.end());
 }
 
 TopoDS_Shape OCCTKernel::sweep(const TopoDS_Shape& profile, const TopoDS_Shape& path)

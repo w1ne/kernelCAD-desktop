@@ -50,6 +50,9 @@ private slots:
     void onContextMenu(const QPoint& pos);
     void onItemRenamed(QTreeWidgetItem* item, int column);
 
+protected:
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
     document::Document* m_document = nullptr;
 

@@ -53,6 +53,13 @@ public:
                          const std::vector<int>& edgeIds,
                          double distance);
 
+    /// Expand a set of seed edges to include all tangent-connected edges.
+    /// Two edges are tangent-connected if they share a vertex and their
+    /// tangent vectors at that vertex are within angleTolerance degrees.
+    std::vector<int> expandTangentChain(const TopoDS_Shape& shape,
+                                        const std::vector<int>& seedEdges,
+                                        double angleTolerance = 5.0) const;
+
     // ── Advanced feature ops ───────────────────────────────────────────
     /// Sweep a profile along a path (wire).
     TopoDS_Shape sweep(const TopoDS_Shape& profile, const TopoDS_Shape& path);

@@ -12,6 +12,8 @@
 #include <QGraphicsDropShadowEffect>
 #include <QEvent>
 #include <QResizeEvent>
+#include <QKeyEvent>
+#include <QApplication>
 
 // =============================================================================
 // Construction
@@ -809,4 +811,17 @@ void FeatureDialog::buildConstructionPlaneForm(const features::ConstructionPlane
 
     m_cpOffsetSpin->setFocus();
     m_cpOffsetSpin->selectAll();
+}
+
+// =============================================================================
+// Forward key press to distance spin box
+// =============================================================================
+
+void FeatureDialog::forwardKeyToDistance(QKeyEvent* event)
+{
+    auto* spin = findChild<QDoubleSpinBox*>();
+    if (spin) {
+        spin->setFocus();
+        QApplication::sendEvent(spin, event);
+    }
 }

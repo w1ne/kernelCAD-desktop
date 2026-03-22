@@ -55,6 +55,9 @@ public:
     /// Returns true if the dialog is currently visible and active.
     bool isActive() const;
 
+    /// Forward a key press (digit, period, minus) to the first QDoubleSpinBox.
+    void forwardKeyToDistance(QKeyEvent* event);
+
     /// Reposition the dialog at the top-right of the parent widget.
     void repositionOverParent();
 

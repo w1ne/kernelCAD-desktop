@@ -25,7 +25,17 @@ TopoDS_Shape FilletFeature::execute(kernel::OCCTKernel& kernel,
         radius = 2.0; // fallback default
     }
 
-    return kernel.fillet(targetShape, m_params.edgeIds, radius);
+    // Expand selection to tangent-connected edges if enabled
+    std::vector<int> edgeIds = m_params.edgeIds;
+    if (m_params.isTangentChain && !edgeIds.empty()) {
+        try {
+            edgeIds = kernel.expandTangentChain(targetShape, edgeIds);
+        } catch (...) {
+            // If expansion fails, proceed with original selection
+        }
+    }
+
+    return kernel.fillet(targetShape, edgeIds, radius);
 }
 
 } // namespace features

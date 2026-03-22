@@ -9,6 +9,7 @@
 
 #include <QMenu>
 #include <QAction>
+#include <QKeyEvent>
 #include <QFont>
 #include <QBrush>
 #include <QColor>
@@ -636,4 +637,16 @@ void FeatureTree::onContextMenu(const QPoint& pos)
 
     if (!menu.isEmpty())
         menu.exec(viewport()->mapToGlobal(pos));
+}
+
+void FeatureTree::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_F2) {
+        QTreeWidgetItem* item = currentItem();
+        if (item && (item->flags() & Qt::ItemIsEditable)) {
+            editItem(item, 0);
+        }
+        return;
+    }
+    QTreeWidget::keyPressEvent(event);
 }
