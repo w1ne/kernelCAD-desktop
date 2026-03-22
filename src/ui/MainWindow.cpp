@@ -117,6 +117,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Wire up selection manager to viewport and callbacks
     m_viewport->setSelectionManager(m_selectionMgr.get());
+    m_viewport->setBRepModel(&m_document->brepModel());
 
     // Create viewport manipulator (drag handles for extrude distance, etc.)
     m_manipulator = new ViewportManipulator(this);

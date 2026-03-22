@@ -18,6 +18,7 @@
 #include <string>
 
 namespace sketch { class Sketch; }
+namespace kernel { class BRepModel; class BRepQuery; }
 class SelectionManager;
 class SketchEditor;
 class ViewportManipulator;
@@ -92,6 +93,9 @@ public:
 
     /// Set the selection manager for pick/hover interaction.
     void setSelectionManager(SelectionManager* mgr);
+
+    /// Set BRepModel pointer for edge resolution during picking.
+    void setBRepModel(kernel::BRepModel* model) { m_brepModelPtr = model; }
 
     /// Set highlighted face indices (rendered with a blue tint overlay).
     void setHighlightedFaces(const std::vector<int>& faceIndices);
@@ -272,14 +276,18 @@ private:
 
     // ── selection manager ───────────────────────────────────────────────
     SelectionManager* m_selectionMgr = nullptr;
+    kernel::BRepModel* m_brepModelPtr = nullptr;  // for edge resolution during picking
 
     // ── camera state ────────────────────────────────────────────────────
     QVector3D m_eye    {0.0f, 0.0f, 5.0f};
     QVector3D m_center {0.0f, 0.0f, 0.0f};
     QVector3D m_up     {0.0f, 1.0f, 0.0f};
     float m_fov  = 45.0f;
-    float m_near = 0.01f;
-    float m_far  = 1000.0f;
+    float m_near = 0.1f;
+    float m_far  = 100000.0f;
+
+    /// Dynamically adjust near/far planes based on scene size and camera distance.
+    void updateClipPlanes();
 
     // ── bounding box (set by setMesh) ───────────────────────────────────
     QVector3D m_bboxMin;

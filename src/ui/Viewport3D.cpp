@@ -3,6 +3,8 @@
 #include "SketchEditor.h"
 #include "SelectionManager.h"
 #include "../sketch/Sketch.h"
+#include "../kernel/BRepModel.h"
+#include "../kernel/BRepQuery.h"
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QGuiApplication>
@@ -350,6 +352,9 @@ void Viewport3D::resizeGL(int w, int h)
 
 void Viewport3D::paintGL()
 {
+    // Adjust near/far clip planes based on scene size
+    updateClipPlanes();
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // -- common matrices -------------------------------------------------
@@ -1270,6 +1275,20 @@ void Viewport3D::fitAll()
 }
 
 // =============================================================================
+// Dynamic clip planes
+// =============================================================================
+
+void Viewport3D::updateClipPlanes()
+{
+    QVector3D bboxCenter = (m_bboxMin + m_bboxMax) * 0.5f;
+    float sceneRadius = (m_bboxMax - m_bboxMin).length() * 0.5f;
+    if (sceneRadius < 1.0f) sceneRadius = 100.0f;
+    float camDist = (m_eye - bboxCenter).length();
+    m_near = std::max(0.1f, camDist * 0.001f);
+    m_far  = std::max(10000.0f, camDist + sceneRadius * 3.0f);
+}
+
+// =============================================================================
 // Projection matrix helper (perspective / orthographic)
 // =============================================================================
 
@@ -1505,6 +1524,39 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
     hit.worldY = hitPos.y();
     hit.worldZ = hitPos.z();
     hit.depth  = (m_eye - hitPos).length();
+
+    // Edge resolution: when filter is Edges, find the nearest edge on this body
+    // to the 3D hit point. This converts a face pick into an edge pick.
+    if (m_selectionMgr && m_selectionMgr->filter() == SelectionFilter::Edges &&
+        !hit.bodyId.empty() && m_brepModelPtr) {
+        try {
+            // Use BRepQuery to find edges of the picked face and pick the closest
+            // Edge resolution using stored BRepModel pointer
+                
+            
+            kernel::BRepQuery bq(m_brepModelPtr->getShape(hit.bodyId));
+            int bestEdge = -1;
+            float bestDist = 1e30f;
+            int edgeCount = bq.edgeCount();
+            for (int ei = 0; ei < edgeCount; ++ei) {
+                auto einfo = bq.edgeInfo(ei);
+                // Edge midpoint
+                float mx = (einfo.startX + einfo.endX) * 0.5f;
+                float my = (einfo.startY + einfo.endY) * 0.5f;
+                float mz = (einfo.startZ + einfo.endZ) * 0.5f;
+                float dx = mx - hit.worldX, dy = my - hit.worldY, dz = mz - hit.worldZ;
+                float dist = dx*dx + dy*dy + dz*dz;
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestEdge = ei;
+                }
+            }
+            if (bestEdge >= 0)
+                hit.edgeIndex = bestEdge;
+        } catch (...) {
+            // If edge resolution fails, proceed with face-only hit
+        }
+    }
 
     if (addToSelection) {
         m_selectionMgr->addToSelection(hit);

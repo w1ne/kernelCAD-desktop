@@ -13,6 +13,27 @@ CommandDialog::CommandDialog(document::InteractiveCommand* cmd,
     setWindowTitle(QString::fromStdString(cmd->description()));
     setMinimumWidth(320);
 
+    // Dark theme styling matching the main window
+    setStyleSheet(
+        "QDialog { background: #2d2d2d; color: #d0d0d0; }"
+        "QLabel { color: #d0d0d0; }"
+        "QDoubleSpinBox, QSpinBox, QLineEdit { background: #3c3f41; color: #e0e0e0; "
+        "  border: 1px solid #555; padding: 3px; border-radius: 3px; }"
+        "QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus { border: 1px solid #2a82da; }"
+        "QComboBox { background: #3c3f41; color: #e0e0e0; border: 1px solid #555; "
+        "  padding: 3px; border-radius: 3px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background: #3c3f41; color: #e0e0e0; "
+        "  selection-background-color: #2a82da; }"
+        "QCheckBox { color: #d0d0d0; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; }"
+        "QPushButton { background: #3c3f41; color: #d0d0d0; border: 1px solid #555; "
+        "  padding: 5px 15px; border-radius: 3px; }"
+        "QPushButton:hover { background: #4a4a4a; }"
+        "QPushButton:pressed { background: #2a82da; }"
+        "QDialogButtonBox QPushButton { min-width: 70px; }"
+    );
+
     auto* rootLayout = new QVBoxLayout(this);
     m_formLayout = new QFormLayout;
     rootLayout->addLayout(m_formLayout);
