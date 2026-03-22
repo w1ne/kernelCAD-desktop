@@ -5,7 +5,7 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
-![Lines of Code](https://img.shields.io/badge/lines-43K+-green)
+![Lines of Code](https://img.shields.io/badge/lines-46K+-green)
 
 ## Features
 
@@ -100,7 +100,10 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 ### File I/O
 - **Native format**: `.kcd` (JSON) with full parametric history — all 29 feature types, sketches, joints, materials, timeline groups, parameters
 - **Import**: STEP (`.step`, `.stp`), IGES (`.igs`, `.iges`)
-- **Export**: STEP (all bodies), STL (all bodies)
+- **Export**: STEP, STL, **3MF** (modern 3D printing format with units + ZIP packaging)
+- **2D Drawings**: HLR-projected Front/Top/Right/Isometric views with title block — export to **PDF** and **SVG**
+- **Recent files**: File > Recent remembers last 10 opened/saved files (persisted via QSettings)
+- **Preferences**: Edit > Preferences for units, grid, auto-save interval, display, sketch settings
 
 ### Undo/Redo
 - Full **command pattern** with undo/redo stacks
@@ -149,7 +152,7 @@ cd build && ctest --output-on-failure
 ## Architecture
 
 ```
-src/                           150 files, 43K lines
+src/                           160 files, 46K lines
 ├── app/             (2)       Application entry point, dark theme setup
 ├── kernel/         (12)       OCCT wrapper, BRepModel, BRepQuery, EntityAttribute,
 │                              StableReference, Appearance, IconFactory
