@@ -195,6 +195,10 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
 
+    // Status bar context hints from sketch editor
+    connect(m_sketchEditor, &SketchEditor::statusHint, this,
+            [this](const QString& hint) { statusBar()->showMessage(hint); });
+
     // Create the measure tool
     m_measureTool = new MeasureTool(this);
     m_measureTool->setBRepModel(&m_document->brepModel());
@@ -1368,6 +1372,18 @@ void MainWindow::connectSignals()
         updateViewport();
     });
 
+    // Body isolate from feature tree double-click
+    connect(m_featureTree, &FeatureTree::bodyIsolateRequested, this,
+            [this](const QString& bodyId) {
+        onIsolateBody(bodyId.toStdString());
+    });
+
+    // Body isolate from viewport double-click
+    connect(m_viewport, &Viewport3D::bodyDoubleClicked, this,
+            [this](const std::string& bodyId) {
+        onIsolateBody(bodyId);
+    });
+
     // Body material assignment from FeatureTree context menu
     connect(m_featureTree, &FeatureTree::bodyMaterialRequested, this,
             [this](const QString& bodyId, const QString& materialName) {
@@ -1753,6 +1769,12 @@ void MainWindow::keyPressEvent(QKeyEvent* event)
         }
     }
 
+    // Escape exits isolated body view
+    if (event->key() == Qt::Key_Escape && !m_isolatedBodyId.empty()) {
+        onShowAll();
+        return;
+    }
+
     QMainWindow::keyPressEvent(event);
 }
 
@@ -1768,7 +1790,41 @@ void MainWindow::onNewDocument()
     m_selectionMgr->clearSelection();
     m_selectionMgr->clearPreSelection();
     m_firstBodyFitDone = false;
+    m_isolatedBodyId.clear();
     refreshAllPanels();
+}
+
+void MainWindow::onIsolateBody(const std::string& bodyId)
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+
+    if (!m_isolatedBodyId.empty() && m_isolatedBodyId == bodyId) {
+        // Already isolated on this body -- toggle back to show all
+        onShowAll();
+        return;
+    }
+
+    m_isolatedBodyId = bodyId;
+    for (const auto& id : ids) {
+        brep.setBodyVisible(id, id == bodyId);
+    }
+    updateViewport();
+    m_featureTree->refresh();
+    statusBar()->showMessage(tr("Isolated body — double-click or press Escape to show all"), 3000);
+}
+
+void MainWindow::onShowAll()
+{
+    m_isolatedBodyId.clear();
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    for (const auto& id : ids) {
+        brep.setBodyVisible(id, true);
+    }
+    updateViewport();
+    m_featureTree->refresh();
+    statusBar()->showMessage(tr("All bodies visible"), 2000);
 }
 
 void MainWindow::onOpenDocument()

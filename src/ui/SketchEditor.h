@@ -141,6 +141,9 @@ signals:
     void constraintSelected(const QString& constraintId, const QString& typeName,
                             const QString& description);
 
+    /// Emitted with context-specific hint text for the status bar.
+    void statusHint(const QString& hint);
+
 private:
     sketch::Sketch* m_sketch = nullptr;
     Viewport3D* m_viewport = nullptr;

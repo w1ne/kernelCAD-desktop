@@ -141,6 +141,12 @@ signals:
     /// Emitted when Ctrl+drag moves a selected body in the viewport.
     void occurrenceDragged(float dx, float dy, float dz);
 
+    /// Emitted when user double-clicks left on a body (for isolate view).
+    void bodyDoubleClicked(const std::string& bodyId);
+
+    /// Emitted when user double-clicks middle on geometry (for orbit center).
+    void orbitCenterChanged(const QVector3D& center);
+
 public:
     /// Access camera matrices (needed by SketchEditor for ray-plane intersection).
     QMatrix4x4 viewMatrix() const;
@@ -188,6 +194,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
@@ -309,6 +316,19 @@ private:
 
     // orbit distance (maintained for zoom)
     float m_orbitDistance = 5.0f;
+
+    // ── pre-selection hover delay (50ms) ─────────────────────────────────
+    QTimer m_preSelectTimer;
+    QPoint m_preSelectPos;
+
+    // ── selection cycling ─────────────────────────────────────────────────
+    QPoint m_lastPickPos;
+    int m_pickCycleIndex = 0;
+
+    // ── orbit momentum ───────────────────────────────────────────────────
+    QTimer m_momentumTimer;
+    float m_momentumDx = 0.0f;
+    float m_momentumDy = 0.0f;
 
     // ── cached vertex data for unproject ────────────────────────────────
     std::vector<float> m_vertexData;

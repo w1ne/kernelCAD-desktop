@@ -2,6 +2,7 @@
 #include <QMainWindow>
 #include <QVariant>
 #include <memory>
+#include <string>
 #include "SelectionManager.h"  // SelectionFilter enum
 
 class QAction;
@@ -361,6 +362,11 @@ private:
     /// True once the first body has been created and fitAll() was called.
     /// Reset on New Document so the next first body triggers auto-fit again.
     bool m_firstBodyFitDone = false;
+
+    // ── Isolate body view ───────────────────────────────────────────────
+    std::string m_isolatedBodyId;  ///< Empty = not isolated; non-empty = isolated body ID
+    void onIsolateBody(const std::string& bodyId);
+    void onShowAll();
 
     /// Install event filters on toolbar actions for hover-based filter switching.
     void installToolBarHoverFilters();

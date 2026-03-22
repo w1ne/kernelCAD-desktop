@@ -247,6 +247,47 @@ Viewport3D::Viewport3D(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
 
+    // Pre-selection hover delay (50ms) to prevent flicker during fast mouse movement
+    m_preSelectTimer.setSingleShot(true);
+    m_preSelectTimer.setInterval(50);
+    connect(&m_preSelectTimer, &QTimer::timeout, this, [this]() {
+        handlePreSelection(m_preSelectPos);
+    });
+
+    // Orbit momentum timer (~60fps, decaying rotation after releasing middle-button)
+    m_momentumTimer.setInterval(kAnimTickMs);
+    connect(&m_momentumTimer, &QTimer::timeout, this, [this]() {
+        // Apply diminishing rotation
+        if (std::abs(m_momentumDx) < 0.1f && std::abs(m_momentumDy) < 0.1f) {
+            m_momentumTimer.stop();
+            return;
+        }
+        // Simulate small arcball rotation from momentum deltas
+        QPoint fakePrev(width() / 2, height() / 2);
+        QPoint fakeNext(fakePrev.x() + static_cast<int>(m_momentumDx),
+                        fakePrev.y() + static_cast<int>(m_momentumDy));
+        QVector3D va = arcballVector(fakePrev);
+        QVector3D vb = arcballVector(fakeNext);
+        float angle = std::acos(std::min(1.0f, QVector3D::dotProduct(va, vb)));
+        QVector3D axis = QVector3D::crossProduct(va, vb);
+        QMatrix4x4 viewMat;
+        viewMat.lookAt(m_eye, m_center, m_up);
+        QVector3D worldAxis = viewMat.inverted().mapVector(axis);
+        if (worldAxis.length() > 1e-6f) {
+            worldAxis.normalize();
+            QVector3D offset = m_eye - m_center;
+            QMatrix4x4 rot;
+            rot.rotate(qRadiansToDegrees(angle) * 2.0f, worldAxis);
+            offset = rot.map(offset);
+            m_up = rot.mapVector(m_up).normalized();
+            m_eye = m_center + offset;
+            m_orbitDistance = offset.length();
+        }
+        m_momentumDx *= 0.9f;
+        m_momentumDy *= 0.9f;
+        update();
+    });
+
     // Camera animation timer
     m_animTimer.setInterval(kAnimTickMs);
     connect(&m_animTimer, &QTimer::timeout, this, [this]() {
@@ -1477,6 +1518,20 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
     if (m_sketchModeActive)
         return;
 
+    // Selection cycling: clicking same position cycles through filter modes
+    if ((screenPos - m_lastPickPos).manhattanLength() < 4) {
+        m_pickCycleIndex++;
+        // Cycle through: All -> Faces -> Edges -> All ...
+        static const SelectionFilter kCycleFilters[] = {
+            SelectionFilter::All, SelectionFilter::Faces, SelectionFilter::Edges
+        };
+        int idx = m_pickCycleIndex % 3;
+        m_selectionMgr->setFilter(kCycleFilters[idx]);
+    } else {
+        m_pickCycleIndex = 0;
+        m_lastPickPos = screenPos;
+    }
+
     int pickId = pickAtScreenPos(screenPos);
 
     if (pickId <= 0) {
@@ -1671,6 +1726,13 @@ void Viewport3D::mousePressEvent(QMouseEvent* event)
     m_isDragging = false;
     m_boxSelecting = false;
 
+    // Stop orbit momentum on any mouse press
+    m_momentumTimer.stop();
+
+    // Set cursor for middle-button (orbit/pan)
+    if (event->button() == Qt::MiddleButton)
+        setCursor(Qt::OpenHandCursor);
+
     // On left-click, check if we hit empty space — if so, prepare for box selection
     if (event->button() == Qt::LeftButton && !m_sketchModeActive) {
         int faceId = pickAtScreenPos(event->pos());
@@ -1720,6 +1782,21 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         handlePick(event->pos(), shiftHeld);
     }
 
+    // Orbit momentum: if releasing middle-button while dragging, apply momentum
+    if (event->button() == Qt::MiddleButton && m_isDragging) {
+        float lastDx = static_cast<float>(event->pos().x() - m_lastMousePos.x());
+        float lastDy = static_cast<float>(event->pos().y() - m_lastMousePos.y());
+        if (std::abs(lastDx) > 0.5f || std::abs(lastDy) > 0.5f) {
+            m_momentumDx = lastDx * 0.5f;
+            m_momentumDy = lastDy * 0.5f;
+            m_momentumTimer.start();
+        }
+    }
+
+    // Restore cursor after middle-button release
+    if (event->button() == Qt::MiddleButton)
+        setCursor(Qt::ArrowCursor);
+
     m_activeButton = Qt::NoButton;
     m_isDragging = false;
     event->accept();
@@ -1760,8 +1837,11 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
     if (m_activeButton != Qt::NoButton && !m_isDragging) {
         int dx = pos.x() - m_mousePressPos.x();
         int dy = pos.y() - m_mousePressPos.y();
-        if (dx * dx + dy * dy > kDragThreshold * kDragThreshold)
+        if (dx * dx + dy * dy > kDragThreshold * kDragThreshold) {
             m_isDragging = true;
+            if (m_activeButton == Qt::MiddleButton)
+                setCursor(Qt::ClosedHandCursor);
+        }
     }
 
     // Box selection: update rectangle and repaint
@@ -1852,8 +1932,9 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         m_center += shift;
     }
     else if (m_activeButton == Qt::NoButton) {
-        // No button pressed -- perform pre-selection (hover highlight)
-        handlePreSelection(pos);
+        // No button pressed -- perform pre-selection with 50ms delay to reduce flicker
+        m_preSelectPos = pos;
+        m_preSelectTimer.start();
     }
 
     m_lastMousePos = pos;
@@ -1896,6 +1977,61 @@ void Viewport3D::wheelEvent(QWheelEvent* event)
 
     update();
     event->accept();
+}
+
+void Viewport3D::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::MiddleButton) {
+        // Double-click middle button: set orbit center to 3D hit point
+        int faceId = pickAtScreenPos(event->pos());
+        if (faceId > 0 && m_lastPickDepth < 1.0f) {
+            // Unproject screen pos at picked depth to get world position
+            QMatrix4x4 view;
+            view.lookAt(m_eye, m_center, m_up);
+            QMatrix4x4 proj;
+            buildProjectionMatrix(proj);
+            QMatrix4x4 invMvp = (proj * view).inverted();
+
+            float ndcX = (2.0f * event->pos().x()) / width() - 1.0f;
+            float ndcY = 1.0f - (2.0f * event->pos().y()) / height();
+            float ndcZ = m_lastPickDepth * 2.0f - 1.0f;
+
+            QVector4D clipPt(ndcX, ndcY, ndcZ, 1.0f);
+            QVector4D worldPt = invMvp * clipPt;
+            if (std::abs(worldPt.w()) > 1e-7f)
+                worldPt /= worldPt.w();
+
+            QVector3D newCenter = worldPt.toVector3D();
+            QVector3D direction = (m_eye - newCenter).normalized();
+            m_center = newCenter;
+            m_eye = m_center + direction * m_orbitDistance;
+            emit orbitCenterChanged(m_center);
+            update();
+        }
+        event->accept();
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton) {
+        // Double-click left button: isolate body under cursor
+        if (m_sketchModeActive) {
+            event->accept();
+            return;
+        }
+        int pickId = pickAtScreenPos(event->pos());
+        if (pickId > 0) {
+            int faceIndex = pickId - 1;
+            if (m_faceMapLoaded &&
+                faceIndex >= 0 &&
+                static_cast<size_t>(faceIndex) < m_bodyIdPerFace.size()) {
+                emit bodyDoubleClicked(m_bodyIdPerFace[static_cast<size_t>(faceIndex)]);
+            }
+        }
+        event->accept();
+        return;
+    }
+
+    QOpenGLWidget::mouseDoubleClickEvent(event);
 }
 
 void Viewport3D::keyPressEvent(QKeyEvent* event)

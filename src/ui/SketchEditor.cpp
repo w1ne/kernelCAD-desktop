@@ -65,6 +65,7 @@ void SketchEditor::finishEditing()
     m_inferenceLines.clear();
 
     if (m_viewport) {
+        m_viewport->setCursor(Qt::ArrowCursor);
         m_viewport->setSketchEditor(nullptr);
         m_viewport->update();
     }
@@ -89,6 +90,114 @@ void SketchEditor::setTool(SketchTool tool)
         m_offsetEntityId.clear();
         m_tool = tool;
         emit toolChanged(m_tool);
+
+        // Cursor changes based on active tool
+        if (m_viewport) {
+            switch (tool) {
+            case SketchTool::None:
+                m_viewport->setCursor(Qt::ArrowCursor);
+                break;
+            case SketchTool::DrawLine:
+            case SketchTool::DrawRectangle:
+            case SketchTool::DrawCircle:
+            case SketchTool::DrawArc:
+            case SketchTool::DrawEllipse:
+            case SketchTool::DrawPolygon:
+            case SketchTool::DrawSpline:
+            case SketchTool::DrawSlot:
+            case SketchTool::DrawCircle3Point:
+            case SketchTool::DrawArc3Point:
+            case SketchTool::DrawRectangleCenter:
+            case SketchTool::Dimension:
+            case SketchTool::AddConstraint:
+            case SketchTool::ConstrainCoincident:
+            case SketchTool::ConstrainParallel:
+            case SketchTool::ConstrainPerpendicular:
+            case SketchTool::ConstrainTangent:
+            case SketchTool::ConstrainEqual:
+            case SketchTool::ConstrainSymmetric:
+            case SketchTool::ConstrainHorizontal:
+            case SketchTool::ConstrainVertical:
+            case SketchTool::ConstrainConcentric:
+                m_viewport->setCursor(Qt::CrossCursor);
+                break;
+            case SketchTool::Trim:
+            case SketchTool::Extend:
+            case SketchTool::Offset:
+            case SketchTool::ProjectEdge:
+            case SketchTool::SketchFillet:
+            case SketchTool::SketchChamfer:
+                m_viewport->setCursor(Qt::PointingHandCursor);
+                break;
+            }
+        }
+
+        // Status bar context hints
+        switch (tool) {
+        case SketchTool::None:
+            emit statusHint(tr("Select: Click to pick entities, drag to move points"));
+            break;
+        case SketchTool::DrawLine:
+            emit statusHint(tr("Line: Click to place start point"));
+            break;
+        case SketchTool::DrawRectangle:
+            emit statusHint(tr("Rectangle: Click to place first corner"));
+            break;
+        case SketchTool::DrawCircle:
+            emit statusHint(tr("Circle: Click to place center"));
+            break;
+        case SketchTool::DrawArc:
+            emit statusHint(tr("Arc: Click to place center point"));
+            break;
+        case SketchTool::DrawSpline:
+            emit statusHint(tr("Spline: Click to add control points, double-click or Enter to finish"));
+            break;
+        case SketchTool::DrawEllipse:
+            emit statusHint(tr("Ellipse: Click to place center"));
+            break;
+        case SketchTool::DrawPolygon:
+            emit statusHint(tr("Polygon: Click to place center"));
+            break;
+        case SketchTool::DrawSlot:
+            emit statusHint(tr("Slot: Click to place first center"));
+            break;
+        case SketchTool::DrawCircle3Point:
+            emit statusHint(tr("3-Point Circle: Click to place first point"));
+            break;
+        case SketchTool::DrawArc3Point:
+            emit statusHint(tr("3-Point Arc: Click to place start point"));
+            break;
+        case SketchTool::DrawRectangleCenter:
+            emit statusHint(tr("Center Rectangle: Click to place center"));
+            break;
+        case SketchTool::Trim:
+            emit statusHint(tr("Trim: Click on a curve segment to remove it"));
+            break;
+        case SketchTool::Extend:
+            emit statusHint(tr("Extend: Click near an endpoint to extend to nearest intersection"));
+            break;
+        case SketchTool::Offset:
+            emit statusHint(tr("Offset: Click a curve, then specify distance"));
+            break;
+        case SketchTool::ProjectEdge:
+            emit statusHint(tr("Project Edge: Click a 3D edge to project onto sketch plane"));
+            break;
+        case SketchTool::Dimension:
+            emit statusHint(tr("Dimension: Click an entity to dimension"));
+            break;
+        case SketchTool::AddConstraint:
+            emit statusHint(tr("Constraint: Pick entities to auto-constrain"));
+            break;
+        case SketchTool::SketchFillet:
+            emit statusHint(tr("Fillet: Pick two lines at a shared vertex, then enter radius"));
+            break;
+        case SketchTool::SketchChamfer:
+            emit statusHint(tr("Chamfer: Pick two lines at a shared vertex, then enter distance"));
+            break;
+        default:
+            emit statusHint(tr("Pick entities to apply constraint"));
+            break;
+        }
     }
 }
 
@@ -577,7 +686,32 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
             case SketchTool::ConstrainConcentric:    ctype = sketch::ConstraintType::Concentric; break;
             default: ctype = sketch::ConstraintType::Coincident; break;
             }
-            m_sketch->addConstraint(ctype, {m_firstPick.entityId, pick.entityId});
+            // Resolve entity IDs to point IDs for point-based constraints.
+            // When user clicks a circle, pickEntity returns the circle ID,
+            // but Coincident/Concentric need the center POINT ID.
+            std::string id1 = m_firstPick.entityId;
+            std::string id2 = pick.entityId;
+
+            auto resolveToPoint = [this](const std::string& eid) -> std::string {
+                if (m_sketch->points().count(eid)) return eid;
+                auto cIt = m_sketch->circles().find(eid);
+                if (cIt != m_sketch->circles().end()) return cIt->second.centerPointId;
+                auto aIt = m_sketch->arcs().find(eid);
+                if (aIt != m_sketch->arcs().end()) return aIt->second.centerPointId;
+                auto eIt = m_sketch->ellipses().find(eid);
+                if (eIt != m_sketch->ellipses().end()) return eIt->second.centerPointId;
+                auto lIt = m_sketch->lines().find(eid);
+                if (lIt != m_sketch->lines().end()) return lIt->second.startPointId;
+                return eid;
+            };
+
+            if (ctype == sketch::ConstraintType::Coincident ||
+                ctype == sketch::ConstraintType::Concentric) {
+                id1 = resolveToPoint(id1);
+                id2 = resolveToPoint(id2);
+            }
+
+            m_sketch->addConstraint(ctype, {id1, id2});
             m_sketch->solve();
             m_firstPick = {};
             if (m_viewport) m_viewport->update();
@@ -859,6 +993,28 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
         m_currentX = sx;
         m_currentY = sy;
         m_drawingInProgress = true;
+
+        // Update status hint for second click
+        switch (m_tool) {
+        case SketchTool::DrawLine:
+            emit statusHint(tr("Line: Click to place end point"));
+            break;
+        case SketchTool::DrawRectangle:
+        case SketchTool::DrawRectangleCenter:
+            emit statusHint(tr("Rectangle: Click to place opposite corner"));
+            break;
+        case SketchTool::DrawCircle:
+            emit statusHint(tr("Circle: Click to set radius"));
+            break;
+        case SketchTool::DrawEllipse:
+            emit statusHint(tr("Ellipse: Move to set radii, then click"));
+            break;
+        case SketchTool::DrawPolygon:
+            emit statusHint(tr("Polygon: Move to set radius, then click"));
+            break;
+        default:
+            break;
+        }
     } else {
         // Second click: finalize the operation
         m_currentX = sx;

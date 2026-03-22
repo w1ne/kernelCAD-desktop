@@ -41,6 +41,7 @@ signals:
     void activateComponentRequested(const QString& componentId);
     void bodyVisibilityToggled(const QString& bodyId, bool visible);
     void bodyMaterialRequested(const QString& bodyId, const QString& materialName);
+    void bodyIsolateRequested(const QString& bodyId);
     void featureRenamed(const QString& featureId, const QString& newName);
 
 private slots:

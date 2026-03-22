@@ -509,11 +509,16 @@ void FeatureTree::onItemDoubleClicked(QTreeWidgetItem* item, int /*column*/)
     if (!item)
         return;
 
-    // Only emit edit request for feature items (not component/body items)
-    QVariant compData = item->data(0, ComponentIdRole);
+    // Double-click on body item -> isolate view
     QVariant bodyData = item->data(0, BodyIdRole);
-    if ((compData.isValid() && !compData.toString().isEmpty()) ||
-        (bodyData.isValid() && !bodyData.toString().isEmpty()))
+    if (bodyData.isValid() && !bodyData.toString().isEmpty()) {
+        emit bodyIsolateRequested(bodyData.toString());
+        return;
+    }
+
+    // Only emit edit request for feature items (not component items)
+    QVariant compData = item->data(0, ComponentIdRole);
+    if (compData.isValid() && !compData.toString().isEmpty())
         return;
 
     QVariant data = item->data(0, Qt::UserRole);
