@@ -64,6 +64,7 @@ add_executable(kernelCAD
   # ui
   ui/MainWindow.cpp
   ui/CommandController.cpp
+  ui/CameraController.cpp
   ui/Viewport3D.cpp
   ui/FeatureTree.cpp
   ui/TimelinePanel.cpp

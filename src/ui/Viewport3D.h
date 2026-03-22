@@ -22,6 +22,7 @@ namespace kernel { class BRepModel; class BRepQuery; }
 class SelectionManager;
 class SketchEditor;
 class ViewportManipulator;
+class CameraController;
 
 /// Per-body rendering data for multi-body display with distinct colors.
 struct BodyRenderData {
@@ -104,8 +105,11 @@ public:
     void setViewMode(ViewMode mode);
     ViewMode viewMode() const;
 
+    /// Access the camera controller (for external callers needing view/projection).
+    CameraController* camera() const { return m_camera; }
+
     /// Query current projection mode.
-    bool isPerspective() const { return m_perspectiveProjection; }
+    bool isPerspective() const;
 
     /// Set a standard view preset (Front, Back, Left, Right, Top, Bottom, Isometric).
     void setStandardView(StandardView view);
@@ -131,7 +135,7 @@ public:
     bool isSketchMode() const { return m_sketchModeActive; }
 
     /// Current orbit distance (for camera positioning).
-    float orbitDistance() const { return m_orbitDistance; }
+    float orbitDistance() const;
 
     /// Save/restore camera state (used when entering/leaving sketch mode).
     void saveCameraState();
@@ -285,16 +289,8 @@ private:
     SelectionManager* m_selectionMgr = nullptr;
     kernel::BRepModel* m_brepModelPtr = nullptr;  // for edge resolution during picking
 
-    // ── camera state ────────────────────────────────────────────────────
-    QVector3D m_eye    {0.0f, 0.0f, 5.0f};
-    QVector3D m_center {0.0f, 0.0f, 0.0f};
-    QVector3D m_up     {0.0f, 1.0f, 0.0f};
-    float m_fov  = 45.0f;
-    float m_near = 0.1f;
-    float m_far  = 100000.0f;
-
-    /// Dynamically adjust near/far planes based on scene size and camera distance.
-    void updateClipPlanes();
+    // ── camera controller (owns all camera state) ──────────────────────
+    CameraController* m_camera = nullptr;
 
     // ── bounding box (set by setMesh) ───────────────────────────────────
     QVector3D m_bboxMin;
@@ -314,8 +310,7 @@ private:
     bool m_isDragging = false;
     static constexpr int kDragThreshold = 5;  // pixels
 
-    // orbit distance (maintained for zoom)
-    float m_orbitDistance = 5.0f;
+    // (orbit distance moved to CameraController)
 
     // ── pre-selection hover delay (50ms) ─────────────────────────────────
     QTimer m_preSelectTimer;
@@ -325,10 +320,7 @@ private:
     QPoint m_lastPickPos;
     int m_pickCycleIndex = 0;
 
-    // ── orbit momentum ───────────────────────────────────────────────────
-    QTimer m_momentumTimer;
-    float m_momentumDx = 0.0f;
-    float m_momentumDy = 0.0f;
+    // (orbit momentum moved to CameraController)
 
     // ── cached vertex data for unproject ────────────────────────────────
     std::vector<float> m_vertexData;
@@ -402,11 +394,6 @@ private:
     void drawConstructionPlanes(const QMatrix4x4& mvp);
 
     // ── standard views & ViewCube ───────────────────────────────────────
-    /// Position camera along `direction` at m_orbitDistance from m_center.
-    void setStandardView(const QVector3D& direction, const QVector3D& up);
-
-    /// Build the projection matrix (perspective or ortho) into `out`.
-    void buildProjectionMatrix(QMatrix4x4& out) const;
 
     /// Draw a small ViewCube overlay in the top-right corner using QPainter.
     void drawViewCubeOverlay();
@@ -414,7 +401,7 @@ private:
     /// Handle a click inside the ViewCube area. Returns true if consumed.
     bool handleViewCubeClick(const QPoint& pos);
 
-    bool m_perspectiveProjection = true;
+    // (m_perspectiveProjection moved to CameraController)
 
     // ViewCube constants
     static constexpr int kViewCubeSize   = 100; // cube area in pixels
@@ -438,24 +425,11 @@ private:
     /// sketch drawing.  Called after drawSketchConstraintOverlay().
     void drawSketchSnapAndDimensionOverlay();
 
-    // ── smooth camera animation ─────────────────────────────────────────
-    QTimer  m_animTimer;
-    int     m_animDuration    = 300;
-    int     m_animElapsed     = 0;
-    bool    m_animating       = false;
-    QVector3D m_animStartEye, m_animStartCenter, m_animStartUp;
-    QVector3D m_animEndEye,   m_animEndCenter,   m_animEndUp;
-    static constexpr int kAnimTickMs = 16;  // ~60 fps
+    // (smooth camera animation moved to CameraController)
 
     // ── sketch mode state ─────────────────────────────────────────────────
     bool m_sketchModeActive = false;
-    bool m_lockRotation     = false;
-
-    // Saved camera state for restoring after sketch editing
-    QVector3D m_savedEye    {0.0f, 0.0f, 5.0f};
-    QVector3D m_savedCenter {0.0f, 0.0f, 0.0f};
-    QVector3D m_savedUp     {0.0f, 1.0f, 0.0f};
-    bool      m_hasSavedCamera = false;
+    // (m_lockRotation, saved camera state moved to CameraController)
 
     // ── viewport manipulator (drag handles) ──────────────────────────────
     ViewportManipulator* m_manipulator = nullptr;

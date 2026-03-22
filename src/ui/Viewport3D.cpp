@@ -1,4 +1,5 @@
 #include "Viewport3D.h"
+#include "CameraController.h"
 #include "ViewportManipulator.h"
 #include "SketchEditor.h"
 #include "SelectionManager.h"
@@ -247,76 +248,15 @@ Viewport3D::Viewport3D(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
 
+    // Create camera controller
+    m_camera = new CameraController(this);
+    connect(m_camera, &CameraController::cameraChanged, this, QOverload<>::of(&QWidget::update));
+
     // Pre-selection hover delay (50ms) to prevent flicker during fast mouse movement
     m_preSelectTimer.setSingleShot(true);
     m_preSelectTimer.setInterval(50);
     connect(&m_preSelectTimer, &QTimer::timeout, this, [this]() {
         handlePreSelection(m_preSelectPos);
-    });
-
-    // Orbit momentum timer (~60fps, decaying rotation after releasing middle-button)
-    m_momentumTimer.setInterval(kAnimTickMs);
-    connect(&m_momentumTimer, &QTimer::timeout, this, [this]() {
-        // Apply diminishing rotation
-        if (std::abs(m_momentumDx) < 0.1f && std::abs(m_momentumDy) < 0.1f) {
-            m_momentumTimer.stop();
-            return;
-        }
-        // Simulate small arcball rotation from momentum deltas
-        QPoint fakePrev(width() / 2, height() / 2);
-        QPoint fakeNext(fakePrev.x() + static_cast<int>(m_momentumDx),
-                        fakePrev.y() + static_cast<int>(m_momentumDy));
-        QVector3D va = arcballVector(fakePrev);
-        QVector3D vb = arcballVector(fakeNext);
-        float angle = std::acos(std::min(1.0f, QVector3D::dotProduct(va, vb)));
-        QVector3D axis = QVector3D::crossProduct(va, vb);
-        QMatrix4x4 viewMat;
-        viewMat.lookAt(m_eye, m_center, m_up);
-        QVector3D worldAxis = viewMat.inverted().mapVector(axis);
-        if (worldAxis.length() > 1e-6f) {
-            worldAxis.normalize();
-            QVector3D offset = m_eye - m_center;
-            QMatrix4x4 rot;
-            rot.rotate(qRadiansToDegrees(angle) * 2.0f, worldAxis);
-            offset = rot.map(offset);
-            m_up = rot.mapVector(m_up).normalized();
-            m_eye = m_center + offset;
-            m_orbitDistance = offset.length();
-
-            // Clamp up vector to prevent barrel roll
-            QVector3D fwd = (m_center - m_eye).normalized();
-            QVector3D worldUp(0.0f, 1.0f, 0.0f);
-            if (std::abs(QVector3D::dotProduct(fwd, worldUp)) < 0.95f) {
-                QVector3D rt = QVector3D::crossProduct(fwd, worldUp).normalized();
-                m_up = QVector3D::crossProduct(rt, fwd).normalized();
-            }
-        }
-        m_momentumDx *= 0.9f;
-        m_momentumDy *= 0.9f;
-        update();
-    });
-
-    // Camera animation timer
-    m_animTimer.setInterval(kAnimTickMs);
-    connect(&m_animTimer, &QTimer::timeout, this, [this]() {
-        m_animElapsed += kAnimTickMs;
-        float t = std::min(1.0f, static_cast<float>(m_animElapsed) / m_animDuration);
-        // Smooth ease-in-out (cubic)
-        float s = (t < 0.5f) ? 4.0f * t * t * t
-                              : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f;
-
-        m_eye    = m_animStartEye    + s * (m_animEndEye    - m_animStartEye);
-        m_center = m_animStartCenter + s * (m_animEndCenter - m_animStartCenter);
-        // Slerp-like up vector interpolation (normalize after lerp)
-        QVector3D upLerp = m_animStartUp + s * (m_animEndUp - m_animStartUp);
-        float upLen = upLerp.length();
-        m_up = (upLen > 1e-6f) ? upLerp / upLen : m_animEndUp;
-
-        update();
-        if (t >= 1.0f) {
-            m_animating = false;
-            m_animTimer.stop();
-        }
     });
 }
 
@@ -403,17 +343,17 @@ void Viewport3D::resizeGL(int w, int h)
 void Viewport3D::paintGL()
 {
     // Adjust near/far clip planes based on scene size
-    updateClipPlanes();
+    m_camera->updateClipPlanes(m_bboxMin, m_bboxMax);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // -- common matrices -------------------------------------------------
     QMatrix4x4 model;                           // identity
-    QMatrix4x4 view;
-    view.lookAt(m_eye, m_center, m_up);
+    QMatrix4x4 view = m_camera->viewMatrix();
 
-    QMatrix4x4 projection;
-    buildProjectionMatrix(projection);
+    const float aspect = static_cast<float>(width()) /
+                         std::max(1.0f, static_cast<float>(height()));
+    QMatrix4x4 projection = m_camera->projectionMatrix(aspect);
 
     QMatrix4x4 mvp = projection * view * model;
 
@@ -487,7 +427,7 @@ void Viewport3D::paintGL()
 
         // -- lighting ----------------------------------------------------
         QVector3D lightDir = QVector3D(0.3f, 1.0f, 0.5f).normalized();
-        m_program->setUniformValue("uViewPos",     m_eye);
+        m_program->setUniformValue("uViewPos",     m_camera->eye());
         m_program->setUniformValue("uLightDir",    lightDir);
         m_program->setUniformValue("uLightColor",  QVector3D(1.0f, 1.0f, 1.0f));
 
@@ -603,7 +543,7 @@ void Viewport3D::paintGL()
         m_program->setUniformValue("uClipPlane", m_clipPlane);
 
         QVector3D lightDir = QVector3D(0.3f, 1.0f, 0.5f).normalized();
-        m_program->setUniformValue("uViewPos",     m_eye);
+        m_program->setUniformValue("uViewPos",     m_camera->eye());
         m_program->setUniformValue("uLightDir",    lightDir);
         m_program->setUniformValue("uLightColor",  QVector3D(1.0f, 1.0f, 1.0f));
         m_program->setUniformValue("uObjectColor", QVector3D(0.6f, 0.65f, 0.7f));
@@ -1296,7 +1236,7 @@ void Viewport3D::setBodies(const std::vector<BodyRenderData>& bodies)
 }
 
 // =============================================================================
-// fitAll -- frame the bounding box
+// fitAll -- delegate to CameraController
 // =============================================================================
 
 void Viewport3D::fitAll()
@@ -1304,103 +1244,20 @@ void Viewport3D::fitAll()
     if (!m_meshLoaded && !m_bodiesLoaded)
         return;
 
-    const QVector3D center = (m_bboxMin + m_bboxMax) * 0.5f;
-    const float     radius = (m_bboxMax - m_bboxMin).length() * 0.5f;
-
-    // Place the camera so the bounding sphere just fits inside the frustum.
-    const float fovRad   = qDegreesToRadians(m_fov);
-    const float distance = radius / std::sin(fovRad * 0.5f);
-
-    float newOrbitDist = distance * 1.1f;
-    QVector3D targetCenter = center;
-    QVector3D targetEye = targetCenter + QVector3D(0.0f, 0.0f, newOrbitDist);
-    QVector3D targetUp(0.0f, 1.0f, 0.0f);
-
-    // Update near/far and orbit distance immediately (animation only moves camera position)
-    m_orbitDistance = newOrbitDist;
-    m_near = std::max(0.001f, m_orbitDistance - radius * 2.0f);
-    m_far  = m_orbitDistance + radius * 2.0f;
-
-    animateTo(targetEye, targetCenter, targetUp, 300);
+    m_camera->fitAll(m_bboxMin, m_bboxMax);
 }
 
-// =============================================================================
-// Dynamic clip planes
-// =============================================================================
+// (updateClipPlanes moved to CameraController)
 
-void Viewport3D::updateClipPlanes()
-{
-    QVector3D bboxCenter = (m_bboxMin + m_bboxMax) * 0.5f;
-    float sceneRadius = (m_bboxMax - m_bboxMin).length() * 0.5f;
-    if (sceneRadius < 1.0f) sceneRadius = 100.0f;
-    float camDist = (m_eye - bboxCenter).length();
-    m_near = std::max(0.1f, camDist * 0.001f);
-    m_far  = std::max(10000.0f, camDist + sceneRadius * 3.0f);
-}
+// (buildProjectionMatrix moved to CameraController)
 
 // =============================================================================
-// Projection matrix helper (perspective / orthographic)
+// Standard view -- delegate to CameraController
 // =============================================================================
-
-void Viewport3D::buildProjectionMatrix(QMatrix4x4& out) const
-{
-    out.setToIdentity();
-    const float aspect = static_cast<float>(width()) /
-                         std::max(1.0f, static_cast<float>(height()));
-    if (m_perspectiveProjection) {
-        out.perspective(m_fov, aspect, m_near, m_far);
-    } else {
-        // Orthographic: size matches what perspective would show at orbit distance
-        const float halfH = m_orbitDistance * std::tan(qDegreesToRadians(m_fov) * 0.5f);
-        const float halfW = halfH * aspect;
-        out.ortho(-halfW, halfW, -halfH, halfH, m_near, m_far);
-    }
-}
-
-// =============================================================================
-// Standard view helper
-// =============================================================================
-
-void Viewport3D::setStandardView(const QVector3D& direction, const QVector3D& up)
-{
-    QVector3D targetEye = m_center + direction * m_orbitDistance;
-    animateTo(targetEye, m_center, up, 300);
-}
 
 void Viewport3D::setStandardView(StandardView view)
 {
-    const QVector3D upY(0.0f, 1.0f, 0.0f);
-    const QVector3D upZ(0.0f, 0.0f, 1.0f);
-
-    switch (view) {
-    case StandardView::Front:
-        setStandardView(QVector3D(0,  1, 0), upZ);
-        break;
-    case StandardView::Back:
-        setStandardView(QVector3D(0, -1, 0), upZ);
-        break;
-    case StandardView::Right:
-        setStandardView(QVector3D(-1, 0, 0), upZ);
-        break;
-    case StandardView::Left:
-        setStandardView(QVector3D( 1, 0, 0), upZ);
-        break;
-    case StandardView::Top:
-        setStandardView(QVector3D(0, 0,  1), upY);
-        break;
-    case StandardView::Bottom:
-        setStandardView(QVector3D(0, 0, -1), -upY);
-        break;
-    case StandardView::Isometric: {
-        const float k = 0.577350269f; // 1/sqrt(3)
-        QVector3D dir(k, k, k);
-        // Compute an up vector perpendicular to the view direction
-        QVector3D right = QVector3D::crossProduct(dir, upZ).normalized();
-        QVector3D up    = QVector3D::crossProduct(right, dir).normalized();
-        setStandardView(dir, up);
-        break;
-    }
-    }
+    m_camera->setStandardView(view);
 }
 
 // =============================================================================
@@ -1463,11 +1320,11 @@ int Viewport3D::pickAtScreenPos(const QPoint& pos)
 
     // -- matrices (same as paintGL) ------------------------------------
     QMatrix4x4 model;
-    QMatrix4x4 view;
-    view.lookAt(m_eye, m_center, m_up);
+    QMatrix4x4 view = m_camera->viewMatrix();
 
-    QMatrix4x4 projection;
-    buildProjectionMatrix(projection);
+    const float pickAspect = static_cast<float>(width()) /
+                             std::max(1.0f, static_cast<float>(height()));
+    QMatrix4x4 projection = m_camera->projectionMatrix(pickAspect);
 
     m_pickProgram->setUniformValue("uModel",      model);
     m_pickProgram->setUniformValue("uView",        view);
@@ -1566,10 +1423,8 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
 
     // Compute accurate world position by unprojecting the screen position
     // using the depth value read from the pick FBO's depth buffer.
-    QMatrix4x4 view;
-    view.lookAt(m_eye, m_center, m_up);
-    QMatrix4x4 projection;
-    buildProjectionMatrix(projection);
+    QMatrix4x4 view = m_camera->viewMatrix();
+    QMatrix4x4 projection = projectionMatrix();
     QMatrix4x4 mvp = projection * view;
     QMatrix4x4 invMvp = mvp.inverted();
 
@@ -1587,7 +1442,7 @@ void Viewport3D::handlePick(const QPoint& screenPos, bool addToSelection)
     hit.worldX = hitPos.x();
     hit.worldY = hitPos.y();
     hit.worldZ = hitPos.z();
-    hit.depth  = (m_eye - hitPos).length();
+    hit.depth  = (m_camera->eye() - hitPos).length();
 
     // Edge resolution: when filter is Edges, find the nearest edge on this body
     // to the 3D hit point. This converts a face pick into an edge pick.
@@ -1735,7 +1590,7 @@ void Viewport3D::mousePressEvent(QMouseEvent* event)
     m_boxSelecting = false;
 
     // Stop orbit momentum on any mouse press
-    m_momentumTimer.stop();
+    m_camera->stopMomentum();
 
     // Set cursor for middle-button (orbit/pan)
     if (event->button() == Qt::MiddleButton)
@@ -1795,9 +1650,7 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         float lastDx = static_cast<float>(event->pos().x() - m_lastMousePos.x());
         float lastDy = static_cast<float>(event->pos().y() - m_lastMousePos.y());
         if (std::abs(lastDx) > 0.5f || std::abs(lastDy) > 0.5f) {
-            m_momentumDx = lastDx * 0.5f;
-            m_momentumDy = lastDy * 0.5f;
-            m_momentumTimer.start();
+            m_camera->startMomentum(lastDx * 0.5f, lastDy * 0.5f);
         }
     }
 
@@ -1867,67 +1720,30 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         const float dx = static_cast<float>(pos.x() - m_lastMousePos.x());
         const float dy = static_cast<float>(pos.y() - m_lastMousePos.y());
 
-        QVector3D forward = (m_center - m_eye).normalized();
-        QVector3D right   = QVector3D::crossProduct(forward, m_up).normalized();
+        QVector3D forward = (m_camera->center() - m_camera->eye()).normalized();
+        QVector3D right   = QVector3D::crossProduct(forward, m_camera->up()).normalized();
         QVector3D camUp   = QVector3D::crossProduct(right, forward).normalized();
 
-        const float moveSpeed = m_orbitDistance * 0.002f;
+        const float moveSpeed = m_camera->orbitDistance() * 0.002f;
         QVector3D delta = (dx * right - dy * camUp) * moveSpeed;
 
         emit occurrenceDragged(delta.x(), delta.y(), delta.z());
     }
     else if (m_activeButton == Qt::MiddleButton && m_isDragging) {
-        // Fusion 360 mapping: middle-button = orbit, middle+Shift = pan
+        // Middle-button = orbit, middle+Shift = pan
         bool shiftHeld = (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
-        if (m_lockRotation || shiftHeld) {
+        if (m_camera->lockRotation() || shiftHeld) {
             // -- Pan --
             const float dx2 = static_cast<float>(pos.x() - m_lastMousePos.x());
             const float dy2 = static_cast<float>(pos.y() - m_lastMousePos.y());
 
-            QVector3D forward = (m_center - m_eye).normalized();
-            QVector3D right   = QVector3D::crossProduct(forward, m_up).normalized();
-            QVector3D camUp   = QVector3D::crossProduct(right, forward).normalized();
-
-            const float panSpeed = m_orbitDistance * 0.002f;
-            QVector3D shift = (-dx2 * right + dy2 * camUp) * panSpeed;
-
-            m_eye    += shift;
-            m_center += shift;
+            m_camera->pan(dx2, dy2, static_cast<float>(width()), static_cast<float>(height()));
         } else {
             // -- Arcball rotation ------------------------------------------------
             QVector3D va = arcballVector(m_lastMousePos);
             QVector3D vb = arcballVector(pos);
 
-            float angle = std::acos(std::min(1.0f, QVector3D::dotProduct(va, vb)));
-            QVector3D axis = QVector3D::crossProduct(va, vb);
-
-            // The axis is in screen/camera space -- transform to world space.
-            QMatrix4x4 viewMat;
-            viewMat.lookAt(m_eye, m_center, m_up);
-            QMatrix4x4 invView = viewMat.inverted();
-
-            // Transform axis from camera space to world space (rotation only)
-            QVector3D worldAxis = invView.mapVector(axis);
-            if (worldAxis.length() > 1e-6f) {
-                worldAxis.normalize();
-
-                // Rotate eye around center
-                QVector3D offset = m_eye - m_center;
-                QMatrix4x4 rot;
-                rot.rotate(qRadiansToDegrees(angle) * 2.0f, worldAxis);
-                offset = rot.map(offset);
-                m_up   = rot.mapVector(m_up).normalized();
-                m_eye  = m_center + offset;
-                m_orbitDistance = offset.length();
-
-                // Clamp up vector to prevent barrel roll (keep world-up stable)
-                QVector3D fwd = (m_center - m_eye).normalized();
-                QVector3D worldUp(0.0f, 1.0f, 0.0f);
-                if (std::abs(QVector3D::dotProduct(fwd, worldUp)) < 0.95f) {
-                    QVector3D rt = QVector3D::crossProduct(fwd, worldUp).normalized();
-                    m_up = QVector3D::crossProduct(rt, fwd).normalized();
-                }
-            }
+            m_camera->orbit(va, vb);
         }
     }
     else if (m_activeButton == Qt::RightButton && m_isDragging) {
@@ -1935,17 +1751,7 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         const float dx = static_cast<float>(pos.x() - m_lastMousePos.x());
         const float dy = static_cast<float>(pos.y() - m_lastMousePos.y());
 
-        // Compute camera right/up vectors
-        QVector3D forward = (m_center - m_eye).normalized();
-        QVector3D right   = QVector3D::crossProduct(forward, m_up).normalized();
-        QVector3D camUp   = QVector3D::crossProduct(right, forward).normalized();
-
-        // Scale pan speed proportional to orbit distance
-        const float panSpeed = m_orbitDistance * 0.002f;
-        QVector3D shift = (-dx * right + dy * camUp) * panSpeed;
-
-        m_eye    += shift;
-        m_center += shift;
+        m_camera->pan(dx, dy, static_cast<float>(width()), static_cast<float>(height()));
     }
     else if (m_activeButton == Qt::NoButton) {
         // No button pressed -- perform pre-selection with 50ms delay to reduce flicker
@@ -1962,36 +1768,16 @@ void Viewport3D::wheelEvent(QWheelEvent* event)
 {
     // angleDelta().y() is typically +/-120 per notch
     const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
-    const float factor = std::pow(1.1f, delta);  // zoom factor per notch
 
-    // Compute the world-space point under the cursor for zoom-to-cursor
+    // Compute NDC position of cursor for zoom-to-cursor
     QPointF cursorPos = event->position();
     float ndcX = (2.0f * static_cast<float>(cursorPos.x())) / width() - 1.0f;
     float ndcY = 1.0f - (2.0f * static_cast<float>(cursorPos.y())) / height();
 
-    QMatrix4x4 view, proj;
-    view.lookAt(m_eye, m_center, m_up);
-    buildProjectionMatrix(proj);
-    QMatrix4x4 invVP = (proj * view).inverted();
+    const float viewportAspect = static_cast<float>(width()) /
+                                 std::max(1.0f, static_cast<float>(height()));
+    m_camera->zoom(delta, ndcX, ndcY, viewportAspect);
 
-    QVector4D nearPt = invVP * QVector4D(ndcX, ndcY, 0.0f, 1.0f);
-    if (std::abs(nearPt.w()) > 1e-7f) nearPt /= nearPt.w();
-    QVector3D cursorWorld = nearPt.toVector3D();
-
-    // Compute new orbit distance
-    float newDist = m_orbitDistance / factor;
-    newDist = std::max(m_near * 2.0f, std::min(100000.0f, newDist));
-
-    // Shift the orbit center toward the cursor on zoom-in, away on zoom-out
-    float shiftAmount = (1.0f - 1.0f / factor) * 0.3f;
-    QVector3D centerShift = (cursorWorld - m_center) * shiftAmount;
-    m_center += centerShift;
-
-    QVector3D direction = (m_eye - m_center).normalized();
-    m_orbitDistance = newDist;
-    m_eye = m_center + direction * m_orbitDistance;
-
-    update();
     event->accept();
 }
 
@@ -2002,10 +1788,8 @@ void Viewport3D::mouseDoubleClickEvent(QMouseEvent* event)
         int faceId = pickAtScreenPos(event->pos());
         if (faceId > 0 && m_lastPickDepth < 1.0f) {
             // Unproject screen pos at picked depth to get world position
-            QMatrix4x4 view;
-            view.lookAt(m_eye, m_center, m_up);
-            QMatrix4x4 proj;
-            buildProjectionMatrix(proj);
+            QMatrix4x4 view = m_camera->viewMatrix();
+            QMatrix4x4 proj = projectionMatrix();
             QMatrix4x4 invMvp = (proj * view).inverted();
 
             float ndcX = (2.0f * event->pos().x()) / width() - 1.0f;
@@ -2018,10 +1802,10 @@ void Viewport3D::mouseDoubleClickEvent(QMouseEvent* event)
                 worldPt /= worldPt.w();
 
             QVector3D newCenter = worldPt.toVector3D();
-            QVector3D direction = (m_eye - newCenter).normalized();
-            m_center = newCenter;
-            m_eye = m_center + direction * m_orbitDistance;
-            emit orbitCenterChanged(m_center);
+            QVector3D direction = (m_camera->eye() - newCenter).normalized();
+            m_camera->setCenter(newCenter);
+            m_camera->setEye(m_camera->center() + direction * m_camera->orbitDistance());
+            emit orbitCenterChanged(m_camera->center());
             update();
         }
         event->accept();
@@ -2067,34 +1851,33 @@ void Viewport3D::keyPressEvent(QKeyEvent* event)
     // Numpad 1: Front (look along -Y) / Ctrl: Back (look along +Y)
     case Qt::Key_1:
         if (ctrl)
-            setStandardView(QVector3D(0, -1, 0), upZ);   // Back
+            m_camera->setStandardView(QVector3D(0, -1, 0), upZ);   // Back
         else
-            setStandardView(QVector3D(0,  1, 0), upZ);   // Front
+            m_camera->setStandardView(QVector3D(0,  1, 0), upZ);   // Front
         event->accept();
         return;
 
     // Numpad 3: Right (look along -X) / Ctrl: Left (look along +X)
     case Qt::Key_3:
         if (ctrl)
-            setStandardView(QVector3D( 1, 0, 0), upZ);   // Left
+            m_camera->setStandardView(QVector3D( 1, 0, 0), upZ);   // Left
         else
-            setStandardView(QVector3D(-1, 0, 0), upZ);   // Right
+            m_camera->setStandardView(QVector3D(-1, 0, 0), upZ);   // Right
         event->accept();
         return;
 
     // Numpad 7: Top (look along -Z) / Ctrl: Bottom (look along +Z)
     case Qt::Key_7:
         if (ctrl)
-            setStandardView(QVector3D(0, 0, -1), -upY);  // Bottom
+            m_camera->setStandardView(QVector3D(0, 0, -1), -upY);  // Bottom
         else
-            setStandardView(QVector3D(0, 0,  1),  upY);  // Top
+            m_camera->setStandardView(QVector3D(0, 0,  1),  upY);  // Top
         event->accept();
         return;
 
     // Numpad 5: Toggle perspective / orthographic
     case Qt::Key_5:
-        m_perspectiveProjection = !m_perspectiveProjection;
-        update();
+        m_camera->togglePerspective();
         event->accept();
         return;
 
@@ -2131,44 +1914,40 @@ void Viewport3D::setSketchEditor(SketchEditor* editor)
 void Viewport3D::setSketchMode(bool enabled)
 {
     m_sketchModeActive = enabled;
-    m_lockRotation = enabled;
+    m_camera->setLockRotation(enabled);
     update();
 }
 
 void Viewport3D::saveCameraState()
 {
-    m_savedEye    = m_eye;
-    m_savedCenter = m_center;
-    m_savedUp     = m_up;
-    m_hasSavedCamera = true;
+    m_camera->saveCameraState();
 }
 
 void Viewport3D::restoreCameraState(bool animate)
 {
-    if (!m_hasSavedCamera)
-        return;
-    if (animate) {
-        animateTo(m_savedEye, m_savedCenter, m_savedUp, 400);
-    } else {
-        m_eye    = m_savedEye;
-        m_center = m_savedCenter;
-        m_up     = m_savedUp;
-    }
-    m_hasSavedCamera = false;
+    m_camera->restoreCameraState(animate);
+}
+
+bool Viewport3D::isPerspective() const
+{
+    return m_camera->isPerspective();
+}
+
+float Viewport3D::orbitDistance() const
+{
+    return m_camera->orbitDistance();
 }
 
 QMatrix4x4 Viewport3D::viewMatrix() const
 {
-    QMatrix4x4 v;
-    v.lookAt(m_eye, m_center, m_up);
-    return v;
+    return m_camera->viewMatrix();
 }
 
 QMatrix4x4 Viewport3D::projectionMatrix() const
 {
-    QMatrix4x4 p;
-    buildProjectionMatrix(p);
-    return p;
+    const float aspect = static_cast<float>(width()) /
+                         std::max(1.0f, static_cast<float>(height()));
+    return m_camera->projectionMatrix(aspect);
 }
 
 void Viewport3D::buildSketchOverlayShader()
@@ -2279,10 +2058,10 @@ void Viewport3D::drawGrid(const QMatrix4x4& mvp)
 {
     // Compute grid opacity: fade out as camera gets very far
     float alpha = 1.0f;
-    if (m_orbitDistance > 200.0f)
+    if (m_camera->orbitDistance() > 200.0f)
         alpha = 0.0f;
-    else if (m_orbitDistance > 100.0f)
-        alpha = 1.0f - (m_orbitDistance - 100.0f) / 100.0f;
+    else if (m_camera->orbitDistance() > 100.0f)
+        alpha = 1.0f - (m_camera->orbitDistance() - 100.0f) / 100.0f;
 
     if (alpha <= 0.0f)
         return;
@@ -3294,10 +3073,8 @@ void Viewport3D::drawSketchOverlay()
 
 QPointF Viewport3D::worldToScreen(const QVector3D& worldPt) const
 {
-    QMatrix4x4 view;
-    view.lookAt(m_eye, m_center, m_up);
-    QMatrix4x4 proj;
-    buildProjectionMatrix(proj);
+    QMatrix4x4 view = m_camera->viewMatrix();
+    QMatrix4x4 proj = projectionMatrix();
     QMatrix4x4 mvp = proj * view;
 
     QVector4D clip = mvp * QVector4D(worldPt, 1.0f);
@@ -3927,7 +3704,7 @@ void Viewport3D::drawViewCubeOverlay()
 
     // Build the view rotation matrix (rotation only -- no translation)
     QMatrix4x4 viewMat;
-    viewMat.lookAt(m_eye, m_center, m_up);
+    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
     // Extract the 3x3 rotation (upper-left) as a QMatrix4x4
     QMatrix4x4 viewRot;
     for (int r = 0; r < 3; ++r)
@@ -4038,7 +3815,7 @@ void Viewport3D::drawViewCubeOverlay()
         f.setPixelSize(9);
         f.setBold(false);
         painter.setFont(f);
-        const char* projLabel = m_perspectiveProjection ? "Persp" : "Ortho";
+        const char* projLabel = m_camera->isPerspective() ? "Persp" : "Ortho";
         painter.drawText(QRectF(cx - 25, cy + kViewCubeSize * 0.5f + 2, 50, 14),
                          Qt::AlignCenter, projLabel);
     }
@@ -4078,7 +3855,7 @@ bool Viewport3D::handleViewCubeClick(const QPoint& pos)
 
     // Build view rotation for projection
     QMatrix4x4 viewMat;
-    viewMat.lookAt(m_eye, m_center, m_up);
+    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
     QMatrix4x4 viewRot;
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c)
@@ -4136,7 +3913,7 @@ bool Viewport3D::handleViewCubeClick(const QPoint& pos)
             poly << p[face.v[j]];
 
         if (poly.containsPoint(clickPt, Qt::OddEvenFill)) {
-            setStandardView(face.direction, face.up);
+            m_camera->setStandardView(face.direction, face.up);
             return true;
         }
     }
@@ -4255,7 +4032,7 @@ void Viewport3D::drawPreviewMesh(const QMatrix4x4& model,
 
     // Lighting (same as main scene)
     QVector3D lightDir = QVector3D(0.3f, 1.0f, 0.5f).normalized();
-    m_program->setUniformValue("uViewPos",     m_eye);
+    m_program->setUniformValue("uViewPos",     m_camera->eye());
     m_program->setUniformValue("uLightDir",    lightDir);
     m_program->setUniformValue("uLightColor",  QVector3D(1.0f, 1.0f, 1.0f));
 
@@ -4278,32 +4055,13 @@ void Viewport3D::drawPreviewMesh(const QMatrix4x4& model,
 }
 
 // =============================================================================
-// Smooth camera animation
+// Smooth camera animation -- delegate to CameraController
 // =============================================================================
 
 void Viewport3D::animateTo(const QVector3D& targetEye, const QVector3D& targetCenter,
                             const QVector3D& targetUp, int durationMs)
 {
-    // If the move is very small, snap immediately (avoids jitter)
-    float dist = (targetEye - m_eye).length() + (targetCenter - m_center).length();
-    if (dist < 1e-4f || durationMs <= 0) {
-        m_eye    = targetEye;
-        m_center = targetCenter;
-        m_up     = targetUp;
-        update();
-        return;
-    }
-
-    m_animStartEye    = m_eye;
-    m_animStartCenter = m_center;
-    m_animStartUp     = m_up;
-    m_animEndEye      = targetEye;
-    m_animEndCenter   = targetCenter;
-    m_animEndUp       = targetUp;
-    m_animDuration    = durationMs;
-    m_animElapsed     = 0;
-    m_animating       = true;
-    m_animTimer.start();
+    m_camera->animateTo(targetEye, targetCenter, targetUp, durationMs);
 }
 
 // =============================================================================
