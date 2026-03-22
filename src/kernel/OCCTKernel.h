@@ -248,6 +248,11 @@ public:
     bool exportSTL(const TopoDS_Shape& shape, const std::string& path,
                    double linDeflection = 0.1);
 
+    /// Export to 3MF format (ZIP containing XML mesh data).
+    /// The modern 3D printing format — supports units, colors, multi-body.
+    bool export3MF(const TopoDS_Shape& shape, const std::string& path,
+                   double linDeflection = 0.1);
+
     // ── Tessellation ─────────────────────────────────────────────────────
     struct Mesh {
         std::vector<float>    vertices;   // x,y,z triples

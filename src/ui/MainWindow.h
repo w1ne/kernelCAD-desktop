@@ -277,7 +277,7 @@ private:
     void executeInteractiveCommand(std::unique_ptr<document::InteractiveCommand> cmd);
 
     // Pending selection-driven command workflow
-    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane, PressPull };
+    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane, PressPull, Extrude };
     PendingCommand m_pendingCommand = PendingCommand::None;
 
     /// True when waiting for the user to pick a plane or planar face to start a sketch.

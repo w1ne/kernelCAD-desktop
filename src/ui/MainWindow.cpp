@@ -2205,43 +2205,48 @@ void MainWindow::onExtrudeSketch()
 {
     m_lastCommandName = tr("Extrude");
     m_lastCommandCallback = [this]() { onExtrudeSketch(); };
-    // Selection-driven extrude: if faces are selected, use the interactive
-    // command dialog (future: push/pull the selected face).
-    const auto& sel = m_selectionMgr->selection();
-    if (!sel.empty() && sel[0].faceIndex >= 0) {
-        // Face pre-selection: open the interactive Extrude dialog
-        // which can use the selected face as an extrude profile.
-        executeInteractiveCommand(
-            std::make_unique<document::ExtrudeInteractiveCommand>());
-        return;
-    }
 
-    // Find the last sketch feature in the timeline
+    // Collect all sketches with closed profiles
     auto& tl = m_document->timeline();
-    features::SketchFeature* lastSketch = nullptr;
-    std::string lastSketchId;
+    std::vector<std::pair<features::SketchFeature*, std::string>> sketchesWithProfiles;
 
     for (size_t i = 0; i < tl.count(); ++i) {
         auto& entry = tl.entry(i);
         if (entry.feature &&
             entry.feature->type() == features::FeatureType::Sketch &&
             !entry.isSuppressed && !entry.isRolledBack) {
-            lastSketch = static_cast<features::SketchFeature*>(entry.feature.get());
-            lastSketchId = entry.feature->id();
+            auto* sk = static_cast<features::SketchFeature*>(entry.feature.get());
+            auto profiles = sk->sketch().detectProfiles();
+            if (!profiles.empty())
+                sketchesWithProfiles.push_back({sk, entry.feature->id()});
         }
     }
 
-    if (!lastSketch) {
-        statusBar()->showMessage(tr("No sketch found. Create a sketch first."), 3000);
+    if (sketchesWithProfiles.empty()) {
+        statusBar()->showMessage(tr("No sketch with closed profiles found. Draw a closed shape first (S → R for rectangle)."), 5000);
         return;
     }
 
-    // Detect profiles in the sketch
-    auto profiles = lastSketch->sketch().detectProfiles();
-    if (profiles.empty()) {
-        statusBar()->showMessage(tr("No closed profiles found in the sketch."), 3000);
-        return;
+    // If exactly one sketch with profiles, use it directly
+    // If multiple, use the last one (most recent)
+    auto* targetSketch = sketchesWithProfiles.back().first;
+    std::string targetSketchId = sketchesWithProfiles.back().second;
+
+    // If a sketch is selected in the feature tree, prefer that one
+    for (auto& [sk, skId] : sketchesWithProfiles) {
+        // Check if this sketch is highlighted/selected
+        if (!m_selectionMgr->selection().empty()) {
+            std::string selectedBody = m_selectionMgr->selection().front().bodyId;
+            std::string featureForSel = m_document->featureForBody(selectedBody);
+            if (featureForSel == skId) {
+                targetSketch = sk;
+                targetSketchId = skId;
+                break;
+            }
+        }
     }
+
+    auto profiles = targetSketch->sketch().detectProfiles();
 
     // Build a profileId string from the first detected profile
     std::string profileId;
@@ -2253,18 +2258,26 @@ void MainWindow::onExtrudeSketch()
     // Build default params and show the floating feature dialog
     features::ExtrudeParams params;
     params.profileId    = profileId;
-    params.sketchId     = lastSketchId;
+    params.sketchId     = targetSketchId;
     params.distanceExpr = "10 mm";
     params.extentType   = features::ExtentType::Distance;
     params.operation    = features::FeatureOperation::NewBody;
 
+    // Highlight the sketch being extruded
+    m_viewport->setHighlightedSketch(&targetSketch->sketch());
+
     m_featureDialog->showExtrude(params);
-    showConfirmBar(tr("Extrude"));
+    showConfirmBar(tr("Extrude — press Enter to apply, Escape to cancel"));
+    statusBar()->showMessage(
+        tr("Extruding sketch '%1' (%2 profiles found). Adjust distance and press Enter.")
+            .arg(QString::fromStdString(targetSketch->name()))
+            .arg(profiles.size()));
 
     connect(m_featureDialog, &FeatureDialog::extrudeAccepted, this,
             [this](features::ExtrudeParams p) {
         m_document->executeCommand(
             std::make_unique<document::AddExtrudeCommand>(std::move(p)));
+        m_viewport->setHighlightedSketch(nullptr);
         statusBar()->showMessage(tr("Extruded sketch"));
         hideConfirmBar();
         refreshAllPanels();
@@ -2272,6 +2285,7 @@ void MainWindow::onExtrudeSketch()
 
     connect(m_featureDialog, &FeatureDialog::cancelled, this,
             [this]() {
+        m_viewport->setHighlightedSketch(nullptr);
         hideConfirmBar();
         statusBar()->showMessage(tr("Extrude cancelled"));
     }, Qt::SingleShotConnection);

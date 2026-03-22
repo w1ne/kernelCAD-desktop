@@ -1119,6 +1119,179 @@ bool OCCTKernel::exportSTL(const TopoDS_Shape& shape, const std::string& path,
     return writer.Write(shape, path.c_str());
 }
 
+bool OCCTKernel::export3MF(const TopoDS_Shape& shape, const std::string& path,
+                            double linDeflection)
+{
+    // Tessellate the shape
+    Mesh mesh = tessellate(shape, linDeflection);
+    if (mesh.vertices.empty()) return false;
+
+    // 3MF is a ZIP file. We write an uncompressed ZIP with two entries:
+    // [Content_Types].xml and 3D/3dmodel.model
+
+    // Build the XML model content
+    std::string model;
+    model += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    model += "<model unit=\"millimeter\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\">\n";
+    model += " <resources>\n";
+    model += "  <object id=\"1\" type=\"model\">\n";
+    model += "   <mesh>\n";
+    model += "    <vertices>\n";
+
+    size_t vertCount = mesh.vertices.size() / 3;
+    for (size_t i = 0; i < vertCount; ++i) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "     <vertex x=\"%.6f\" y=\"%.6f\" z=\"%.6f\"/>\n",
+                 mesh.vertices[i*3], mesh.vertices[i*3+1], mesh.vertices[i*3+2]);
+        model += buf;
+    }
+    model += "    </vertices>\n";
+    model += "    <triangles>\n";
+
+    size_t triCount = mesh.indices.size() / 3;
+    for (size_t i = 0; i < triCount; ++i) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "     <triangle v1=\"%u\" v2=\"%u\" v3=\"%u\"/>\n",
+                 mesh.indices[i*3], mesh.indices[i*3+1], mesh.indices[i*3+2]);
+        model += buf;
+    }
+    model += "    </triangles>\n";
+    model += "   </mesh>\n";
+    model += "  </object>\n";
+    model += " </resources>\n";
+    model += " <build>\n";
+    model += "  <item objectid=\"1\"/>\n";
+    model += " </build>\n";
+    model += "</model>\n";
+
+    std::string contentTypes =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n"
+        " <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n"
+        " <Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/>\n"
+        "</Types>\n";
+
+    std::string rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n"
+        " <Relationship Target=\"/3D/3dmodel.model\" Id=\"rel0\" "
+        "Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/>\n"
+        "</Relationships>\n";
+
+    // Write a minimal ZIP file (uncompressed, store method)
+    // ZIP format: local file headers + data + central directory + end record
+    struct ZipEntry {
+        std::string name;
+        std::string data;
+    };
+    std::vector<ZipEntry> entries = {
+        {"[Content_Types].xml", contentTypes},
+        {"_rels/.rels", rels},
+        {"3D/3dmodel.model", model}
+    };
+
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return false;
+
+    struct CDRecord { uint32_t offset; std::string name; uint32_t size; uint32_t crc; };
+    std::vector<CDRecord> cdRecords;
+
+    auto crc32 = [](const std::string& data) -> uint32_t {
+        uint32_t crc = 0xFFFFFFFF;
+        for (unsigned char c : data) {
+            crc ^= c;
+            for (int j = 0; j < 8; ++j)
+                crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+        }
+        return ~crc;
+    };
+
+    for (const auto& entry : entries) {
+        CDRecord rec;
+        rec.offset = static_cast<uint32_t>(ftell(f));
+        rec.name = entry.name;
+        rec.size = static_cast<uint32_t>(entry.data.size());
+        rec.crc = crc32(entry.data);
+
+        // Local file header (30 bytes + name)
+        uint32_t sig = 0x04034b50;
+        uint16_t ver = 20, flags = 0, method = 0; // store
+        uint16_t modTime = 0, modDate = 0;
+        uint16_t nameLen = static_cast<uint16_t>(entry.name.size());
+        uint16_t extraLen = 0;
+
+        fwrite(&sig, 4, 1, f);
+        fwrite(&ver, 2, 1, f);
+        fwrite(&flags, 2, 1, f);
+        fwrite(&method, 2, 1, f);
+        fwrite(&modTime, 2, 1, f);
+        fwrite(&modDate, 2, 1, f);
+        fwrite(&rec.crc, 4, 1, f);
+        fwrite(&rec.size, 4, 1, f);
+        fwrite(&rec.size, 4, 1, f); // uncompressed = compressed (store)
+        fwrite(&nameLen, 2, 1, f);
+        fwrite(&extraLen, 2, 1, f);
+        fwrite(entry.name.data(), nameLen, 1, f);
+        fwrite(entry.data.data(), rec.size, 1, f);
+
+        cdRecords.push_back(rec);
+    }
+
+    // Central directory
+    uint32_t cdOffset = static_cast<uint32_t>(ftell(f));
+    for (const auto& rec : cdRecords) {
+        uint32_t sig = 0x02014b50;
+        uint16_t verMade = 20, verNeed = 20, flags = 0, method = 0;
+        uint16_t modTime = 0, modDate = 0;
+        uint16_t nameLen = static_cast<uint16_t>(rec.name.size());
+        uint16_t extraLen = 0, commentLen = 0;
+        uint16_t diskStart = 0;
+        uint16_t intAttr = 0;
+        uint32_t extAttr = 0;
+
+        fwrite(&sig, 4, 1, f);
+        fwrite(&verMade, 2, 1, f);
+        fwrite(&verNeed, 2, 1, f);
+        fwrite(&flags, 2, 1, f);
+        fwrite(&method, 2, 1, f);
+        fwrite(&modTime, 2, 1, f);
+        fwrite(&modDate, 2, 1, f);
+        fwrite(&rec.crc, 4, 1, f);
+        fwrite(&rec.size, 4, 1, f);
+        fwrite(&rec.size, 4, 1, f);
+        fwrite(&nameLen, 2, 1, f);
+        fwrite(&extraLen, 2, 1, f);
+        fwrite(&commentLen, 2, 1, f);
+        fwrite(&diskStart, 2, 1, f);
+        fwrite(&intAttr, 2, 1, f);
+        fwrite(&extAttr, 4, 1, f);
+        fwrite(&rec.offset, 4, 1, f);
+        fwrite(rec.name.data(), nameLen, 1, f);
+    }
+
+    // End of central directory
+    uint32_t cdSize = static_cast<uint32_t>(ftell(f)) - cdOffset;
+    {
+        uint32_t sig = 0x06054b50;
+        uint16_t diskNum = 0, cdDisk = 0;
+        uint16_t cdCountDisk = static_cast<uint16_t>(cdRecords.size());
+        uint16_t cdCountTotal = cdCountDisk;
+        uint16_t commentLen = 0;
+
+        fwrite(&sig, 4, 1, f);
+        fwrite(&diskNum, 2, 1, f);
+        fwrite(&cdDisk, 2, 1, f);
+        fwrite(&cdCountDisk, 2, 1, f);
+        fwrite(&cdCountTotal, 2, 1, f);
+        fwrite(&cdSize, 4, 1, f);
+        fwrite(&cdOffset, 4, 1, f);
+        fwrite(&commentLen, 2, 1, f);
+    }
+
+    fclose(f);
+    return true;
+}
+
 OCCTKernel::Mesh OCCTKernel::tessellate(const TopoDS_Shape& shape, double linDeflection)
 {
     BRepMesh_IncrementalMesh mesher(shape, linDeflection);
