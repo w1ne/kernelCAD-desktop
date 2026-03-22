@@ -285,6 +285,13 @@ private:
     QVector3D m_bboxMin;
     QVector3D m_bboxMax;
 
+    // ── rubber-band box selection ────────────────────────────────────────
+    bool m_boxSelecting = false;
+    QPoint m_boxSelectStart;
+    QPoint m_boxSelectEnd;
+    void drawBoxSelectOverlay();
+    void performBoxSelect(const QRect& rect);
+
     // ── mouse interaction ───────────────────────────────────────────────
     QPoint m_lastMousePos;
     QPoint m_mousePressPos;        // initial click position (for drag detection)

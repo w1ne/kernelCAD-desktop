@@ -237,6 +237,12 @@ public:
     /// Import an IGES file. Returns a vector of shapes.
     std::vector<TopoDS_Shape> importIGES(const std::string& path);
 
+    /// Import an STL file as a solid shape (mesh -> BRep via sewing).
+    /// The mesh triangles are sewn into a shell and converted to a solid
+    /// so the result can participate in boolean operations.
+    /// Returns a vector with a single shape.
+    std::vector<TopoDS_Shape> importSTL(const std::string& path);
+
     // ── Export ────────────────────────────────────────────────────────────
     bool exportSTEP(const TopoDS_Shape& shape, const std::string& path);
     bool exportSTL(const TopoDS_Shape& shape, const std::string& path,

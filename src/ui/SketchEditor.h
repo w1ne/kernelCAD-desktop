@@ -127,6 +127,8 @@ signals:
     void sketchChanged();
     void toolChanged(SketchTool tool);
     void editingFinished();
+    void constraintSelected(const QString& constraintId, const QString& typeName,
+                            const QString& description);
 
 private:
     sketch::Sketch* m_sketch = nullptr;

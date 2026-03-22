@@ -6,6 +6,7 @@
 
 class QAction;
 class QActionGroup;
+class QMenu;
 class QSlider;
 class QLabel;
 class QPushButton;
@@ -32,6 +33,7 @@ class MarkingMenu;
 class CommandPalette;
 class FeatureDialog;
 class ParameterTablePanel;
+class DrawingView;
 
 namespace features { class SketchFeature; }
 
@@ -58,8 +60,16 @@ private:
     void onOpenDocument();
     void onSaveDocument();
     void onImportFile();
+    void onImportSTL();
     void onExportSTEP();
     void onExportSTL();
+
+    // Recent files
+    void addToRecentFiles(const QString& path);
+    void updateRecentFilesMenu();
+
+    // Preferences
+    void onPreferences();
     void onCreateBox();
     void onCreateCylinder();
     void onCreateSphere();
@@ -96,6 +106,7 @@ private:
     void onImportSvgToSketch();
     void onUndo();
     void onRedo();
+    void onCreateDrawing();
 
     /// Delete the currently selected feature (from feature tree or viewport selection).
     void onDeleteSelectedFeature();
@@ -158,6 +169,9 @@ private:
 
     /// The timeline marker position before entering edit mode (for cancel restore).
     size_t m_editOriginalMarkerPos = 0;
+
+    // Recent files submenu
+    QMenu* m_recentFilesMenu = nullptr;
 
     // Edit menu actions (need references for dynamic text updates)
     QAction* m_undoAction = nullptr;

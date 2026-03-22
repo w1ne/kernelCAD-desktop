@@ -694,6 +694,11 @@ void Viewport3D::paintGL()
 
     // -- manipulator 2D overlay (value label, flip arrow) ----------------
     drawManipulatorOverlay();
+
+    // -- box selection rubber-band rectangle ─────────────────────────────
+    if (m_boxSelecting) {
+        drawBoxSelectOverlay();
+    }
 }
 
 // =============================================================================
@@ -1610,6 +1615,18 @@ void Viewport3D::mousePressEvent(QMouseEvent* event)
     m_mousePressPos = event->pos();
     m_activeButton = event->button();
     m_isDragging = false;
+    m_boxSelecting = false;
+
+    // On left-click, check if we hit empty space — if so, prepare for box selection
+    if (event->button() == Qt::LeftButton && !m_sketchModeActive) {
+        int faceId = pickAtScreenPos(event->pos());
+        if (faceId <= 0) {
+            // Hit background — this drag will be box selection, not orbit
+            m_boxSelectStart = event->pos();
+            m_boxSelectEnd = event->pos();
+            m_boxSelecting = true;
+        }
+    }
     event->accept();
 }
 
@@ -1634,7 +1651,16 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
 
-    if (event->button() == Qt::LeftButton && !m_isDragging) {
+    // Box selection: if we were dragging a selection rectangle, perform box select
+    if (m_boxSelecting && event->button() == Qt::LeftButton) {
+        m_boxSelectEnd = event->pos();
+        QRect selRect = QRect(m_boxSelectStart, m_boxSelectEnd).normalized();
+        if (selRect.width() > 5 && selRect.height() > 5) {
+            performBoxSelect(selRect);
+        }
+        m_boxSelecting = false;
+        update();
+    } else if (event->button() == Qt::LeftButton && !m_isDragging) {
         // Single click without drag -- perform a pick
         bool shiftHeld = event->modifiers() & Qt::ShiftModifier;
         handlePick(event->pos(), shiftHeld);
@@ -1682,6 +1708,15 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         int dy = pos.y() - m_mousePressPos.y();
         if (dx * dx + dy * dy > kDragThreshold * kDragThreshold)
             m_isDragging = true;
+    }
+
+    // Box selection: update rectangle and repaint
+    if (m_boxSelecting && m_activeButton == Qt::LeftButton && m_isDragging) {
+        m_boxSelectEnd = pos;
+        update();
+        m_lastMousePos = pos;
+        event->accept();
+        return;
     }
 
     if (m_activeButton == Qt::LeftButton && m_isDragging &&
@@ -3110,8 +3145,14 @@ void Viewport3D::drawSketchConstraintOverlay()
     };
 
     // ── Draw dimension constraints ──────────────────────────────────────
+    // Get selected constraint ID for highlight
+    const std::string selectedConId = m_sketchEditor ? m_sketchEditor->selectedConstraintId() : "";
+
     for (const auto& [cid, con] : constraints) {
         using CT = sketch::ConstraintType;
+
+        // If this constraint is selected, draw a highlight ring around its marker
+        const bool isSelected = (!selectedConId.empty() && cid == selectedConId);
 
         if (con.type == CT::Distance) {
             // Distance between two points: entityIds = {pt1, pt2}
@@ -3175,6 +3216,17 @@ void Viewport3D::drawSketchConstraintOverlay()
                 // Dimension value text with background
                 QString txt = QString::number(con.value, 'f', 2) + " mm";
                 drawDimLabel(painter, dimMid, txt);
+
+                // Selection highlight: bright ring around the label
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    QFontMetrics fm(dimFont);
+                    QRectF selRect(dimMid.x() - fm.horizontalAdvance(txt) / 2.0 - 6,
+                                   dimMid.y() - fm.height() / 2.0 - 4,
+                                   fm.horizontalAdvance(txt) + 12, fm.height() + 8);
+                    painter.drawRoundedRect(selRect, 4, 4);
+                }
             } catch (...) {
                 continue;
             }
@@ -3365,6 +3417,12 @@ void Viewport3D::drawSketchConstraintOverlay()
                 else                               sym = QChar(0x27C2);  // perpendicular symbol
                 QRectF iconRect(sMid.x() - 10, sMid.y() - 8, 20, 16);
                 painter.drawText(iconRect, Qt::AlignCenter, sym);
+
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRoundedRect(iconRect.adjusted(-3, -3, 3, 3), 4, 4);
+                }
             } catch (...) {
                 continue;
             }
@@ -3381,6 +3439,12 @@ void Viewport3D::drawSketchConstraintOverlay()
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(cConMarker);
                 painter.drawEllipse(sPt, 4.0, 4.0);
+
+                if (isSelected) {
+                    painter.setPen(QPen(QColor(255, 100, 100), 2.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawEllipse(sPt, 8.0, 8.0);
+                }
             } catch (...) {
                 continue;
             }
@@ -4018,4 +4082,54 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
     }
 
     painter.end();
+}
+
+// =============================================================================
+// Box selection (rubber-band rectangle)
+// =============================================================================
+
+void Viewport3D::drawBoxSelectOverlay()
+{
+    QRect rect = QRect(m_boxSelectStart, m_boxSelectEnd).normalized();
+    if (rect.width() < 2 && rect.height() < 2) return;
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    // Semi-transparent blue fill
+    painter.setBrush(QColor(42, 130, 218, 30));
+    // Dashed blue border
+    QPen pen(QColor(42, 130, 218, 180), 1.5, Qt::DashLine);
+    painter.setPen(pen);
+    painter.drawRect(rect);
+    painter.end();
+}
+
+void Viewport3D::performBoxSelect(const QRect& rect)
+{
+    if (!m_selectionMgr) return;
+
+    m_selectionMgr->clearSelection();
+
+    // Sample the pick FBO at a grid of points inside the rectangle
+    // and collect all unique face IDs
+    std::set<int> hitFaceIds;
+    const int step = 8; // sample every 8 pixels
+
+    for (int y = rect.top(); y <= rect.bottom(); y += step) {
+        for (int x = rect.left(); x <= rect.right(); x += step) {
+            int faceId = pickAtScreenPos(QPoint(x, y));
+            if (faceId > 0)
+                hitFaceIds.insert(faceId - 1);
+        }
+    }
+
+    // Create selection hits for each unique face
+    for (int faceIdx : hitFaceIds) {
+        SelectionHit hit;
+        hit.faceIndex = faceIdx;
+        if (faceIdx < static_cast<int>(m_bodyIdPerFace.size()))
+            hit.bodyId = m_bodyIdPerFace[faceIdx];
+        m_selectionMgr->addToSelection(hit);
+    }
 }

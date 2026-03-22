@@ -74,6 +74,8 @@ int Document::importFile(const std::string& path)
         shapes = m_kernel->importSTEP(path);
     else if (ext == ".igs" || ext == ".iges")
         shapes = m_kernel->importIGES(path);
+    else if (ext == ".stl")
+        shapes = m_kernel->importSTL(path);
     else
         throw std::runtime_error("Unsupported file format: " + ext);
 

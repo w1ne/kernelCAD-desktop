@@ -4,6 +4,7 @@ add_executable(kernelCAD
   # kernel
   kernel/OCCTKernel.cpp
   kernel/BRepModel.cpp
+  kernel/MeshBoolean.cpp
   kernel/EntityAttribute.cpp
   kernel/BRepQuery.cpp
   kernel/StableReference.cpp
@@ -77,6 +78,8 @@ add_executable(kernelCAD
   ui/ViewportManipulator.cpp
   ui/IconFactory.cpp
   ui/ParameterTablePanel.cpp
+  ui/PreferencesDialog.cpp
+  ui/DrawingView.cpp
 )
 
 target_include_directories(kernelCAD PRIVATE
@@ -90,11 +93,13 @@ target_link_libraries(kernelCAD PRIVATE
   Qt6::Widgets
   Qt6::OpenGLWidgets
   Qt6::Gui
+  Qt6::PrintSupport
+  $<$<TARGET_EXISTS:Qt6::Svg>:Qt6::Svg>
   # OCCT modules
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo
   TKTopAlgo TKPrim TKBool TKFillet TKOffset
   TKMesh TKSTEP TKIGES TKXSBase TKSTL
-  TKShHealing
+  TKShHealing TKHLR
 )
 
 # Platform-specific
@@ -111,6 +116,7 @@ add_executable(kernelcad-cli
   # kernel
   kernel/OCCTKernel.cpp
   kernel/BRepModel.cpp
+  kernel/MeshBoolean.cpp
   kernel/EntityAttribute.cpp
   kernel/BRepQuery.cpp
   kernel/StableReference.cpp

@@ -1323,12 +1323,12 @@ void SketchEditor::autoConstrainLastEntity(const std::string& entityId)
         if (hasHV) return;
 
         // Auto horizontal if within 3 degrees
-        if (angle < 3.0) {
+        if (angle < 1.5) {
             m_sketch->addConstraint(sketch::ConstraintType::Horizontal, {entityId});
             m_sketch->solve();
         }
         // Auto vertical if within 3 degrees of 90
-        else if (std::abs(angle - 90.0) < 3.0) {
+        else if (std::abs(angle - 90.0) < 1.5) {
             m_sketch->addConstraint(sketch::ConstraintType::Vertical, {entityId});
             m_sketch->solve();
         }
@@ -1357,7 +1357,7 @@ void SketchEditor::finalizeLine()
     m_sketch->solve();
 
     // Always auto-apply H/V constraints to nearly-aligned lines
-    autoConstrainLastEntity(lineId);
+    if (m_autoConstrain) autoConstrainLastEntity(lineId);
 
     // Auto-dimension: add a Distance constraint showing the line length
     {

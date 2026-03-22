@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "DrawingView.h"
 #include "IconFactory.h"
 #include "Viewport3D.h"
 #include "ViewportManipulator.h"
@@ -14,6 +15,7 @@
 #include "CommandPalette.h"
 #include "FeatureDialog.h"
 #include "ParameterTablePanel.h"
+#include "PreferencesDialog.h"
 #include "../document/Document.h"
 #include "../document/InteractiveCommands.h"
 #include "../document/AutoSave.h"
@@ -87,6 +89,7 @@
 #include <QVBoxLayout>
 #include <QTabBar>
 #include <QFrame>
+#include <QSettings>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -134,6 +137,16 @@ MainWindow::MainWindow(QWidget* parent)
         m_viewport->update();
         m_properties->refreshSketchStats();
     });
+    connect(m_sketchEditor, &SketchEditor::constraintSelected, this,
+        [this](const QString& /*id*/, const QString& typeName, const QString& desc) {
+        if (typeName.isEmpty()) {
+            // Deselected — restore default sketch status
+            statusBar()->showMessage(
+                tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  D:Dim  K:Constraint  Esc:Finish"));
+        } else {
+            statusBar()->showMessage(desc);
+        }
+    });
     connect(m_sketchEditor, &SketchEditor::toolChanged, this, [this](SketchTool tool) {
         QString toolName;
         switch (tool) {
@@ -153,12 +166,23 @@ MainWindow::MainWindow(QWidget* parent)
         case SketchTool::Extend:              toolName = "Extend"; break;
         case SketchTool::Offset:              toolName = "Offset"; break;
         case SketchTool::ProjectEdge:         toolName = "Project Edge"; break;
-        case SketchTool::SketchFillet:        toolName = "Sketch Fillet"; break;
-        case SketchTool::SketchChamfer:       toolName = "Sketch Chamfer"; break;
-        default:                              toolName = "Tool"; break;
+        case SketchTool::SketchFillet:        toolName = "Fillet"; break;
+        case SketchTool::SketchChamfer:       toolName = "Chamfer"; break;
+        case SketchTool::Dimension:           toolName = "Dimension"; break;
+        case SketchTool::AddConstraint:       toolName = "Constraint"; break;
+        default:                              toolName = "Select"; break;
         }
         statusBar()->showMessage(tr("Sketch tool: %1").arg(toolName));
-        showConfirmBar(tr("Sketch: %1").arg(toolName));
+
+        // Sync toolbar buttons: uncheck all, check the one matching current tool
+        if (m_sketchToolBar) {
+            for (auto* widget : m_sketchToolBar->findChildren<QToolButton*>()) {
+                if (widget->isCheckable() && widget->autoExclusive()) {
+                    // Match by tooltip containing the tool name
+                    widget->setChecked(widget->toolTip().contains(toolName, Qt::CaseInsensitive));
+                }
+            }
+        }
     });
 
     // Create the measure tool
@@ -707,9 +731,14 @@ void MainWindow::setupMenuBar()
     fileMenu->addAction(tr("&New"),  this, &MainWindow::onNewDocument,  QKeySequence::New);
     fileMenu->addAction(tr("&Open"), this, &MainWindow::onOpenDocument, QKeySequence::Open);
     fileMenu->addAction(tr("&Save"), this, &MainWindow::onSaveDocument, QKeySequence::Save);
+
+    m_recentFilesMenu = fileMenu->addMenu(tr("Recent Files"));
+    updateRecentFilesMenu();
+
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Import STEP/IGES..."), this, &MainWindow::onImportFile,
                         QKeySequence(tr("Ctrl+I")));
+    fileMenu->addAction(tr("Import STL as Body..."), this, &MainWindow::onImportSTL);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("Export STEP..."), this, &MainWindow::onExportSTEP);
     fileMenu->addAction(tr("Export STL..."),  this, &MainWindow::onExportSTL);
@@ -721,6 +750,9 @@ void MainWindow::setupMenuBar()
     m_redoAction = editMenu->addAction(tr("Redo"), this, &MainWindow::onRedo, QKeySequence::Redo);
     m_undoAction->setEnabled(false);
     m_redoAction->setEnabled(false);
+    editMenu->addSeparator();
+    editMenu->addAction(tr("Preferences..."), this, &MainWindow::onPreferences,
+                        QKeySequence(tr("Ctrl+,")));
 
     // -- View menu with selection filter modes ----------------------------
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
@@ -990,6 +1022,8 @@ void MainWindow::setupMenuBar()
     });
     toolsMenu->addSeparator();
     toolsMenu->addAction(tr("Check &Interference"), this, &MainWindow::onCheckInterference);
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(tr("Create &Drawing..."), this, &MainWindow::onCreateDrawing);
 
     // --- Appearance menu (material assignment) ---
     auto* appearanceMenu = menuBar()->addMenu(tr("A&ppearance"));
@@ -1625,9 +1659,21 @@ void MainWindow::onEditFeature(const QString& featureId)
                     m_viewport->setHighlightedFaces(faceIndices);
                 }
 
+                // Sketch features: enter sketch editing mode directly
+                if (tl.entry(i).feature->type() == features::FeatureType::Sketch) {
+                    auto* skFeat = static_cast<features::SketchFeature*>(tl.entry(i).feature.get());
+                    beginSketchEditing(skFeat);
+                    return;
+                }
+
                 // Show distance manipulator for Extrude features
                 if (tl.entry(i).feature->type() == features::FeatureType::Extrude) {
                     showExtrudeManipulator(featureId);
+                }
+
+                // Show radius manipulator for Fillet features
+                if (tl.entry(i).feature->type() == features::FeatureType::Fillet) {
+                    showFilletManipulator(featureId);
                 }
             }
 
@@ -1711,6 +1757,8 @@ void MainWindow::onOpenDocument()
             m_parameterTable->setDocument(m_document.get());
             m_properties->clear();
             refreshAllPanels();
+            addToRecentFiles(path);
+            setWindowTitle("kernelCAD \u2014 " + QFileInfo(path).baseName());
             statusBar()->showMessage(tr("Opened: %1").arg(path));
         } else {
             QMessageBox::warning(this, tr("Open Failed"),
@@ -1724,6 +1772,7 @@ void MainWindow::onSaveDocument()
     QString path = QFileDialog::getSaveFileName(this, tr("Save"), {}, tr("kernelCAD Files (*.kcd)"));
     if (!path.isEmpty()) {
         if (m_document->save(path.toStdString())) {
+            addToRecentFiles(path);
             updateWindowTitle();
             statusBar()->showMessage(tr("Saved: %1").arg(path));
         } else {
@@ -1749,6 +1798,25 @@ void MainWindow::onImportFile()
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Import Failed"),
             tr("Could not import file:\n%1").arg(e.what()));
+    }
+}
+
+void MainWindow::onImportSTL()
+{
+    QString path = QFileDialog::getOpenFileName(this, tr("Import STL as Body"), {},
+        tr("STL Files (*.stl)"));
+    if (path.isEmpty())
+        return;
+
+    try {
+        int count = m_document->importFile(path.toStdString());
+        statusBar()->showMessage(
+            tr("Imported %1 body(s) from %2").arg(count).arg(QFileInfo(path).fileName()));
+        m_viewport->fitAll();
+        refreshAllPanels();
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Import Failed"),
+            tr("Could not import STL file:\n%1").arg(e.what()));
     }
 }
 
@@ -3266,6 +3334,63 @@ void MainWindow::onCheckInterference()
     QMessageBox::warning(this, tr("Interference Detected"), report);
 }
 
+void MainWindow::onCreateDrawing()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+
+    if (ids.empty()) {
+        statusBar()->showMessage(tr("No bodies to create a drawing from."), 3000);
+        return;
+    }
+
+    // Use the first visible body
+    TopoDS_Shape shape;
+    for (const auto& id : ids) {
+        shape = brep.getShape(id);
+        if (!shape.IsNull())
+            break;
+    }
+
+    if (shape.IsNull()) {
+        statusBar()->showMessage(tr("Could not find a valid body for drawing."), 3000);
+        return;
+    }
+
+    // Create a drawing view as a standalone window
+    auto* drawing = new DrawingView();
+    drawing->setAttribute(Qt::WA_DeleteOnClose);
+    drawing->resize(800, 600);
+    drawing->setBody(shape);
+    drawing->generateStandardViews();
+
+    // Add a simple menu bar for export
+    auto* drawingWin = new QMainWindow();
+    drawingWin->setAttribute(Qt::WA_DeleteOnClose);
+    drawingWin->setWindowTitle(tr("2D Drawing - kernelCAD"));
+    drawingWin->setCentralWidget(drawing);
+    drawingWin->resize(QSize(820, 660));
+
+    auto* fileMenu = drawingWin->menuBar()->addMenu(tr("&File"));
+    fileMenu->addAction(tr("Export &PDF..."), drawing, [drawing]() {
+        QString path = QFileDialog::getSaveFileName(
+            drawing, QObject::tr("Export PDF"), QString(), QObject::tr("PDF Files (*.pdf)"));
+        if (!path.isEmpty())
+            drawing->exportPDF(path);
+    });
+    fileMenu->addAction(tr("Export &SVG..."), drawing, [drawing]() {
+        QString path = QFileDialog::getSaveFileName(
+            drawing, QObject::tr("Export SVG"), QString(), QObject::tr("SVG Files (*.svg)"));
+        if (!path.isEmpty())
+            drawing->exportSVG(path);
+    });
+    fileMenu->addSeparator();
+    fileMenu->addAction(tr("&Close"), drawingWin, &QMainWindow::close);
+
+    drawingWin->show();
+    statusBar()->showMessage(tr("2D Drawing created with 4 views."), 3000);
+}
+
 void MainWindow::onUndo()
 {
     if (m_document->history().canUndo()) {
@@ -4741,6 +4866,7 @@ void MainWindow::setupCommandPalette()
         {"Open...",          "Ctrl+O",       "File",   [this]() { onOpenDocument(); }},
         {"Save",             "Ctrl+S",       "File",   [this]() { onSaveDocument(); }},
         {"Import File...",   "Ctrl+I",       "File",   [this]() { onImportFile(); }},
+        {"Import STL as Body...", "",       "File",   [this]() { onImportSTL(); }},
         {"Export STEP...",   "",             "File",   [this]() { onExportSTEP(); }},
         {"Export STL...",    "",             "File",   [this]() { onExportSTL(); }},
 
@@ -5090,3 +5216,88 @@ void MainWindow::restoreHoverFilter()
 
 // Override eventFilter for toolbar hover detection
 // (eventFilter merged into the single definition above)
+
+// ── Recent Files ─────────────────────────────────────────────────────────
+
+void MainWindow::addToRecentFiles(const QString& path)
+{
+    QSettings settings;
+    QStringList recent = settings.value("recentFiles").toStringList();
+    recent.removeAll(path);
+    recent.prepend(path);
+    while (recent.size() > 10)
+        recent.removeLast();
+    settings.setValue("recentFiles", recent);
+    updateRecentFilesMenu();
+}
+
+void MainWindow::updateRecentFilesMenu()
+{
+    m_recentFilesMenu->clear();
+    QSettings settings;
+    QStringList recent = settings.value("recentFiles").toStringList();
+
+    for (int i = 0; i < recent.size(); ++i) {
+        const QString& path = recent[i];
+        QString label = QString("%1. %2").arg(i + 1).arg(QFileInfo(path).fileName());
+        auto* action = m_recentFilesMenu->addAction(label);
+        connect(action, &QAction::triggered, this, [this, path]() {
+            if (m_document->load(path.toStdString())) {
+                m_featureTree->setDocument(m_document.get());
+                m_parameterTable->setDocument(m_document.get());
+                m_properties->clear();
+                setWindowTitle("kernelCAD \u2014 " + QFileInfo(path).baseName());
+                refreshAllPanels();
+                addToRecentFiles(path);
+            } else {
+                QMessageBox::warning(this, tr("Open Failed"),
+                    tr("Could not open file: %1").arg(path));
+            }
+        });
+    }
+
+    if (recent.isEmpty()) {
+        m_recentFilesMenu->addAction(tr("(No recent files)"))->setEnabled(false);
+    } else {
+        m_recentFilesMenu->addSeparator();
+        m_recentFilesMenu->addAction(tr("Clear Recent"), this, [this]() {
+            QSettings settings;
+            settings.remove("recentFiles");
+            updateRecentFilesMenu();
+        });
+    }
+}
+
+// ── Preferences ──────────────────────────────────────────────────────────
+
+void MainWindow::onPreferences()
+{
+    PreferencesDialog dlg(this);
+    if (dlg.exec() == QDialog::Accepted) {
+        QSettings s;
+
+        // Apply auto-save interval
+        int autoSaveMin = s.value("prefs/autoSaveInterval", 5).toInt();
+        if (m_autoSave) {
+            if (autoSaveMin > 0) {
+                m_autoSave->setEnabled(true);
+                m_autoSave->setInterval(autoSaveMin * 60);
+            } else {
+                m_autoSave->setEnabled(false);
+            }
+        }
+
+        // Apply display settings to viewport
+        int viewModeIdx = s.value("prefs/defaultViewMode", 0).toInt();
+        switch (viewModeIdx) {
+        case 0: m_viewport->setViewMode(ViewMode::SolidWithEdges); break;
+        case 1: m_viewport->setViewMode(ViewMode::Solid);          break;
+        case 2: m_viewport->setViewMode(ViewMode::Wireframe);      break;
+        }
+
+        m_viewport->setShowOrigin(s.value("prefs/showOrigin", true).toBool());
+        m_viewport->setShowGrid(s.value("prefs/showGrid", true).toBool());
+
+        m_viewport->update();
+    }
+}

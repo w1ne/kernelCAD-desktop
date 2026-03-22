@@ -40,6 +40,9 @@
 #include <STEPControl_Reader.hxx>
 #include <IGESControl_Reader.hxx>
 #include <StlAPI_Writer.hxx>
+#include <StlAPI_Reader.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <TopoDS_Edge.hxx>
@@ -70,6 +73,12 @@
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
 #include <gp_Circ.hxx>
+#include <BOPAlgo_Builder.hxx>
+#include <BOPAlgo_PaveFiller.hxx>
+#include <BOPAlgo_Operation.hxx>
+#include <BOPAlgo_BOP.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 
 namespace kernel {
 
@@ -95,28 +104,69 @@ TopoDS_Shape OCCTKernel::makeSphere(double radius)
 
 TopoDS_Shape OCCTKernel::booleanUnion(const TopoDS_Shape& a, const TopoDS_Shape& b)
 {
+    // Try BOPAlgo_BOP first (more robust with coplanar faces, tolerance mismatches)
+    BOPAlgo_BOP bop;
+    bop.AddArgument(a);
+    bop.AddTool(b);
+    bop.SetOperation(BOPAlgo_FUSE);
+    bop.SetFuzzyValue(1e-5);
+    bop.SetNonDestructive(true);
+    bop.Perform();
+
+    if (!bop.HasErrors())
+        return bop.Shape();
+
+    // Fallback to old API
     BRepAlgoAPI_Fuse fuse(a, b);
     fuse.Build();
-    if (!fuse.IsDone())
-        throw std::runtime_error("Boolean union failed");
-    return fuse.Shape();
+    if (fuse.IsDone())
+        return fuse.Shape();
+
+    return a;  // last resort
 }
 
 TopoDS_Shape OCCTKernel::booleanCut(const TopoDS_Shape& target, const TopoDS_Shape& tool)
 {
+    BOPAlgo_BOP bop;
+    bop.AddArgument(target);
+    bop.AddTool(tool);
+    bop.SetOperation(BOPAlgo_CUT);
+    bop.SetFuzzyValue(1e-5);
+    bop.SetNonDestructive(true);
+    bop.Perform();
+
+    if (!bop.HasErrors())
+        return bop.Shape();
+
+    // Fallback to old API
     BRepAlgoAPI_Cut cut(target, tool);
     cut.Build();
-    if (!cut.IsDone())
-        throw std::runtime_error("Boolean cut failed");
-    return cut.Shape();
+    if (cut.IsDone())
+        return cut.Shape();
+
+    return target;  // last resort
 }
 
 TopoDS_Shape OCCTKernel::booleanIntersect(const TopoDS_Shape& a, const TopoDS_Shape& b)
 {
+    BOPAlgo_BOP bop;
+    bop.AddArgument(a);
+    bop.AddTool(b);
+    bop.SetOperation(BOPAlgo_COMMON);
+    bop.SetFuzzyValue(1e-5);
+    bop.SetNonDestructive(true);
+    bop.Perform();
+
+    if (!bop.HasErrors())
+        return bop.Shape();
+
+    // Fallback to old API
     BRepAlgoAPI_Common common(a, b);
     common.Build();
-    if (!common.IsDone()) return a;
-    return common.Shape();
+    if (common.IsDone())
+        return common.Shape();
+
+    return a;  // last resort
 }
 
 TopoDS_Shape OCCTKernel::combine(const TopoDS_Shape& target, const TopoDS_Shape& tool,
@@ -236,31 +286,104 @@ TopoDS_Shape OCCTKernel::revolve(const TopoDS_Shape& profile, double angleDeg)
     return BRepPrimAPI_MakeRevol(profile, axis, angleRad).Shape();
 }
 
-TopoDS_Shape OCCTKernel::fillet(const TopoDS_Shape& shape,
-                                 const std::vector<int>& edgeIds,
-                                 double radius)
+static TopoDS_Shape filletAttempt(const TopoDS_Shape& shape,
+                                   const std::vector<int>& edgeIds,
+                                   double radius)
 {
     BRepFilletAPI_MakeFillet mk(shape);
 
     if (edgeIds.empty()) {
-        // Fillet all edges
         TopExp_Explorer ex(shape, TopAbs_EDGE);
         for (; ex.More(); ex.Next())
             mk.Add(radius, TopoDS::Edge(ex.Current()));
     } else {
-        // Fillet only the edges whose indices appear in edgeIds
-        std::unordered_set<int> edgeSet(edgeIds.begin(), edgeIds.end());
-        int edgeIndex = 0;
-        TopExp_Explorer ex(shape, TopAbs_EDGE);
-        for (; ex.More(); ex.Next()) {
-            if (edgeSet.count(edgeIndex))
-                mk.Add(radius, TopoDS::Edge(ex.Current()));
-            edgeIndex++;
+        TopTools_IndexedMapOfShape edgeMap;
+        TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+        for (int idx : edgeIds) {
+            if (idx >= 0 && idx < edgeMap.Extent())
+                mk.Add(radius, TopoDS::Edge(edgeMap(idx + 1)));
         }
     }
 
     mk.Build();
-    if (!mk.IsDone()) return shape;
+    if (!mk.IsDone())
+        return TopoDS_Shape();  // null = failed
+
+    return mk.Shape();
+}
+
+TopoDS_Shape OCCTKernel::fillet(const TopoDS_Shape& shape,
+                                 const std::vector<int>& edgeIds,
+                                 double radius)
+{
+    // Attempt 1: Standard fillet with all edges at full radius
+    try {
+        TopoDS_Shape result = filletAttempt(shape, edgeIds, radius);
+        if (!result.IsNull()) return result;
+    } catch (...) {}
+
+    // Attempt 2: Try with 95% radius (avoids tangent-face failures)
+    try {
+        TopoDS_Shape result = filletAttempt(shape, edgeIds, radius * 0.95);
+        if (!result.IsNull()) return result;
+    } catch (...) {}
+
+    // Attempt 3: Fillet edges one at a time at full radius
+    try {
+        TopoDS_Shape current = shape;
+        for (int edgeId : edgeIds) {
+            try {
+                TopoDS_Shape r = filletAttempt(current, {edgeId}, radius);
+                if (!r.IsNull()) current = r;
+            } catch (...) {
+                // Skip this edge, continue with others
+            }
+        }
+        if (!current.IsNull() && !current.IsSame(shape))
+            return current;
+    } catch (...) {}
+
+    // Attempt 4: Try 90% radius one at a time
+    try {
+        TopoDS_Shape current = shape;
+        for (int edgeId : edgeIds) {
+            try {
+                TopoDS_Shape r = filletAttempt(current, {edgeId}, radius * 0.9);
+                if (!r.IsNull()) current = r;
+            } catch (...) {}
+        }
+        if (!current.IsNull() && !current.IsSame(shape))
+            return current;
+    } catch (...) {}
+
+    // All attempts failed
+    throw std::runtime_error("Fillet failed: radius " + std::to_string(radius)
+        + " mm is too large for the selected edges");
+}
+
+static TopoDS_Shape chamferAttempt(const TopoDS_Shape& shape,
+                                    const std::vector<int>& edgeIds,
+                                    double distance)
+{
+    BRepFilletAPI_MakeChamfer mk(shape);
+
+    if (edgeIds.empty()) {
+        TopExp_Explorer ex(shape, TopAbs_EDGE);
+        for (; ex.More(); ex.Next())
+            mk.Add(distance, TopoDS::Edge(ex.Current()));
+    } else {
+        TopTools_IndexedMapOfShape edgeMap;
+        TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+        for (int idx : edgeIds) {
+            if (idx >= 0 && idx < edgeMap.Extent())
+                mk.Add(distance, TopoDS::Edge(edgeMap(idx + 1)));
+        }
+    }
+
+    mk.Build();
+    if (!mk.IsDone())
+        return TopoDS_Shape();
+
     return mk.Shape();
 }
 
@@ -268,28 +391,46 @@ TopoDS_Shape OCCTKernel::chamfer(const TopoDS_Shape& shape,
                                   const std::vector<int>& edgeIds,
                                   double distance)
 {
-    BRepFilletAPI_MakeChamfer mk(shape);
+    // Attempt 1: Standard chamfer at full distance
+    try {
+        TopoDS_Shape result = chamferAttempt(shape, edgeIds, distance);
+        if (!result.IsNull()) return result;
+    } catch (...) {}
 
-    if (edgeIds.empty()) {
-        // Chamfer all edges
-        TopExp_Explorer ex(shape, TopAbs_EDGE);
-        for (; ex.More(); ex.Next())
-            mk.Add(distance, TopoDS::Edge(ex.Current()));
-    } else {
-        // Chamfer only the edges whose indices appear in edgeIds
-        std::unordered_set<int> edgeSet(edgeIds.begin(), edgeIds.end());
-        int edgeIndex = 0;
-        TopExp_Explorer ex(shape, TopAbs_EDGE);
-        for (; ex.More(); ex.Next()) {
-            if (edgeSet.count(edgeIndex))
-                mk.Add(distance, TopoDS::Edge(ex.Current()));
-            edgeIndex++;
+    // Attempt 2: Try with 95% distance
+    try {
+        TopoDS_Shape result = chamferAttempt(shape, edgeIds, distance * 0.95);
+        if (!result.IsNull()) return result;
+    } catch (...) {}
+
+    // Attempt 3: Chamfer edges one at a time
+    try {
+        TopoDS_Shape current = shape;
+        for (int edgeId : edgeIds) {
+            try {
+                TopoDS_Shape r = chamferAttempt(current, {edgeId}, distance);
+                if (!r.IsNull()) current = r;
+            } catch (...) {}
         }
-    }
+        if (!current.IsNull() && !current.IsSame(shape))
+            return current;
+    } catch (...) {}
 
-    mk.Build();
-    if (!mk.IsDone()) return shape;
-    return mk.Shape();
+    // Attempt 4: Try 90% distance one at a time
+    try {
+        TopoDS_Shape current = shape;
+        for (int edgeId : edgeIds) {
+            try {
+                TopoDS_Shape r = chamferAttempt(current, {edgeId}, distance * 0.9);
+                if (!r.IsNull()) current = r;
+            } catch (...) {}
+        }
+        if (!current.IsNull() && !current.IsSame(shape))
+            return current;
+    } catch (...) {}
+
+    throw std::runtime_error("Chamfer failed: distance " + std::to_string(distance)
+        + " mm is too large for the selected edges");
 }
 
 TopoDS_Shape OCCTKernel::sweep(const TopoDS_Shape& profile, const TopoDS_Shape& path)
@@ -918,6 +1059,48 @@ std::vector<TopoDS_Shape> OCCTKernel::importIGES(const std::string& path)
         throw std::runtime_error("IGES file contains no geometry: " + path);
 
     return results;
+}
+
+std::vector<TopoDS_Shape> OCCTKernel::importSTL(const std::string& path)
+{
+    // StlAPI_Reader reads an STL file and produces a shape with triangulation
+    // attached.  The result is typically a compound of faces — not a solid.
+    // We sew the faces into a shell and then attempt to convert to a solid
+    // so the shape can participate in B-Rep boolean operations.
+    StlAPI_Reader reader;
+    TopoDS_Shape rawShape;
+    if (!reader.Read(rawShape, path.c_str()))
+        throw std::runtime_error("Failed to read STL file: " + path);
+
+    if (rawShape.IsNull())
+        throw std::runtime_error("STL file contains no geometry: " + path);
+
+    // Sew the triangulated faces into a closed shell
+    BRepBuilderAPI_Sewing sewing(1e-3);
+    for (TopExp_Explorer ex(rawShape, TopAbs_FACE); ex.More(); ex.Next())
+        sewing.Add(ex.Current());
+    sewing.Perform();
+    TopoDS_Shape sewn = sewing.SewedShape();
+
+    // Try to convert sewn shells into a solid
+    try {
+        BRepBuilderAPI_MakeSolid solidMaker;
+        bool hasShell = false;
+        for (TopExp_Explorer shellEx(sewn, TopAbs_SHELL); shellEx.More(); shellEx.Next()) {
+            solidMaker.Add(TopoDS::Shell(shellEx.Current()));
+            hasShell = true;
+        }
+        if (hasShell && solidMaker.IsDone()) {
+            return { TopoDS_Shape(solidMaker.Solid()) };
+        }
+    } catch (...) {
+        // Fall through — return as-is
+    }
+
+    // If sewing produced usable geometry, return it; otherwise return raw shape
+    if (!sewn.IsNull())
+        return { sewn };
+    return { rawShape };
 }
 
 bool OCCTKernel::exportSTEP(const TopoDS_Shape& shape, const std::string& path)

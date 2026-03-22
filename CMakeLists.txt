@@ -18,7 +18,8 @@ option(KERNELCAD_BUILD_TESTS "Build tests" ON)
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
 # Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets Gui)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets OpenGLWidgets Gui PrintSupport)
+find_package(Qt6 QUIET COMPONENTS Svg)
 if(COMMAND qt_standard_project_setup)
   qt_standard_project_setup()
 endif()
