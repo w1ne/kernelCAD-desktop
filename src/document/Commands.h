@@ -28,6 +28,11 @@
 #include "../features/ReverseNormalFeature.h"
 #include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
+#include "../features/StitchFeature.h"
+#include "../features/SplitFaceFeature.h"
+#include "../features/PatchFeature.h"
+#include "../features/RibFeature.h"
+#include "../features/WebFeature.h"
 #include <string>
 #include <memory>
 #include <functional>
@@ -528,6 +533,119 @@ public:
 
 private:
     features::JointParams m_params;
+    std::string m_featureId;
+};
+
+// ── AddTorusCommand ──────────────────────────────────────────────────────────
+
+class AddTorusCommand : public Command {
+public:
+    AddTorusCommand(double majorRadius, double minorRadius);
+
+    std::string description() const override { return "Add Torus"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    double      m_majorRadius;
+    double      m_minorRadius;
+    std::string m_bodyId;
+};
+
+// ── AddPipeCommand ──────────────────────────────────────────────────────────
+
+class AddPipeCommand : public Command {
+public:
+    AddPipeCommand(double outerRadius, double innerRadius, double height);
+
+    std::string description() const override { return "Add Pipe"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    double      m_outerRadius;
+    double      m_innerRadius;
+    double      m_height;
+    std::string m_bodyId;
+};
+
+// ── AddStitchCommand ────────────────────────────────────────────────────────
+
+class AddStitchCommand : public Command {
+public:
+    explicit AddStitchCommand(features::StitchParams params);
+
+    std::string description() const override { return "Add Stitch"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::StitchParams m_params;
+    std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddSplitFaceCommand ─────────────────────────────────────────────────────
+
+class AddSplitFaceCommand : public Command {
+public:
+    explicit AddSplitFaceCommand(features::SplitFaceParams params);
+
+    std::string description() const override { return "Add Split Face"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::SplitFaceParams m_params;
+    std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddPatchCommand ─────────────────────────────────────────────────────────
+
+class AddPatchCommand : public Command {
+public:
+    explicit AddPatchCommand(features::PatchParams params);
+
+    std::string description() const override { return "Add Patch"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::PatchParams m_params;
+    std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddRibCommand ───────────────────────────────────────────────────────────
+
+class AddRibCommand : public Command {
+public:
+    explicit AddRibCommand(features::RibParams params);
+
+    std::string description() const override { return "Add Rib"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::RibParams m_params;
+    std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddWebCommand ───────────────────────────────────────────────────────────
+
+class AddWebCommand : public Command {
+public:
+    explicit AddWebCommand(features::WebParams params);
+
+    std::string description() const override { return "Add Web"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::WebParams m_params;
+    std::string m_bodyId;
     std::string m_featureId;
 };
 

@@ -12,6 +12,11 @@
 #include "../features/ReplaceFaceFeature.h"
 #include "../features/ReverseNormalFeature.h"
 #include "../features/Joint.h"
+#include "../features/StitchFeature.h"
+#include "../features/SplitFaceFeature.h"
+#include "../features/PatchFeature.h"
+#include "../features/RibFeature.h"
+#include "../features/WebFeature.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -52,6 +57,11 @@ static const char* featureTypeToStr(features::FeatureType t)
     case features::FeatureType::ReplaceFace:        return "ReplaceFace";
     case features::FeatureType::ReverseNormal:      return "ReverseNormal";
     case features::FeatureType::Joint:              return "Joint";
+    case features::FeatureType::Stitch:            return "Stitch";
+    case features::FeatureType::SplitFace:         return "SplitFace";
+    case features::FeatureType::Patch:             return "Patch";
+    case features::FeatureType::Rib:               return "Rib";
+    case features::FeatureType::Web:               return "Web";
     default:                                         return "Unknown";
     }
 }
@@ -87,6 +97,11 @@ static features::FeatureType featureTypeFromStr(const std::string& s)
     if (s == "ReplaceFace")         return features::FeatureType::ReplaceFace;
     if (s == "ReverseNormal")       return features::FeatureType::ReverseNormal;
     if (s == "Joint")               return features::FeatureType::Joint;
+    if (s == "Stitch")              return features::FeatureType::Stitch;
+    if (s == "SplitFace")           return features::FeatureType::SplitFace;
+    if (s == "Patch")               return features::FeatureType::Patch;
+    if (s == "Rib")                 return features::FeatureType::Rib;
+    if (s == "Web")                 return features::FeatureType::Web;
     return features::FeatureType::BaseFeature; // fallback
 }
 
@@ -1022,6 +1037,46 @@ static void writeFeatureParams(JsonWriter& w,
         w.writeBool("isLocked", p.isLocked);
         w.writeBool("isSuppressed", p.isSuppressed);
     }
+    else if (ft == features::FeatureType::Stitch) {
+        const auto& p = static_cast<const features::StitchFeature&>(feat).params();
+        w.beginArray("targetBodyIds");
+        for (const auto& bid : p.targetBodyIds) {
+            w.beginObject();
+            w.writeString("v", bid);
+            w.endObject();
+        }
+        w.endArray();
+        w.writeNumber("tolerance", p.tolerance);
+    }
+    else if (ft == features::FeatureType::SplitFace) {
+        const auto& p = static_cast<const features::SplitFaceFeature&>(feat).params();
+        w.writeString("targetBodyId", p.targetBodyId);
+        w.writeInt("faceIndex", p.faceIndex);
+        w.writeString("sketchId", p.sketchId);
+        w.writeString("profileId", p.profileId);
+    }
+    else if (ft == features::FeatureType::Patch) {
+        const auto& p = static_cast<const features::PatchFeature&>(feat).params();
+        w.writeString("boundaryBodyId", p.boundaryBodyId);
+    }
+    else if (ft == features::FeatureType::Rib) {
+        const auto& p = static_cast<const features::RibFeature&>(feat).params();
+        w.writeString("targetBodyId", p.targetBodyId);
+        w.writeString("sketchId", p.sketchId);
+        w.writeString("profileId", p.profileId);
+        w.writeNumber("thickness", p.thickness);
+        w.writeNumber("depth", p.depth);
+    }
+    else if (ft == features::FeatureType::Web) {
+        const auto& p = static_cast<const features::WebFeature&>(feat).params();
+        w.writeString("targetBodyId", p.targetBodyId);
+        w.writeString("sketchId", p.sketchId);
+        w.writeString("profileId", p.profileId);
+        w.writeNumber("thickness", p.thickness);
+        w.writeNumber("depth", p.depth);
+        w.writeInt("count", p.count);
+        w.writeNumber("spacing", p.spacing);
+    }
 
     w.endObject();
 }
@@ -1764,6 +1819,45 @@ static std::shared_ptr<features::Feature> reconstructFeature(
         p.isLocked     = params.getBool("isLocked");
         p.isSuppressed = params.getBool("isSuppressed");
         return std::make_shared<features::Joint>(id, std::move(p));
+    }
+    case features::FeatureType::Stitch: {
+        features::StitchParams p;
+        p.targetBodyIds = readStringArray(params, "targetBodyIds");
+        p.tolerance = params.getNumber("tolerance", 1e-3);
+        return std::make_shared<features::StitchFeature>(id, std::move(p));
+    }
+    case features::FeatureType::SplitFace: {
+        features::SplitFaceParams p;
+        p.targetBodyId = params.getString("targetBodyId");
+        p.faceIndex    = static_cast<int>(params.getNumber("faceIndex", 0));
+        p.sketchId     = params.getString("sketchId");
+        p.profileId    = params.getString("profileId");
+        return std::make_shared<features::SplitFaceFeature>(id, std::move(p));
+    }
+    case features::FeatureType::Patch: {
+        features::PatchParams p;
+        p.boundaryBodyId = params.getString("boundaryBodyId");
+        return std::make_shared<features::PatchFeature>(id, std::move(p));
+    }
+    case features::FeatureType::Rib: {
+        features::RibParams p;
+        p.targetBodyId = params.getString("targetBodyId");
+        p.sketchId     = params.getString("sketchId");
+        p.profileId    = params.getString("profileId");
+        p.thickness    = params.getNumber("thickness", 2.0);
+        p.depth        = params.getNumber("depth", 10.0);
+        return std::make_shared<features::RibFeature>(id, std::move(p));
+    }
+    case features::FeatureType::Web: {
+        features::WebParams p;
+        p.targetBodyId = params.getString("targetBodyId");
+        p.sketchId     = params.getString("sketchId");
+        p.profileId    = params.getString("profileId");
+        p.thickness    = params.getNumber("thickness", 2.0);
+        p.depth        = params.getNumber("depth", 10.0);
+        p.count        = static_cast<int>(params.getNumber("count", 3));
+        p.spacing      = params.getNumber("spacing", 10.0);
+        return std::make_shared<features::WebFeature>(id, std::move(p));
     }
     default:
         return nullptr;

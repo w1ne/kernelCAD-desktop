@@ -55,6 +55,11 @@ add_executable(kernelCAD
   features/ReverseNormalFeature.cpp
   features/Joint.cpp
   features/SketchFeature.cpp
+  features/StitchFeature.cpp
+  features/SplitFaceFeature.cpp
+  features/PatchFeature.cpp
+  features/RibFeature.cpp
+  features/WebFeature.cpp
   # sketch
   sketch/Sketch.cpp
   sketch/SketchSolver.cpp
@@ -103,7 +108,7 @@ target_link_libraries(kernelCAD PRIVATE
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo
   TKTopAlgo TKPrim TKBool TKFillet TKOffset
   TKMesh TKSTEP TKIGES TKXSBase TKSTL
-  TKShHealing TKHLR
+  TKShHealing TKHLR TKFeat
 )
 
 # Platform-specific
@@ -170,6 +175,11 @@ add_executable(kernelcad-cli
   features/ReverseNormalFeature.cpp
   features/Joint.cpp
   features/SketchFeature.cpp
+  features/StitchFeature.cpp
+  features/SplitFaceFeature.cpp
+  features/PatchFeature.cpp
+  features/RibFeature.cpp
+  features/WebFeature.cpp
   # sketch
   sketch/Sketch.cpp
   sketch/SketchSolver.cpp
@@ -187,5 +197,5 @@ target_link_libraries(kernelcad-cli PRIVATE
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo
   TKTopAlgo TKPrim TKBool TKFillet TKOffset
   TKMesh TKSTEP TKIGES TKXSBase TKSTL
-  TKShHealing
+  TKShHealing TKFeat
 )

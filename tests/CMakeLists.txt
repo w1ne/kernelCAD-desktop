@@ -63,5 +63,5 @@ target_include_directories(test_kernel PRIVATE ${CMAKE_SOURCE_DIR}/src ${OpenCAS
 target_link_libraries(test_kernel PRIVATE
   kernelcad_compiler_options Qt6::Core Qt6::Test
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
-  TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing)
+  TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing TKFeat)
 add_test(NAME OCCTKernel COMMAND test_kernel)

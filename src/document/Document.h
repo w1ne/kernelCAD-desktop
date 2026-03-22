@@ -40,6 +40,11 @@ namespace kernel { class OCCTKernel; class BRepModel; }
 #include "../features/ReverseNormalFeature.h"
 #include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
+#include "../features/StitchFeature.h"
+#include "../features/SplitFaceFeature.h"
+#include "../features/PatchFeature.h"
+#include "../features/RibFeature.h"
+#include "../features/WebFeature.h"
 #include "JointSolver.h"
 
 namespace document {
@@ -167,6 +172,27 @@ public:
 
     /// Add a joint between two component occurrences. Returns the joint feature ID.
     std::string addJoint(features::JointParams params);
+
+    /// Create a torus primitive. Returns the body ID.
+    std::string addTorus(double majorRadius, double minorRadius);
+
+    /// Create a pipe (hollow cylinder) primitive. Returns the body ID.
+    std::string addPipe(double outerRadius, double innerRadius, double height);
+
+    /// Stitch shells/faces into a solid. Returns the body ID.
+    std::string addStitch(features::StitchParams params);
+
+    /// Split a face on a body with a wire. Returns the body ID.
+    std::string addSplitFace(features::SplitFaceParams params);
+
+    /// Create a patch (face from boundary wire). Returns the body ID.
+    std::string addPatch(features::PatchParams params);
+
+    /// Add a rib to a body. Returns the body ID.
+    std::string addRib(features::RibParams params);
+
+    /// Add a web (multi-rib) to a body. Returns the body ID.
+    std::string addWeb(features::WebParams params);
 
     /// Import a .kcd file as a new component. Creates a Component from
     /// the imported document's bodies and adds an Occurrence in the root.

@@ -301,6 +301,11 @@ std::string Document::generateFeatureName(features::FeatureType type) const
         {(int)features::FeatureType::Coil,               "Coil"},
         {(int)features::FeatureType::DeleteFace,         "Delete Face"},
         {(int)features::FeatureType::ReplaceFace,        "Replace Face"},
+        {(int)features::FeatureType::Stitch,             "Stitch"},
+        {(int)features::FeatureType::SplitFace,          "Split Face"},
+        {(int)features::FeatureType::Patch,              "Patch"},
+        {(int)features::FeatureType::Rib,                "Rib"},
+        {(int)features::FeatureType::Web,                "Web"},
         {(int)features::FeatureType::ReverseNormal,      "Reverse Normal"},
         {(int)features::FeatureType::Joint,              "Joint"},
         {(int)features::FeatureType::BaseFeature,        "Feature"},
@@ -1395,6 +1400,204 @@ std::string Document::addJoint(features::JointParams params)
     return featureId;
 }
 
+std::string Document::addTorus(double majorRadius, double minorRadius)
+{
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << m_nextBodyCounter;
+    std::string bodyId = bodyIdStream.str();
+    m_nextBodyCounter++;
+
+    TopoDS_Shape shape = m_kernel->makeTorus(majorRadius, minorRadius);
+    m_brepModel->addBody(bodyId, shape);
+    m_modified = true;
+    return bodyId;
+}
+
+std::string Document::addPipe(double outerRadius, double innerRadius, double height)
+{
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << m_nextBodyCounter;
+    std::string bodyId = bodyIdStream.str();
+    m_nextBodyCounter++;
+
+    TopoDS_Shape shape = m_kernel->makePipe(outerRadius, innerRadius, height);
+    m_brepModel->addBody(bodyId, shape);
+    m_modified = true;
+    return bodyId;
+}
+
+std::string Document::addStitch(features::StitchParams params)
+{
+    // Collect shapes from referenced body IDs
+    std::vector<TopoDS_Shape> shapes;
+    for (const auto& bid : params.targetBodyIds) {
+        if (m_brepModel->hasBody(bid))
+            shapes.push_back(m_brepModel->getShape(bid));
+    }
+    if (shapes.empty())
+        throw std::runtime_error("Stitch: no valid bodies found");
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "stitch_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << m_nextBodyCounter;
+    std::string bodyId = bodyIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::StitchFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, shapes);
+    m_brepModel->addBody(bodyId, result);
+
+    m_depGraph.addNode(featureId);
+    registerBodyFeature(bodyId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return bodyId;
+}
+
+std::string Document::addSplitFace(features::SplitFaceParams params)
+{
+    std::string targetId = params.targetBodyId;
+    if (!m_brepModel->hasBody(targetId))
+        throw std::runtime_error("SplitFace: target body '" + targetId + "' not found");
+
+    TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+
+    const sketch::Sketch* sketchPtr = nullptr;
+    if (!params.sketchId.empty()) {
+        auto* sketchFeat = findSketch(params.sketchId);
+        if (sketchFeat)
+            sketchPtr = &sketchFeat->sketch();
+    }
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "splitface_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::SplitFaceFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, targetShape, sketchPtr);
+
+    m_brepModel->addBody(targetId, result);
+
+    m_depGraph.addNode(featureId);
+    std::string depFeat = featureForBody(targetId);
+    if (!depFeat.empty())
+        m_depGraph.addEdge(depFeat, featureId);
+
+    registerBodyFeature(targetId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return targetId;
+}
+
+std::string Document::addPatch(features::PatchParams params)
+{
+    std::string boundaryId = params.boundaryBodyId;
+    if (!m_brepModel->hasBody(boundaryId))
+        throw std::runtime_error("Patch: boundary body '" + boundaryId + "' not found");
+
+    TopoDS_Shape boundaryShape = m_brepModel->getShape(boundaryId);
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "patch_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << m_nextBodyCounter;
+    std::string bodyId = bodyIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::PatchFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, boundaryShape);
+    m_brepModel->addBody(bodyId, result);
+
+    m_depGraph.addNode(featureId);
+    registerBodyFeature(bodyId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return bodyId;
+}
+
+std::string Document::addRib(features::RibParams params)
+{
+    std::string targetId = params.targetBodyId;
+    if (!m_brepModel->hasBody(targetId))
+        throw std::runtime_error("Rib: target body '" + targetId + "' not found");
+
+    TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+
+    const sketch::Sketch* sketchPtr = nullptr;
+    if (!params.sketchId.empty()) {
+        auto* sketchFeat = findSketch(params.sketchId);
+        if (sketchFeat)
+            sketchPtr = &sketchFeat->sketch();
+    }
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "rib_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::RibFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, targetShape, sketchPtr);
+
+    m_brepModel->addBody(targetId, result);
+
+    m_depGraph.addNode(featureId);
+    std::string depFeat = featureForBody(targetId);
+    if (!depFeat.empty())
+        m_depGraph.addEdge(depFeat, featureId);
+
+    registerBodyFeature(targetId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return targetId;
+}
+
+std::string Document::addWeb(features::WebParams params)
+{
+    std::string targetId = params.targetBodyId;
+    if (!m_brepModel->hasBody(targetId))
+        throw std::runtime_error("Web: target body '" + targetId + "' not found");
+
+    TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+
+    const sketch::Sketch* sketchPtr = nullptr;
+    if (!params.sketchId.empty()) {
+        auto* sketchFeat = findSketch(params.sketchId);
+        if (sketchFeat)
+            sketchPtr = &sketchFeat->sketch();
+    }
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "web_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::WebFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, targetShape, sketchPtr);
+
+    m_brepModel->addBody(targetId, result);
+
+    m_depGraph.addNode(featureId);
+    std::string depFeat = featureForBody(targetId);
+    if (!depFeat.empty())
+        m_depGraph.addEdge(depFeat, featureId);
+
+    registerBodyFeature(targetId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return targetId;
+}
+
 std::string Document::insertComponentFromFile(const std::string& kcdPath)
 {
     // 1. Create a temporary Document and load the .kcd file into it
@@ -1947,6 +2150,86 @@ void Document::executeFeature(features::Feature* feat, int& bodyCounter)
             }
 
             TopoDS_Shape result = reverseFeat->execute(*m_kernel, targetShape);
+            propagateAttributes(targetId, targetShape, result);
+            m_brepModel->addBody(targetId, result);
+            registerBodyFeature(targetId, feat->id());
+        }
+    }
+    else if (feat->type() == features::FeatureType::Stitch) {
+        auto* stitchFeat = static_cast<features::StitchFeature*>(feat);
+        std::vector<TopoDS_Shape> shapes;
+        for (const auto& bid : stitchFeat->params().targetBodyIds) {
+            if (m_brepModel->hasBody(bid))
+                shapes.push_back(m_brepModel->getShape(bid));
+        }
+        if (!shapes.empty()) {
+            TopoDS_Shape result = stitchFeat->execute(*m_kernel, shapes);
+            bodyIdStream << "body_" << bodyCounter;
+            std::string bodyId = bodyIdStream.str();
+            m_brepModel->addBody(bodyId, result);
+            registerBodyFeature(bodyId, feat->id());
+            bodyCounter++;
+        }
+    }
+    else if (feat->type() == features::FeatureType::SplitFace) {
+        auto* splitFaceFeat = static_cast<features::SplitFaceFeature*>(feat);
+        std::string targetId = splitFaceFeat->params().targetBodyId;
+        if (m_brepModel->hasBody(targetId)) {
+            TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+            const sketch::Sketch* sketchPtr = nullptr;
+            if (!splitFaceFeat->params().sketchId.empty()) {
+                auto* sketchFeat = findSketch(splitFaceFeat->params().sketchId);
+                if (sketchFeat)
+                    sketchPtr = &sketchFeat->sketch();
+            }
+            TopoDS_Shape result = splitFaceFeat->execute(*m_kernel, targetShape, sketchPtr);
+            propagateAttributes(targetId, targetShape, result);
+            m_brepModel->addBody(targetId, result);
+            registerBodyFeature(targetId, feat->id());
+        }
+    }
+    else if (feat->type() == features::FeatureType::Patch) {
+        auto* patchFeat = static_cast<features::PatchFeature*>(feat);
+        std::string boundaryId = patchFeat->params().boundaryBodyId;
+        TopoDS_Shape boundaryShape;
+        if (!boundaryId.empty() && m_brepModel->hasBody(boundaryId))
+            boundaryShape = m_brepModel->getShape(boundaryId);
+        TopoDS_Shape result = patchFeat->execute(*m_kernel, boundaryShape);
+        bodyIdStream << "body_" << bodyCounter;
+        std::string bodyId = bodyIdStream.str();
+        m_brepModel->addBody(bodyId, result);
+        registerBodyFeature(bodyId, feat->id());
+        bodyCounter++;
+    }
+    else if (feat->type() == features::FeatureType::Rib) {
+        auto* ribFeat = static_cast<features::RibFeature*>(feat);
+        std::string targetId = ribFeat->params().targetBodyId;
+        if (m_brepModel->hasBody(targetId)) {
+            TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+            const sketch::Sketch* sketchPtr = nullptr;
+            if (!ribFeat->params().sketchId.empty()) {
+                auto* sketchFeat = findSketch(ribFeat->params().sketchId);
+                if (sketchFeat)
+                    sketchPtr = &sketchFeat->sketch();
+            }
+            TopoDS_Shape result = ribFeat->execute(*m_kernel, targetShape, sketchPtr);
+            propagateAttributes(targetId, targetShape, result);
+            m_brepModel->addBody(targetId, result);
+            registerBodyFeature(targetId, feat->id());
+        }
+    }
+    else if (feat->type() == features::FeatureType::Web) {
+        auto* webFeat = static_cast<features::WebFeature*>(feat);
+        std::string targetId = webFeat->params().targetBodyId;
+        if (m_brepModel->hasBody(targetId)) {
+            TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+            const sketch::Sketch* sketchPtr = nullptr;
+            if (!webFeat->params().sketchId.empty()) {
+                auto* sketchFeat = findSketch(webFeat->params().sketchId);
+                if (sketchFeat)
+                    sketchPtr = &sketchFeat->sketch();
+            }
+            TopoDS_Shape result = webFeat->execute(*m_kernel, targetShape, sketchPtr);
             propagateAttributes(targetId, targetShape, result);
             m_brepModel->addBody(targetId, result);
             registerBodyFeature(targetId, feat->id());

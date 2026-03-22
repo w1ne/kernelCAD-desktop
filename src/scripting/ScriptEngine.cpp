@@ -55,6 +55,11 @@ static std::string featureTypeStr(features::FeatureType t)
     case features::FeatureType::ConstructionPlane:  return "ConstructionPlane";
     case features::FeatureType::ConstructionAxis:   return "ConstructionAxis";
     case features::FeatureType::ConstructionPoint:  return "ConstructionPoint";
+    case features::FeatureType::Stitch:             return "Stitch";
+    case features::FeatureType::SplitFace:          return "SplitFace";
+    case features::FeatureType::Patch:              return "Patch";
+    case features::FeatureType::Rib:                return "Rib";
+    case features::FeatureType::Web:                return "Web";
     default:                                        return "Unknown";
     }
 }
@@ -732,9 +737,76 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
         if (cmdName == "createSphere") {
             double radius = cmd.getNumber("radius", 5);
             TopoDS_Shape sphere = doc.kernel().makeSphere(radius);
-            // Register directly in BRepModel (no specific Document::addSphere)
             std::string bodyId = "body_sphere_" + std::to_string(doc.brepModel().bodyIds().size() + 1);
             doc.brepModel().addBody(bodyId, sphere);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "createTorus") {
+            double majorR = cmd.getNumber("majorRadius", 20);
+            double minorR = cmd.getNumber("minorRadius", 5);
+            std::string bodyId = doc.addTorus(majorR, minorR);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "createPipe") {
+            double outerR = cmd.getNumber("outerRadius", 15);
+            double innerR = cmd.getNumber("innerRadius", 12);
+            double height = cmd.getNumber("height", 30);
+            std::string bodyId = doc.addPipe(outerR, innerR, height);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "stitch") {
+            features::StitchParams p;
+            p.targetBodyIds = getStringArray(cmd, "bodyIds");
+            p.tolerance = cmd.getNumber("tolerance", 1e-3);
+            std::string bodyId = doc.addStitch(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "splitFace") {
+            features::SplitFaceParams p;
+            p.targetBodyId = cmd.getString("targetBodyId");
+            p.faceIndex = static_cast<int>(cmd.getNumber("faceIndex", 0));
+            p.sketchId = cmd.getString("sketchId", "");
+            std::string bodyId = doc.addSplitFace(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "patch") {
+            features::PatchParams p;
+            p.boundaryBodyId = cmd.getString("boundaryBodyId");
+            std::string bodyId = doc.addPatch(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "rib") {
+            features::RibParams p;
+            p.targetBodyId = cmd.getString("targetBodyId");
+            p.sketchId = cmd.getString("sketchId", "");
+            p.thickness = cmd.getNumber("thickness", 2.0);
+            p.depth = cmd.getNumber("depth", 10.0);
+            std::string bodyId = doc.addRib(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "web") {
+            features::WebParams p;
+            p.targetBodyId = cmd.getString("targetBodyId");
+            p.sketchId = cmd.getString("sketchId", "");
+            p.thickness = cmd.getNumber("thickness", 2.0);
+            p.depth = cmd.getNumber("depth", 10.0);
+            p.count = static_cast<int>(cmd.getNumber("count", 3));
+            p.spacing = cmd.getNumber("spacing", 10.0);
+            std::string bodyId = doc.addWeb(p);
             return okResponse(id, [&](JsonWriter& w) {
                 w.writeString("bodyId", bodyId);
             });

@@ -50,7 +50,8 @@ FeatureDialog::FeatureDialog(QWidget* parent)
 
 void FeatureDialog::setupLayout()
 {
-    setFixedWidth(280);
+    setFixedWidth(300);
+    setMinimumHeight(200);
 
     m_rootLayout = new QVBoxLayout(this);
     m_rootLayout->setContentsMargins(14, 10, 14, 12);
@@ -69,9 +70,14 @@ void FeatureDialog::setupLayout()
 
     // Form area
     m_formWidget = new QWidget(this);
+    m_formWidget->setStyleSheet(
+        "QLabel { color: #cccccc; font-size: 12px; min-height: 24px; }"
+    );
     m_formLayout = new QFormLayout(m_formWidget);
     m_formLayout->setContentsMargins(0, 0, 0, 0);
-    m_formLayout->setSpacing(8);
+    m_formLayout->setSpacing(12);
+    m_formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    m_formLayout->setRowWrapPolicy(QFormLayout::DontWrapRows);
     m_formLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_rootLayout->addWidget(m_formWidget);
 

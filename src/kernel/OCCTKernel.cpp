@@ -81,6 +81,8 @@
 #include <BOPAlgo_BOP.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepFeat_SplitShape.hxx>
 
 namespace kernel {
 
@@ -102,6 +104,96 @@ TopoDS_Shape OCCTKernel::makeCylinder(double radius, double height)
 TopoDS_Shape OCCTKernel::makeSphere(double radius)
 {
     return BRepPrimAPI_MakeSphere(radius).Shape();
+}
+
+TopoDS_Shape OCCTKernel::makeTorus(double majorRadius, double minorRadius)
+{
+    return BRepPrimAPI_MakeTorus(majorRadius, minorRadius).Shape();
+}
+
+TopoDS_Shape OCCTKernel::makePipe(double outerRadius, double innerRadius, double height)
+{
+    auto outer = makeCylinder(outerRadius, height);
+    auto inner = makeCylinder(innerRadius, height);
+    return booleanCut(outer, inner);
+}
+
+TopoDS_Shape OCCTKernel::stitch(const std::vector<TopoDS_Shape>& shapes, double tolerance)
+{
+    BRepBuilderAPI_Sewing sewing(tolerance);
+    for (const auto& s : shapes)
+        sewing.Add(s);
+    sewing.Perform();
+    TopoDS_Shape result = sewing.SewedShape();
+
+    // Try to make solid
+    try {
+        BRepBuilderAPI_MakeSolid solid;
+        TopExp_Explorer shellEx(result, TopAbs_SHELL);
+        for (; shellEx.More(); shellEx.Next())
+            solid.Add(TopoDS::Shell(shellEx.Current()));
+        if (solid.IsDone())
+            return solid.Solid();
+    } catch (...) {}
+    return result;
+}
+
+TopoDS_Shape OCCTKernel::splitFace(const TopoDS_Shape& shape, int faceIndex,
+                                    const TopoDS_Shape& splittingWire)
+{
+    TopTools_IndexedMapOfShape faceMap;
+    TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
+    if (faceIndex < 0 || faceIndex >= faceMap.Extent())
+        throw std::runtime_error("splitFace: invalid face index");
+
+    const TopoDS_Face& face = TopoDS::Face(faceMap(faceIndex + 1));
+
+    BRepFeat_SplitShape splitter(shape);
+
+    TopExp_Explorer wireEx(splittingWire, TopAbs_EDGE);
+    for (; wireEx.More(); wireEx.Next())
+        splitter.Add(TopoDS::Edge(wireEx.Current()), face);
+
+    splitter.Build();
+    if (!splitter.IsDone())
+        throw std::runtime_error("splitFace failed");
+
+    return splitter.Shape();
+}
+
+TopoDS_Shape OCCTKernel::patch(const TopoDS_Shape& boundaryWire)
+{
+    TopoDS_Wire wire = TopoDS::Wire(boundaryWire);
+    BRepBuilderAPI_MakeFace maker(wire);
+    if (!maker.IsDone())
+        throw std::runtime_error("patch: cannot create face from wire");
+    return maker.Face();
+}
+
+TopoDS_Shape OCCTKernel::rib(const TopoDS_Shape& body, const TopoDS_Shape& profile,
+                              double thickness, double depth)
+{
+    // Extrude the profile
+    gp_Vec dir(0, 0, depth);
+    TopoDS_Shape extruded = BRepPrimAPI_MakePrism(profile, dir).Shape();
+
+    // Thicken it to create a thin wall
+    TopoDS_Shape thickened = thicken(extruded, thickness);
+
+    // Union with body
+    return booleanUnion(body, thickened);
+}
+
+TopoDS_Shape OCCTKernel::web(const TopoDS_Shape& body, const TopoDS_Shape& profile,
+                              double thickness, double depth, int count, double spacing)
+{
+    TopoDS_Shape result = body;
+    for (int i = 0; i < count; ++i) {
+        double offset = i * spacing;
+        TopoDS_Shape offsetProfile = translate(profile, offset, 0, 0);
+        result = rib(result, offsetProfile, thickness, depth);
+    }
+    return result;
 }
 
 TopoDS_Shape OCCTKernel::booleanUnion(const TopoDS_Shape& a, const TopoDS_Shape& b)

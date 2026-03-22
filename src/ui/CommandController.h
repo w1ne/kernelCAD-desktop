@@ -33,6 +33,8 @@ public:
     void onCreateBox();
     void onCreateCylinder();
     void onCreateSphere();
+    void onCreateTorus();
+    void onCreatePipe();
 
     // ── Sketch ──────────────────────────────────────────────────────────
     void onCreateSketch();

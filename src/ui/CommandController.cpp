@@ -141,6 +141,38 @@ void CommandController::onCreateSphere()
     }
 }
 
+void CommandController::onCreateTorus()
+{
+    m_lastCommandName = tr("Create Torus");
+    m_lastCommandCallback = [this]() { onCreateTorus(); };
+    m_document->executeCommand(
+        std::make_unique<document::AddTorusCommand>(20.0, 5.0));
+    m_mainWindow->statusBar()->showMessage(tr("Created torus"));
+    m_mainWindow->refreshAllPanels();
+
+    auto& tl = m_document->timeline();
+    if (tl.count() > 0) {
+        auto& lastEntry = tl.entry(tl.count() - 1);
+        m_properties->showFeature(QString::fromStdString(lastEntry.id));
+    }
+}
+
+void CommandController::onCreatePipe()
+{
+    m_lastCommandName = tr("Create Pipe");
+    m_lastCommandCallback = [this]() { onCreatePipe(); };
+    m_document->executeCommand(
+        std::make_unique<document::AddPipeCommand>(15.0, 12.0, 30.0));
+    m_mainWindow->statusBar()->showMessage(tr("Created pipe"));
+    m_mainWindow->refreshAllPanels();
+
+    auto& tl = m_document->timeline();
+    if (tl.count() > 0) {
+        auto& lastEntry = tl.entry(tl.count() - 1);
+        m_properties->showFeature(QString::fromStdString(lastEntry.id));
+    }
+}
+
 // =============================================================================
 // Sketch
 // =============================================================================

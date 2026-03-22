@@ -159,6 +159,22 @@ public:
                         bool isRightHanded,
                         bool isModeled);
 
+    // ── Torus / Pipe primitives ─────────────────────────────────────────
+    TopoDS_Shape makeTorus(double majorRadius, double minorRadius);
+    TopoDS_Shape makePipe(double outerRadius, double innerRadius, double height);
+
+    // ── Stitch / Split Face / Patch ops ─────────────────────────────────
+    TopoDS_Shape stitch(const std::vector<TopoDS_Shape>& shapes, double tolerance = 1e-3);
+    TopoDS_Shape splitFace(const TopoDS_Shape& shape, int faceIndex,
+                           const TopoDS_Shape& splittingWire);
+    TopoDS_Shape patch(const TopoDS_Shape& boundaryWire);
+
+    // ── Rib / Web ops ───────────────────────────────────────────────────
+    TopoDS_Shape rib(const TopoDS_Shape& body, const TopoDS_Shape& profile,
+                     double thickness, double depth);
+    TopoDS_Shape web(const TopoDS_Shape& body, const TopoDS_Shape& profile,
+                     double thickness, double depth, int count, double spacing);
+
     // ── Scale ops ────────────────────────────────────────────────────────
     /// Scale a shape uniformly around a center point.
     TopoDS_Shape scaleUniform(const TopoDS_Shape& shape, double factor,

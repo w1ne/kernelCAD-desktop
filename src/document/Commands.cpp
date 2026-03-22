@@ -801,6 +801,177 @@ void AddJointCommand::undo(Document& doc)
     doc.setModified(true);
 }
 
+// ── AddTorusCommand ──────────────────────────────────────────────────────────
+
+AddTorusCommand::AddTorusCommand(double majorRadius, double minorRadius)
+    : m_majorRadius(majorRadius), m_minorRadius(minorRadius)
+{}
+
+void AddTorusCommand::execute(Document& doc)
+{
+    auto& tl = doc.timeline();
+    int counter = static_cast<int>(tl.count()) + 1;
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << counter;
+    m_bodyId = bodyIdStream.str();
+
+    TopoDS_Shape torus = doc.kernel().makeTorus(m_majorRadius, m_minorRadius);
+    doc.brepModel().addBody(m_bodyId, torus);
+    doc.setModified(true);
+}
+
+void AddTorusCommand::undo(Document& doc)
+{
+    doc.brepModel().removeBody(m_bodyId);
+    doc.setModified(true);
+}
+
+// ── AddPipeCommand ──────────────────────────────────────────────────────────
+
+AddPipeCommand::AddPipeCommand(double outerRadius, double innerRadius, double height)
+    : m_outerRadius(outerRadius), m_innerRadius(innerRadius), m_height(height)
+{}
+
+void AddPipeCommand::execute(Document& doc)
+{
+    auto& tl = doc.timeline();
+    int counter = static_cast<int>(tl.count()) + 1;
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << counter;
+    m_bodyId = bodyIdStream.str();
+
+    TopoDS_Shape pipe = doc.kernel().makePipe(m_outerRadius, m_innerRadius, m_height);
+    doc.brepModel().addBody(m_bodyId, pipe);
+    doc.setModified(true);
+}
+
+void AddPipeCommand::undo(Document& doc)
+{
+    doc.brepModel().removeBody(m_bodyId);
+    doc.setModified(true);
+}
+
+// ── AddStitchCommand ────────────────────────────────────────────────────────
+
+AddStitchCommand::AddStitchCommand(features::StitchParams params)
+    : m_params(std::move(params))
+{}
+
+void AddStitchCommand::execute(Document& doc)
+{
+    m_bodyId = doc.addStitch(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddStitchCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.brepModel().removeBody(m_bodyId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
+// ── AddSplitFaceCommand ─────────────────────────────────────────────────────
+
+AddSplitFaceCommand::AddSplitFaceCommand(features::SplitFaceParams params)
+    : m_params(std::move(params))
+{}
+
+void AddSplitFaceCommand::execute(Document& doc)
+{
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
+    m_bodyId = doc.addSplitFace(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddSplitFaceCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
+// ── AddPatchCommand ─────────────────────────────────────────────────────────
+
+AddPatchCommand::AddPatchCommand(features::PatchParams params)
+    : m_params(std::move(params))
+{}
+
+void AddPatchCommand::execute(Document& doc)
+{
+    m_bodyId = doc.addPatch(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddPatchCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.brepModel().removeBody(m_bodyId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
+// ── AddRibCommand ───────────────────────────────────────────────────────────
+
+AddRibCommand::AddRibCommand(features::RibParams params)
+    : m_params(std::move(params))
+{}
+
+void AddRibCommand::execute(Document& doc)
+{
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
+    m_bodyId = doc.addRib(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddRibCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
+// ── AddWebCommand ───────────────────────────────────────────────────────────
+
+AddWebCommand::AddWebCommand(features::WebParams params)
+    : m_params(std::move(params))
+{}
+
+void AddWebCommand::execute(Document& doc)
+{
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
+    m_bodyId = doc.addWeb(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddWebCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
 // ── ReorderFeatureCommand ────────────────────────────────────────────────────
 
 ReorderFeatureCommand::ReorderFeatureCommand(std::string featureId, size_t newIndex)

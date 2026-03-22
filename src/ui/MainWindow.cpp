@@ -203,6 +203,21 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
+
+        // Also sync ribbon SKETCH tab buttons (uncheck all, check matching)
+        if (m_ribbon) {
+            for (auto* widget : m_ribbon->findChildren<QToolButton*>()) {
+                if (widget->objectName() == "RibbonButton" && widget->isCheckable()) {
+                    QVariant prop = widget->property("_toolName");
+                    if (prop.isValid()) {
+                        bool match = (prop.toString() == toolName);
+                        widget->blockSignals(true);
+                        widget->setChecked(match);
+                        widget->blockSignals(false);
+                    }
+                }
+            }
+        }
     });
 
     // Status bar context hints from sketch editor
@@ -318,8 +333,10 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
         btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
+        btn->setCheckable(true);
         btn->setFixedSize(48, 52);
         btn->setObjectName("RibbonButton");
+        btn->setProperty("_toolName", tool.name);
         QFont btnFont = btn->font();
         btnFont.setPointSize(9);
         btn->setFont(btnFont);
@@ -447,9 +464,9 @@ void MainWindow::setupToolBar()
             {"Sphere",   IconFactory::createIcon("sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
              [this]() { m_commandController->onCreateSphere(); }},
         }, {
-            {"Torus",  {}, tr("Torus"),  [this]() { statusBar()->showMessage(tr("Torus — not yet implemented")); }},
+            {"Torus",  {}, tr("Torus \u2014 Create a parametric torus"),  [this]() { m_commandController->onCreateTorus(); }},
             {"Coil",   {}, tr("Coil"),   [this]() { statusBar()->showMessage(tr("Coil — not yet implemented")); }},
-            {"Pipe",   {}, tr("Pipe"),   [this]() { statusBar()->showMessage(tr("Pipe — not yet implemented")); }},
+            {"Pipe",   {}, tr("Pipe \u2014 Create a hollow cylinder"),   [this]() { m_commandController->onCreatePipe(); }},
         });
         addGroupSeparator(layout);
 
@@ -982,6 +999,8 @@ void MainWindow::setupMenuBar()
     modelMenu->addAction(tr("Create Box"), m_commandController, &CommandController::onCreateBox);
     modelMenu->addAction(tr("Create Cylinder"), m_commandController, &CommandController::onCreateCylinder);
     modelMenu->addAction(tr("Create Sphere"), m_commandController, &CommandController::onCreateSphere);
+    modelMenu->addAction(tr("Create Torus"), m_commandController, &CommandController::onCreateTorus);
+    modelMenu->addAction(tr("Create Pipe"), m_commandController, &CommandController::onCreatePipe);
     modelMenu->addSeparator();
     modelMenu->addAction(tr("Extrude Sketch"), m_commandController, &CommandController::onExtrudeSketch);
     modelMenu->addAction(tr("Revolve Sketch"), m_commandController, &CommandController::onRevolveSketch);
@@ -2606,8 +2625,8 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
 
     m_activeSketchFeature = sketchFeat;
 
-    // Ensure the sketch has origin geometry (fixed origin point + construction axes)
-    // This matches Fusion 360 where every sketch shows the origin as pickable entities.
+    // Ensure the sketch has a fixed origin point at (0,0) for constraint snapping.
+    // Construction X/Y axes are drawn by the viewport grid overlay, not as sketch entities.
     auto& sk = sketchFeat->sketch();
     bool hasOriginPt = false;
     for (const auto& [pid, pt] : sk.points()) {
@@ -2617,20 +2636,7 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
         }
     }
     if (!hasOriginPt) {
-        // Add fixed origin point at (0,0)
         sk.addPoint(0, 0, true);
-        // Add construction X and Y axis lines through origin
-        auto xPt = sk.addPoint(100, 0, true);
-        auto yPt = sk.addPoint(0, 100, true);
-        auto oxPt = sk.addPoint(0, 0, true);  // shared origin for axes
-        // Use the first fixed origin point
-        for (const auto& [pid, pt] : sk.points()) {
-            if (pt.isFixed && std::abs(pt.x) < 0.01 && std::abs(pt.y) < 0.01) {
-                auto xLine = sk.addLine(pid, xPt, true);  // construction
-                auto yLine = sk.addLine(pid, yPt, true);  // construction
-                break;
-            }
-        }
     }
 
     m_sketchEditor->beginEditing(&sk, m_viewport);
@@ -3311,6 +3317,8 @@ void MainWindow::setupCommandPalette()
         {"Create Box",       "B",            "Model",  [this]() { m_commandController->onCreateBox(); }},
         {"Create Cylinder",  "",             "Model",  [this]() { m_commandController->onCreateCylinder(); }},
         {"Create Sphere",    "",             "Model",  [this]() { m_commandController->onCreateSphere(); }},
+        {"Create Torus",     "",             "Model",  [this]() { m_commandController->onCreateTorus(); }},
+        {"Create Pipe",      "",             "Model",  [this]() { m_commandController->onCreatePipe(); }},
 
         // ── Model (Modify) ──────────────────────────────────────────────
         {"Extrude",          "E",            "Model",  [this]() { m_commandController->onExtrudeSketch(); }},
