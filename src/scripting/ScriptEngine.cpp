@@ -176,9 +176,136 @@ struct ScriptEngine::Impl {
         return result;
     }
 
+    // ── Meta commands for LLM agents ─────────────────────────────────
+    std::string helpCommand(int id, const std::string& about);
+    std::string stateCommand(int id);
+
     // ── Command dispatch ────────────────────────────────────────────────
     std::string dispatch(const JsonValue& cmd);
 };
+
+// ---------------------------------------------------------------------------
+// Meta commands for LLM agents
+// ---------------------------------------------------------------------------
+
+std::string ScriptEngine::Impl::helpCommand(int id, const std::string& about)
+{
+    // Per-command help with exact parameters
+    struct CmdHelp { const char* name; const char* params; const char* returns; const char* hint; };
+    static const CmdHelp cmds[] = {
+        {"newDocument", "{}", "{}", "Start here. Creates an empty document."},
+        {"createSketch", "{plane:\"XY\"|\"XZ\"|\"YZ\"}", "{sketchId,featureId}", "Next: add geometry with sketchAddRectangle/Line/Circle, then sketchSolve."},
+        {"sketchAddPoint", "{sketchId,x,y}", "{pointId}", "Returns pointId like 'pt_1'. Use it in sketchAddLine."},
+        {"sketchAddLine", "{sketchId,startPointId,endPointId}", "{lineId}", "Connects two existing points."},
+        {"sketchAddRectangle", "{sketchId,x1,y1,x2,y2}", "{pointIds,lineIds}", "Creates 4 points + 4 lines. Fastest way to make a closed profile."},
+        {"sketchAddCircle", "{sketchId,centerPointId,radius}", "{circleId}", "Center must be an existing point (use sketchAddPoint first)."},
+        {"sketchAddConstraint", "{sketchId,type,entity1,entity2?,value?}", "{constraintId}", "Types: Coincident,Horizontal,Vertical,Distance,Radius,Parallel,Perpendicular,Equal,Fix"},
+        {"sketchSolve", "{sketchId}", "{status,freeDOF}", "MUST call before extrude. status='Solved' means ready."},
+        {"sketchDetectProfiles", "{sketchId}", "{profiles:[[ids]]}", "Check if sketch has closed loops for extrusion."},
+        {"extrude", "{sketchId,distance,symmetric?}", "{featureId,bodyId}", "Pushes 2D sketch into 3D. Use returned bodyId for fillet/chamfer/shell."},
+        {"fillet", "{bodyId,radius,edgeIds?}", "{featureId,bodyId}", "Rounds edges. Omit edgeIds to fillet ALL edges."},
+        {"chamfer", "{bodyId,distance,edgeIds?}", "{featureId,bodyId}", "Bevels edges."},
+        {"shell", "{bodyId,thickness}", "{featureId,bodyId}", "Hollows the body with given wall thickness."},
+        {"mirror", "{bodyId,planeNormalX,Y,Z}", "{featureId,bodyId}", "Mirror about a plane through origin. Example: planeNormalX=1,Y=0,Z=0 mirrors about YZ."},
+        {"circularPattern", "{bodyId,count,angle}", "{featureId,bodyId}", "Repeats body around Z axis."},
+        {"hole", "{bodyId,x,y,z,dx,dy,dz,diameter,depth}", "{featureId,bodyId}", "Drill a hole at position along direction."},
+        {"combine", "{targetBodyId,toolBodyId,operation}", "{featureId,bodyId}", "operation: 0=join(fuse), 1=cut(subtract), 2=intersect."},
+        {"createBox", "{dx,dy,dz}", "{featureId,bodyId}", "Quick box primitive. All dims in mm."},
+        {"createCylinder", "{radius,height}", "{featureId,bodyId}", "Quick cylinder."},
+        {"createSphere", "{radius}", "{featureId,bodyId}", "Quick sphere."},
+        {"listBodies", "{}", "{bodyIds:[{id}]}", "See what bodies exist."},
+        {"listFeatures", "{}", "{features:[{id,name,type}]}", "See the feature timeline."},
+        {"getProperties", "{bodyId}", "{volume,surfaceArea,mass,cogX/Y/Z,...}", "Physical properties. Volume in mm^3, mass in grams."},
+        {"faceCount", "{bodyId}", "{count}", "Number of B-Rep faces."},
+        {"edgeCount", "{bodyId}", "{count}", "Number of B-Rep edges."},
+        {"exportStep", "{path}", "{}", "Export all bodies to STEP file."},
+        {"exportStl", "{path}", "{}", "Export all bodies to STL file."},
+        {"undo", "{}", "{}", "Undo last operation."},
+        {"redo", "{}", "{}", "Redo."},
+        {"state", "{}", "{bodies,features,sketches}", "Dump current document state — use this to understand what you have."},
+        {"help", "{about?}", "{commands:[...]}", "This command. Pass about='extrude' for specific help."},
+    };
+
+    return okResponse(id, [&](JsonWriter& w) {
+        if (about.empty()) {
+            // List all commands
+            w.beginArray("commands");
+            for (const auto& c : cmds) {
+                w.beginObject();
+                w.writeString("cmd", c.name);
+                w.writeString("params", c.params);
+                w.writeString("returns", c.returns);
+                w.writeString("hint", c.hint);
+                w.endObject();
+            }
+            w.endArray();
+            w.writeString("tip", "Send {\"cmd\":\"help\",\"about\":\"extrude\"} for detailed help on a specific command.");
+        } else {
+            // Find specific command
+            bool found = false;
+            for (const auto& c : cmds) {
+                if (about == c.name) {
+                    w.writeString("cmd", c.name);
+                    w.writeString("params", c.params);
+                    w.writeString("returns", c.returns);
+                    w.writeString("hint", c.hint);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                w.writeString("error", "Unknown command: " + about);
+        }
+    });
+}
+
+std::string ScriptEngine::Impl::stateCommand(int id)
+{
+    return okResponse(id, [&](JsonWriter& w) {
+        // Bodies
+        auto bodyIds = doc.brepModel().bodyIds();
+        w.beginArray("bodies");
+        for (const auto& bid : bodyIds) {
+            w.beginObject();
+            w.writeString("id", bid);
+            auto props = doc.brepModel().getProperties(bid);
+            w.writeNumber("volume", props.volume);
+            w.writeNumber("faces", static_cast<double>(doc.kernel().faceCount(doc.brepModel().getShape(bid))));
+            w.writeNumber("edges", static_cast<double>(doc.kernel().edgeCount(doc.brepModel().getShape(bid))));
+            w.endObject();
+        }
+        w.endArray();
+
+        // Features
+        auto& tl = doc.timeline();
+        w.beginArray("features");
+        for (size_t i = 0; i < tl.count(); ++i) {
+            const auto& entry = tl.entry(i);
+            w.beginObject();
+            w.writeString("id", entry.id);
+            w.writeString("name", entry.name);
+            if (entry.feature)
+                w.writeString("type", std::to_string(static_cast<int>(entry.feature->type())));
+            w.writeBool("suppressed", entry.isSuppressed);
+            w.writeBool("rolledBack", entry.isRolledBack);
+            w.endObject();
+        }
+        w.endArray();
+
+        // Summary
+        w.writeNumber("bodyCount", static_cast<double>(bodyIds.size()));
+        w.writeNumber("featureCount", static_cast<double>(tl.count()));
+        w.writeNumber("markerPosition", static_cast<double>(tl.markerPosition()));
+
+        // Next step hint
+        if (bodyIds.empty() && tl.count() == 0)
+            w.writeString("hint", "Empty document. Start with createSketch or createBox.");
+        else if (bodyIds.empty())
+            w.writeString("hint", "Sketches exist but no bodies. Try extrude to create 3D geometry.");
+        else
+            w.writeString("hint", "Bodies exist. You can fillet, chamfer, shell, mirror, or exportStep.");
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Command dispatcher
@@ -193,6 +320,15 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
         return errResponse(id, "Missing 'cmd' field");
 
     try {
+        // ── Meta commands (for LLM agents) ──────────────────────────────
+        if (cmdName == "help") {
+            std::string about = cmd.getString("about");
+            return helpCommand(id, about);
+        }
+        if (cmdName == "state") {
+            return stateCommand(id);
+        }
+
         // ── Document commands ───────────────────────────────────────────
         if (cmdName == "newDocument") {
             doc.newDocument();

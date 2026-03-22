@@ -1278,7 +1278,6 @@ void MainWindow::setupDocks()
 
 void MainWindow::connectSignals()
 {
-    fprintf(stderr, "connectSignals: cmdCtrl=%p extAction=%p\n", (void*)m_commandController, (void*)m_extrudeAction);
     // Ribbon tab changed -> update window title to show current workspace
     if (m_ribbon) {
         connect(m_ribbon, &QTabWidget::currentChanged, this, [this](int) {
