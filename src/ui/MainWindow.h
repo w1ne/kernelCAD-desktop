@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include "SelectionManager.h"  // SelectionFilter enum
+#include "CommandController.h" // PendingCommand enum
 
 class QAction;
 class QActionGroup;
@@ -35,6 +36,7 @@ class CommandPalette;
 class FeatureDialog;
 class ParameterTablePanel;
 class DrawingView;
+class CommandController;
 
 namespace features { class SketchFeature; }
 
@@ -44,6 +46,43 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
+
+    // ── Public methods accessed by CommandController ──────────────────────
+
+    /// Refresh feature tree, timeline panel, and viewport in one call.
+    void refreshAllPanels();
+
+    /// Show the confirmation toolbar with the given tool name.
+    void showConfirmBar(const QString& toolName);
+
+    /// Hide the confirmation toolbar.
+    void hideConfirmBar();
+
+    /// Push the current BRepModel meshes to the viewport for display.
+    void updateViewport();
+
+    /// Update the rich status bar segments.
+    void updateStatusBarInfo();
+
+    /// Hide the manipulator and disconnect signals.
+    void hideManipulator();
+
+    /// Enter sketch editing mode for the given sketch feature.
+    void beginSketchEditing(features::SketchFeature* sketchFeat);
+
+    // ── Accessors for CommandController ──────────────────────────────────
+
+    SketchEditor* sketchEditor() const { return m_sketchEditor; }
+    JointCreator* jointCreator() const { return m_jointCreator; }
+    MeasureTool* measureTool() const { return m_measureTool; }
+    bool measureActive() const { return m_measureActive; }
+    void setMeasureActive(bool active) { m_measureActive = active; }
+    document::PreviewEngine* previewEngine() const { return m_previewEngine.get(); }
+    const QString& editingFeatureId() const { return m_editingFeatureId; }
+    QAction* selectFacesAction() const { return m_selectFacesAction; }
+    QAction* selectEdgesAction() const { return m_selectEdgesAction; }
+    QAction* selectAllAction() const { return m_selectAllAction; }
+    CommandController* commandController() const { return m_commandController; }
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -71,70 +110,24 @@ private:
 
     // Preferences
     void onPreferences();
-    void onCreateBox();
-    void onCreateCylinder();
-    void onCreateSphere();
-    void onCreateSketch();
-    void onEditSketch();
-    void onExtrudeSketch();
-    void onRevolveSketch();
-    void onShell();
-    void onFillet();
-    void onChamfer();
-    void onDraft();
 
-    /// Commit a pending selection-driven command (triggered by Enter key).
-    void onCommitPendingCommand();
-
-    /// Cancel a pending command and restore default selection state.
-    void onCancelPendingCommand();
-    void onPressPull();
-    void onConstructPlane();
-    void onConstructAxis();
-    void onConstructPoint();
-    void onMirrorLastBody();
-    void onCircularPattern();
-    void onRectangularPattern();
-    void onAddHole();
-    void onSweepTest();
-    void onLoftTest();
-    void onSweepSketch();
-    void onNewComponent();
-    void onInsertComponent();
-    void onAddJoint();
-    void onCheckInterference();
-    void onImportDxfToSketch();
-    void onImportSvgToSketch();
     void onUndo();
     void onRedo();
     void onCreateDrawing();
 
-    /// Delete the currently selected feature (from feature tree or viewport selection).
-    void onDeleteSelectedFeature();
+    void onImportDxfToSketch();
+    void onImportSvgToSketch();
+
+    void onCheckInterference();
 
     /// Show the viewport right-click context menu at the given global position.
     void showViewportContextMenu(const QPoint& globalPos);
-
-    /// Push the current BRepModel meshes to the viewport for display.
-    void updateViewport();
-
-    /// Refresh feature tree, timeline panel, and viewport in one call.
-    void refreshAllPanels();
 
     /// Update the window title to show modified indicator.
     void updateWindowTitle();
 
     /// Update undo/redo action text and enabled state.
     void updateUndoRedoActions();
-
-    /// Called when the 3D selection changes -- updates properties panel and highlights.
-    void onSelectionChanged();
-
-    /// Called when the user edits a property in the properties panel.
-    /// During a preview session, this updates the feature params and
-    /// triggers a live preview update (no full recompute).
-    void onPropertyChanged(const QString& featureId, const QString& propertyName,
-                           const QVariant& newValue);
 
     /// Called when the user commits property edits (Enter or focus-out).
     void onEditingCommitted(const QString& featureId);
@@ -148,12 +141,19 @@ private:
     /// Restore the timeline marker to the end after feature editing is complete.
     void onFinishEditing();
 
+    /// Check if a click ray hits an origin plane (XY/XZ/YZ).
+    /// Returns "XY", "XZ", "YZ", or empty string if no hit.
+    /// Also fills planeOrigin, planeXDir, planeYDir for the matched plane.
+    std::string hitTestOriginPlanes(const QPoint& screenPos,
+                                    double& ox, double& oy, double& oz,
+                                    double& xDirX, double& xDirY, double& xDirZ,
+                                    double& yDirX, double& yDirY, double& yDirZ) const;
+
     std::unique_ptr<document::Document> m_document;
     std::unique_ptr<document::PreviewEngine> m_previewEngine;
 
-    // Repeat-last-command tracking for context menus
-    QString m_lastCommandName;
-    std::function<void()> m_lastCommandCallback;
+    // Command controller (owns command handler methods)
+    CommandController* m_commandController = nullptr;
 
     // Selection
     std::unique_ptr<SelectionManager> m_selectionMgr;
@@ -257,13 +257,11 @@ private:
 
     void setupSketchToolBar();
     void showSketchToolBar(bool visible);
-    void beginSketchEditing(features::SketchFeature* sketchFeat);
     void onSketchEditingFinished();
 
     // Measure tool
     MeasureTool* m_measureTool = nullptr;
     bool m_measureActive = false;
-    void onMeasure();
 
     // Joint creator for interactive face-to-face joint workflow
     JointCreator* m_jointCreator = nullptr;
@@ -277,46 +275,18 @@ private:
     // Interactive command dialog helper
     void executeInteractiveCommand(std::unique_ptr<document::InteractiveCommand> cmd);
 
-    // Pending selection-driven command workflow
-    enum class PendingCommand { None, Fillet, Chamfer, Shell, Draft, Hole, SketchPlane, PressPull, Extrude };
-    PendingCommand m_pendingCommand = PendingCommand::None;
-
-    /// True when waiting for the user to pick a plane or planar face to start a sketch.
-    bool m_pendingSketchPlane = false;
-
-    /// Handle the plane/face selection to start a sketch on the chosen plane.
-    void handleSketchPlaneSelection(const SelectionHit& hit);
-
-    /// Check if a click ray hits an origin plane (XY/XZ/YZ).
-    /// Returns "XY", "XZ", "YZ", or empty string if no hit.
-    /// Also fills planeOrigin, planeXDir, planeYDir for the matched plane.
-    std::string hitTestOriginPlanes(const QPoint& screenPos,
-                                    double& ox, double& oy, double& oz,
-                                    double& xDirX, double& xDirY, double& xDirZ,
-                                    double& yDirX, double& yDirY, double& yDirZ) const;
-
-    /// Helper: collect selected edge indices for a single body from the current selection.
-    /// Returns the bodyId via the out parameter. Edges are only collected from the first body.
-    std::vector<int> collectSelectedEdges(std::string& bodyIdOut) const;
-
-    /// Helper: collect selected face indices for a single body from the current selection.
-    std::vector<int> collectSelectedFaces(std::string& bodyIdOut) const;
-
     // ── Confirmation toolbar (floating OK/Cancel during active commands) ──
     QWidget*     m_confirmBar       = nullptr;
     QLabel*      m_confirmLabel     = nullptr;
     QPushButton* m_confirmOkBtn     = nullptr;
     QPushButton* m_confirmCancelBtn = nullptr;
     void setupConfirmBar();
-    void showConfirmBar(const QString& toolName);
-    void hideConfirmBar();
 
     // ── Rich status bar segments ──────────────────────────────────────────
     QLabel* m_statusLeft   = nullptr;
     QLabel* m_statusCenter = nullptr;
     QLabel* m_statusRight  = nullptr;
     void setupStatusBar();
-    void updateStatusBarInfo();
 
     // ── Marking menu (radial context menu) ──────────────────────────────
     MarkingMenu* m_markingMenu = nullptr;
@@ -346,9 +316,6 @@ private:
     /// Show the appropriate manipulator for a feature, if it is a dimensional type.
     /// Called on single-click in the feature tree for direct manipulation.
     void showManipulatorForFeature(const QString& featureId);
-
-    /// Hide the manipulator and disconnect signals.
-    void hideManipulator();
 
     // ── Toolbar hover filter ─────────────────────────────────────────────
     QAction* m_chamferAction = nullptr;

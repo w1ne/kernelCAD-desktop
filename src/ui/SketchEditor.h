@@ -152,6 +152,7 @@ signals:
     /// Emitted with context-specific hint text for the status bar.
     void statusHint(const QString& hint);
 
+public:
     /// Undo the last sketch action (line draw, constraint add, etc.)
     /// Returns true if something was undone.
     bool undoLastAction();

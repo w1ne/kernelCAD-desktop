@@ -63,6 +63,7 @@ add_executable(kernelCAD
   sketch/SvgImporter.cpp
   # ui
   ui/MainWindow.cpp
+  ui/CommandController.cpp
   ui/Viewport3D.cpp
   ui/FeatureTree.cpp
   ui/TimelinePanel.cpp
