@@ -734,38 +734,46 @@ void MainWindow::setupToolBar()
     // ── Global shortcut actions (invisible, keyboard-only) ──────────────
     m_extrudeAction = new QAction(tr("Extrude"), this);
     m_extrudeAction->setShortcut(QKeySequence(tr("E")));
+    if (m_extrudeAction)
     connect(m_extrudeAction, &QAction::triggered, m_commandController, &CommandController::onExtrudeSketch);
     addAction(m_extrudeAction);
 
     m_filletAction = new QAction(tr("Fillet"), this);
     m_filletAction->setShortcut(QKeySequence(tr("F")));
+    if (m_filletAction)
     connect(m_filletAction, &QAction::triggered, m_commandController, &CommandController::onFillet);
     addAction(m_filletAction);
 
     m_chamferAction = new QAction(tr("Chamfer"), this);
+    if (m_chamferAction)
     connect(m_chamferAction, &QAction::triggered, m_commandController, &CommandController::onChamfer);
     addAction(m_chamferAction);
 
     m_shellAction = new QAction(tr("Shell"), this);
+    if (m_shellAction)
     connect(m_shellAction, &QAction::triggered, m_commandController, &CommandController::onShell);
     addAction(m_shellAction);
 
     m_draftAction = new QAction(tr("Draft"), this);
+    if (m_draftAction)
     connect(m_draftAction, &QAction::triggered, m_commandController, &CommandController::onDraft);
     addAction(m_draftAction);
 
     m_holeAction = new QAction(tr("Hole"), this);
     m_holeAction->setShortcut(QKeySequence(tr("H")));
+    if (m_holeAction)
     connect(m_holeAction, &QAction::triggered, m_commandController, &CommandController::onAddHole);
     addAction(m_holeAction);
 
     m_jointAction = new QAction(tr("Joint"), this);
     m_jointAction->setShortcut(QKeySequence(tr("J")));
+    if (m_jointAction)
     connect(m_jointAction, &QAction::triggered, m_commandController, &CommandController::onAddJoint);
     addAction(m_jointAction);
 
     m_measureAction = new QAction(tr("Measure"), this);
     m_measureAction->setShortcut(QKeySequence(tr("M")));
+    if (m_measureAction)
     connect(m_measureAction, &QAction::triggered, m_commandController, &CommandController::onMeasure);
     addAction(m_measureAction);
 
@@ -787,6 +795,7 @@ void MainWindow::setupToolBar()
     m_deleteAction = new QAction(tr("Delete"), this);
     m_deleteAction->setShortcut(QKeySequence::Delete);
     m_deleteAction->setStatusTip(tr("Delete \u2014 Delete the selected feature"));
+    if (m_deleteAction)
     connect(m_deleteAction, &QAction::triggered, m_commandController, &CommandController::onDeleteSelectedFeature);
     addAction(m_deleteAction);
 }
@@ -860,18 +869,22 @@ void MainWindow::setupMenuBar()
     m_selectBodiesAction->setShortcut(QKeySequence(tr("4")));
     m_filterGroup->addAction(m_selectBodiesAction);
 
+    if (m_selectAllAction)
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
         m_selectionMgr->setFilter(SelectionFilter::All);
         statusBar()->showMessage(tr("Selection filter: All"));
     });
+    if (m_selectFacesAction)
     connect(m_selectFacesAction, &QAction::triggered, this, [this]() {
         m_selectionMgr->setFilter(SelectionFilter::Faces);
         statusBar()->showMessage(tr("Selection filter: Faces"));
     });
+    if (m_selectEdgesAction)
     connect(m_selectEdgesAction, &QAction::triggered, this, [this]() {
         m_selectionMgr->setFilter(SelectionFilter::Edges);
         statusBar()->showMessage(tr("Selection filter: Edges"));
     });
+    if (m_selectBodiesAction)
     connect(m_selectBodiesAction, &QAction::triggered, this, [this]() {
         m_selectionMgr->setFilter(SelectionFilter::Bodies);
         statusBar()->showMessage(tr("Selection filter: Bodies"));
@@ -1265,6 +1278,7 @@ void MainWindow::setupDocks()
 
 void MainWindow::connectSignals()
 {
+    fprintf(stderr, "connectSignals: cmdCtrl=%p extAction=%p\n", (void*)m_commandController, (void*)m_extrudeAction);
     // Ribbon tab changed -> update window title to show current workspace
     if (m_ribbon) {
         connect(m_ribbon, &QTabWidget::currentChanged, this, [this](int) {
