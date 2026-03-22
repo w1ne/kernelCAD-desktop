@@ -15,6 +15,7 @@
 #include "MarkingMenu.h"
 #include "CommandPalette.h"
 #include "FeatureDialog.h"
+#include "SketchPalette.h"
 #include "ParameterTablePanel.h"
 #include "PreferencesDialog.h"
 #include "../document/Document.h"
@@ -143,7 +144,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_sketchEditor, &SketchEditor::sketchChanged, this, [this]() {
         m_viewport->update();
         m_properties->refreshSketchStats();
+        m_sketchPalette->refresh();
     });
+    connect(m_sketchPalette, &SketchPalette::finishSketchClicked,
+            m_sketchEditor, &SketchEditor::finishEditing);
     connect(m_sketchEditor, &SketchEditor::constraintSelected, this,
         [this](const QString& /*id*/, const QString& typeName, const QString& desc) {
         if (typeName.isEmpty()) {
@@ -308,6 +312,9 @@ void MainWindow::setupUI()
 
     // Create floating feature dialog (parented to viewport so it floats over it)
     m_featureDialog = new FeatureDialog(m_viewport);
+
+    // Create floating sketch palette (parented to viewport so it floats over it)
+    m_sketchPalette = new SketchPalette(m_viewport);
 }
 
 // ─── Ribbon helpers ─────────────────────────────────────────────────────────
@@ -2678,12 +2685,18 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  A:Arc  D:Dim  T:Trim  X:Construction  Esc:Finish"));
 
-    // Show sketch palettes in the properties panel
+    // Show condensed info in the properties panel during sketch editing
     m_properties->showSketchPalettes(&sketchFeat->sketch(), m_sketchEditor);
+
+    // Show the floating sketch palette over the viewport
+    m_sketchPalette->showForSketch(&sketchFeat->sketch(), m_sketchEditor);
 }
 
 void MainWindow::onSketchEditingFinished()
 {
+    // Hide the floating sketch palette
+    m_sketchPalette->dismiss();
+
     // Clear sketch palettes from the properties panel
     m_properties->clear();
 

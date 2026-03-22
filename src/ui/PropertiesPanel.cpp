@@ -158,89 +158,11 @@ void PropertiesPanel::showSketchPalettes(sketch::Sketch* sketch, SketchEditor* e
     m_currentFeatureId.clear();
     clearFormWidgets();
 
-    // Header
+    // Header — condensed view; full palette is the floating SketchPalette widget
     m_headerLabel->setText(
-        QStringLiteral("<b style='color:#e0e0e0;'>SKETCH PALETTES</b>"));
+        QStringLiteral("<b style='color:#e0e0e0;'>Editing Sketch</b>"));
 
-    // ── Options section ──────────────────────────────────────────────────
-    auto* optLabel = new QLabel(QStringLiteral(
-        "<span style='color:#aaa; font-weight:bold;'>Options</span>"));
-    m_formLayout->addRow(optLabel);
-
-    auto* snapCb = new QCheckBox(tr("Snap to Grid"));
-    snapCb->setChecked(editor->gridSnapEnabled());
-    connect(snapCb, &QCheckBox::toggled, this, [this](bool checked) {
-        if (m_paletteEditor)
-            m_paletteEditor->setGridSnap(checked);
-    });
-    m_formLayout->addRow(snapCb);
-
-    auto* gridSpin = new QDoubleSpinBox();
-    gridSpin->setRange(0.1, 1000.0);
-    gridSpin->setDecimals(1);
-    gridSpin->setSuffix(QStringLiteral(" mm"));
-    gridSpin->setValue(5.0);
-    connect(gridSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double val) {
-        emit propertyChanged(QString(), QStringLiteral("Grid Size"), val);
-    });
-    m_formLayout->addRow(tr("Grid Size"), gridSpin);
-
-    auto* inferCb = new QCheckBox(tr("Show Inference Lines"));
-    inferCb->setChecked(true);
-    connect(inferCb, &QCheckBox::toggled, this, [this](bool checked) {
-        emit propertyChanged(QString(), QStringLiteral("Show Inference Lines"), checked);
-    });
-    m_formLayout->addRow(inferCb);
-
-    // Separator
-    auto* sep1 = new QFrame();
-    sep1->setObjectName("separator");
-    sep1->setFrameShape(QFrame::HLine);
-    sep1->setFrameShadow(QFrame::Sunken);
-    m_formLayout->addRow(sep1);
-
-    // ── Display section ──────────────────────────────────────────────────
-    auto* dispLabel = new QLabel(QStringLiteral(
-        "<span style='color:#aaa; font-weight:bold;'>Display</span>"));
-    m_formLayout->addRow(dispLabel);
-
-    auto* ptsCb = new QCheckBox(tr("Show Points"));
-    ptsCb->setChecked(true);
-    connect(ptsCb, &QCheckBox::toggled, this, [this](bool checked) {
-        emit propertyChanged(QString(), QStringLiteral("Show Points"), checked);
-    });
-    m_formLayout->addRow(ptsCb);
-
-    auto* dimCb = new QCheckBox(tr("Show Dimensions"));
-    dimCb->setChecked(true);
-    connect(dimCb, &QCheckBox::toggled, this, [this](bool checked) {
-        emit propertyChanged(QString(), QStringLiteral("Show Dimensions"), checked);
-    });
-    m_formLayout->addRow(dimCb);
-
-    auto* conCb = new QCheckBox(tr("Show Constraints"));
-    conCb->setChecked(true);
-    connect(conCb, &QCheckBox::toggled, this, [this](bool checked) {
-        emit propertyChanged(QString(), QStringLiteral("Show Constraints"), checked);
-    });
-    m_formLayout->addRow(conCb);
-
-    auto* cstrCb = new QCheckBox(tr("Show Construction"));
-    cstrCb->setChecked(true);
-    connect(cstrCb, &QCheckBox::toggled, this, [this](bool checked) {
-        emit propertyChanged(QString(), QStringLiteral("Show Construction"), checked);
-    });
-    m_formLayout->addRow(cstrCb);
-
-    // Separator
-    auto* sep2 = new QFrame();
-    sep2->setObjectName("separator");
-    sep2->setFrameShape(QFrame::HLine);
-    sep2->setFrameShadow(QFrame::Sunken);
-    m_formLayout->addRow(sep2);
-
-    // ── Sketch Info section ──────────────────────────────────────────────
+    // ── Sketch Info section (condensed) ──────────────────────────────────
     auto* infoLabel = new QLabel(QStringLiteral(
         "<span style='color:#aaa; font-weight:bold;'>Sketch Info</span>"));
     m_formLayout->addRow(infoLabel);
@@ -260,11 +182,11 @@ void PropertiesPanel::showSketchPalettes(sketch::Sketch* sketch, SketchEditor* e
     refreshSketchStats();
 
     // Separator
-    auto* sep3 = new QFrame();
-    sep3->setObjectName("separator");
-    sep3->setFrameShape(QFrame::HLine);
-    sep3->setFrameShadow(QFrame::Sunken);
-    m_formLayout->addRow(sep3);
+    auto* sep1 = new QFrame();
+    sep1->setObjectName("separator");
+    sep1->setFrameShape(QFrame::HLine);
+    sep1->setFrameShadow(QFrame::Sunken);
+    m_formLayout->addRow(sep1);
 
     // ── Finish Sketch button ─────────────────────────────────────────────
     auto* finishBtn = new QPushButton(tr("Finish Sketch"));

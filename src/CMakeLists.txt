@@ -80,6 +80,7 @@ add_executable(kernelCAD
   ui/JointCreator.cpp
   ui/CommandDialog.cpp
   ui/FeatureDialog.cpp
+  ui/SketchPalette.cpp
   ui/MarkingMenu.cpp
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp

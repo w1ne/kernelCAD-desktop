@@ -34,6 +34,7 @@ class MeasureTool;
 class MarkingMenu;
 class CommandPalette;
 class FeatureDialog;
+class SketchPalette;
 class ParameterTablePanel;
 class DrawingView;
 class CommandController;
@@ -303,6 +304,9 @@ private:
 
     // ── Feature dialog (floating command panel for feature creation) ─────
     FeatureDialog* m_featureDialog = nullptr;
+
+    // ── Sketch palette (floating mode palette during sketch editing) ─────
+    SketchPalette* m_sketchPalette = nullptr;
 
     // ── Viewport manipulator (drag handles for feature editing) ──────────
     ViewportManipulator* m_manipulator = nullptr;
