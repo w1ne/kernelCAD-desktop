@@ -66,6 +66,8 @@ add_executable(kernelCAD
   sketch/SketchToShape.cpp
   sketch/DxfImporter.cpp
   sketch/SvgImporter.cpp
+  # scripting
+  scripting/PluginManager.cpp
   # ui
   ui/MainWindow.cpp
   ui/CommandController.cpp

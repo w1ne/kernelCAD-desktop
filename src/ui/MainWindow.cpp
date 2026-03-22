@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "../scripting/PluginManager.h"
 #include "CommandController.h"
 #include "DrawingView.h"
 #include "IconFactory.h"
@@ -93,6 +94,17 @@
 #include <QTabBar>
 #include <QFrame>
 #include <QSettings>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QDialog>
+#include <QLineEdit>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -101,6 +113,12 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle("kernelCAD");
     resize(1440, 900);
+
+    // ── Plugin subsystem ────────────────────────────────────────────────
+    PluginManager::ensurePluginDirectory();
+    m_pluginManager = new PluginManager(this);
+    m_pluginManager->scanPlugins();
+
     setupUI();
     setupMenuBar();
     setupToolBar();
@@ -880,14 +898,17 @@ void MainWindow::setupMenuBar()
     m_viewWireframeAction->setShortcut(QKeySequence(tr("W")));
     m_viewModeGroup->addAction(m_viewWireframeAction);
 
+    if (m_viewSolidWithEdgesAction)
     connect(m_viewSolidWithEdgesAction, &QAction::triggered, this, [this]() {
         m_viewport->setViewMode(ViewMode::SolidWithEdges);
         statusBar()->showMessage(tr("View mode: Solid with Edges"));
     });
+    if (m_viewSolidAction)
     connect(m_viewSolidAction, &QAction::triggered, this, [this]() {
         m_viewport->setViewMode(ViewMode::Solid);
         statusBar()->showMessage(tr("View mode: Solid Only"));
     });
+    if (m_viewWireframeAction)
     connect(m_viewWireframeAction, &QAction::triggered, this, [this]() {
         m_viewport->setViewMode(ViewMode::Wireframe);
         statusBar()->showMessage(tr("View mode: Wireframe"));
@@ -918,6 +939,7 @@ void MainWindow::setupMenuBar()
     viewMenu->addSeparator();
     m_viewFrontAction = viewMenu->addAction(tr("Front View"));
     m_viewFrontAction->setShortcut(QKeySequence(Qt::Key_1 | Qt::KeypadModifier));
+    if (m_viewFrontAction)
     connect(m_viewFrontAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Front);
         statusBar()->showMessage(tr("View: Front"));
@@ -925,6 +947,7 @@ void MainWindow::setupMenuBar()
 
     m_viewBackAction = viewMenu->addAction(tr("Back View"));
     m_viewBackAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1 | Qt::KeypadModifier));
+    if (m_viewBackAction)
     connect(m_viewBackAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Back);
         statusBar()->showMessage(tr("View: Back"));
@@ -932,6 +955,7 @@ void MainWindow::setupMenuBar()
 
     m_viewRightAction = viewMenu->addAction(tr("Right View"));
     m_viewRightAction->setShortcut(QKeySequence(Qt::Key_3 | Qt::KeypadModifier));
+    if (m_viewRightAction)
     connect(m_viewRightAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Right);
         statusBar()->showMessage(tr("View: Right"));
@@ -939,6 +963,7 @@ void MainWindow::setupMenuBar()
 
     m_viewLeftAction = viewMenu->addAction(tr("Left View"));
     m_viewLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3 | Qt::KeypadModifier));
+    if (m_viewLeftAction)
     connect(m_viewLeftAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Left);
         statusBar()->showMessage(tr("View: Left"));
@@ -946,6 +971,7 @@ void MainWindow::setupMenuBar()
 
     m_viewTopAction = viewMenu->addAction(tr("Top View"));
     m_viewTopAction->setShortcut(QKeySequence(Qt::Key_7 | Qt::KeypadModifier));
+    if (m_viewTopAction)
     connect(m_viewTopAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Top);
         statusBar()->showMessage(tr("View: Top"));
@@ -953,6 +979,7 @@ void MainWindow::setupMenuBar()
 
     m_viewBottomAction = viewMenu->addAction(tr("Bottom View"));
     m_viewBottomAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7 | Qt::KeypadModifier));
+    if (m_viewBottomAction)
     connect(m_viewBottomAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Bottom);
         statusBar()->showMessage(tr("View: Bottom"));
@@ -960,6 +987,7 @@ void MainWindow::setupMenuBar()
 
     m_viewIsometricAction = viewMenu->addAction(tr("Isometric View"));
     m_viewIsometricAction->setShortcut(QKeySequence(Qt::Key_0 | Qt::KeypadModifier));
+    if (m_viewIsometricAction)
     connect(m_viewIsometricAction, &QAction::triggered, this, [this]() {
         m_viewport->setStandardView(StandardView::Isometric);
         statusBar()->showMessage(tr("View: Isometric"));
@@ -968,6 +996,7 @@ void MainWindow::setupMenuBar()
     viewMenu->addSeparator();
     m_viewFitAllAction = viewMenu->addAction(tr("Fit All"));
     m_viewFitAllAction->setShortcut(QKeySequence(Qt::Key_Home));
+    if (m_viewFitAllAction)
     connect(m_viewFitAllAction, &QAction::triggered, this, [this]() {
         m_viewport->fitAll();
         statusBar()->showMessage(tr("Fit All"));
@@ -1088,6 +1117,10 @@ void MainWindow::setupMenuBar()
     toolsMenu->addAction(tr("Check &Interference"), this, &MainWindow::onCheckInterference);
     toolsMenu->addSeparator();
     toolsMenu->addAction(tr("Create &Drawing..."), this, &MainWindow::onCreateDrawing);
+
+    // ── Plugins menu ──────────────────────────────────────────────────
+    m_pluginsMenu = menuBar()->addMenu(tr("&Plugins"));
+    rebuildPluginMenu();
 
     // --- Appearance menu (material assignment) ---
     auto* appearanceMenu = menuBar()->addMenu(tr("A&ppearance"));
@@ -3752,5 +3785,134 @@ void MainWindow::onPreferences()
         m_viewport->setShowGrid(s.value("prefs/showGrid", true).toBool());
 
         m_viewport->update();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plugin subsystem
+// ═══════════════════════════════════════════════════════════════════════════
+
+void MainWindow::rebuildPluginMenu()
+{
+    if (!m_pluginsMenu)
+        return;
+
+    m_pluginsMenu->clear();
+
+    m_pluginsMenu->addAction(tr("Open Plugin Folder"), this, [this]() {
+        QString dir = QDir::homePath() + QStringLiteral("/.kernelcad/plugins");
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    m_pluginsMenu->addAction(tr("Reload Plugins"), this, [this]() {
+        m_pluginManager->scanPlugins();
+        rebuildPluginMenu();
+        statusBar()->showMessage(
+            tr("Plugins reloaded (%1 found)").arg(m_pluginManager->plugins().size()));
+    });
+    m_pluginsMenu->addSeparator();
+
+    const auto& plugins = m_pluginManager->plugins();
+    if (plugins.empty()) {
+        auto* noneAction = m_pluginsMenu->addAction(tr("(no plugins found)"));
+        noneAction->setEnabled(false);
+    } else {
+        for (int i = 0; i < static_cast<int>(plugins.size()); ++i) {
+            const auto& p = plugins[static_cast<size_t>(i)];
+            QString label = p.name;
+            if (!p.version.isEmpty())
+                label += QStringLiteral(" v") + p.version;
+            auto* action = m_pluginsMenu->addAction(label, this, [this, i]() {
+                onRunPlugin(i);
+            });
+            if (!p.description.isEmpty())
+                action->setToolTip(p.description);
+        }
+    }
+}
+
+void MainWindow::onRunPlugin(int pluginIndex)
+{
+    const auto& plugins = m_pluginManager->plugins();
+    if (pluginIndex < 0 || pluginIndex >= static_cast<int>(plugins.size()))
+        return;
+
+    const auto& plugin = plugins[static_cast<size_t>(pluginIndex)];
+    QJsonObject params;
+
+    // If the plugin declares parameters, show a dialog to collect values
+    if (!plugin.parameters.isEmpty()) {
+        QDialog dlg(this);
+        dlg.setWindowTitle(plugin.name);
+        auto* form = new QFormLayout(&dlg);
+
+        struct ParamWidget {
+            QString name;
+            QString type;
+            QWidget* widget;
+        };
+        std::vector<ParamWidget> widgets;
+
+        for (const auto& paramVal : plugin.parameters) {
+            QJsonObject paramObj = paramVal.toObject();
+            QString name  = paramObj[QStringLiteral("name")].toString();
+            QString type  = paramObj[QStringLiteral("type")].toString();
+            QString label = paramObj[QStringLiteral("label")].toString(name);
+
+            if (type == QStringLiteral("float")) {
+                auto* spin = new QDoubleSpinBox(&dlg);
+                spin->setDecimals(3);
+                spin->setMinimum(paramObj[QStringLiteral("min")].toDouble(-1e9));
+                spin->setMaximum(paramObj[QStringLiteral("max")].toDouble(1e9));
+                spin->setValue(paramObj[QStringLiteral("default")].toDouble(0));
+                form->addRow(label, spin);
+                widgets.push_back({name, type, spin});
+            } else if (type == QStringLiteral("int")) {
+                auto* spin = new QSpinBox(&dlg);
+                spin->setMinimum(paramObj[QStringLiteral("min")].toInt(-999999));
+                spin->setMaximum(paramObj[QStringLiteral("max")].toInt(999999));
+                spin->setValue(paramObj[QStringLiteral("default")].toInt(0));
+                form->addRow(label, spin);
+                widgets.push_back({name, type, spin});
+            } else {
+                // Fallback: line edit
+                auto* edit = new QLineEdit(
+                    paramObj[QStringLiteral("default")].toString(), &dlg);
+                form->addRow(label, edit);
+                widgets.push_back({name, QStringLiteral("string"), edit});
+            }
+        }
+
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        form->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        if (dlg.exec() != QDialog::Accepted)
+            return;
+
+        // Collect values
+        for (const auto& pw : widgets) {
+            if (pw.type == QStringLiteral("float"))
+                params[pw.name] = qobject_cast<QDoubleSpinBox*>(pw.widget)->value();
+            else if (pw.type == QStringLiteral("int"))
+                params[pw.name] = qobject_cast<QSpinBox*>(pw.widget)->value();
+            else
+                params[pw.name] = qobject_cast<QLineEdit*>(pw.widget)->text();
+        }
+    }
+
+    statusBar()->showMessage(tr("Running plugin: %1...").arg(plugin.name));
+
+    QString result = m_pluginManager->runPlugin(pluginIndex, params);
+
+    if (result.startsWith(QStringLiteral("Error:"))) {
+        QMessageBox::warning(this, tr("Plugin Error"),
+                             tr("Plugin \"%1\" failed:\n%2").arg(plugin.name, result));
+        statusBar()->showMessage(tr("Plugin failed: %1").arg(plugin.name));
+    } else {
+        statusBar()->showMessage(tr("Plugin finished: %1").arg(plugin.name));
+        refreshAllPanels();
     }
 }

@@ -65,3 +65,13 @@ target_link_libraries(test_kernel PRIVATE
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
   TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing TKFeat)
 add_test(NAME OCCTKernel COMMAND test_kernel)
+
+# ── PluginManager tests ────────────────────────────────────────────────────
+add_executable(test_plugin_manager
+  test_PluginManager.cpp
+  ${CMAKE_SOURCE_DIR}/src/scripting/PluginManager.cpp
+)
+target_include_directories(test_plugin_manager PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_manager PRIVATE
+  kernelcad_compiler_options Qt6::Core Qt6::Test)
+add_test(NAME PluginManager COMMAND test_plugin_manager)

@@ -15,6 +15,7 @@ class QPushButton;
 class QTimer;
 class JointCreator;
 class ViewportManipulator;
+class PluginManager;
 
 namespace document { class Document; class PreviewEngine; class InteractiveCommand; class AutoSave; }
 
@@ -344,4 +345,14 @@ private:
 
     /// Restore the selection filter after toolbar hover ends.
     void restoreHoverFilter();
+
+    // ── Plugin subsystem ────────────────────────────────────────────────
+    PluginManager* m_pluginManager = nullptr;
+    QMenu*         m_pluginsMenu   = nullptr;
+
+    /// Rebuild the Plugins menu after a rescan.
+    void rebuildPluginMenu();
+
+    /// Run a plugin by index, showing a parameter dialog if needed.
+    void onRunPlugin(int pluginIndex);
 };

@@ -1,6 +1,4 @@
 #include "Commands.h"
-#include <QCoreApplication>
-// qDebug is available via Qt headers
 #include "Document.h"
 #include "../kernel/BRepModel.h"
 #include <TopoDS_Shape.hxx>
