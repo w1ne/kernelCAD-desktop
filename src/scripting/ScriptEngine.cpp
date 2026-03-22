@@ -2,6 +2,7 @@
 #include "../document/Document.h"
 #include "../kernel/OCCTKernel.h"
 #include "../kernel/BRepModel.h"
+#include "../kernel/BRepQuery.h"
 #include "../document/JsonReader.h"
 #include "../document/JsonWriter.h"
 #include "../sketch/SketchConstraint.h"
@@ -401,6 +402,51 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
             sp.originX = cmd.getNumber("originX", 0);
             sp.originY = cmd.getNumber("originY", 0);
             sp.originZ = cmd.getNumber("originZ", 0);
+            sp.xDirX = cmd.getNumber("xDirX", sp.xDirX);
+            sp.xDirY = cmd.getNumber("xDirY", sp.xDirY);
+            sp.xDirZ = cmd.getNumber("xDirZ", sp.xDirZ);
+            sp.yDirX = cmd.getNumber("yDirX", sp.yDirX);
+            sp.yDirY = cmd.getNumber("yDirY", sp.yDirY);
+            sp.yDirZ = cmd.getNumber("yDirZ", sp.yDirZ);
+            std::string featureId = doc.addSketch(sp);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("sketchId", featureId);
+                w.writeString("featureId", featureId);
+            });
+        }
+        if (cmdName == "createSketchOnFace") {
+            std::string bodyId = cmd.getString("bodyId");
+            int faceIndex = static_cast<int>(cmd.getNumber("faceIndex", 0));
+            if (bodyId.empty())
+                return errResponse(id, "bodyId is required");
+            auto& brep = doc.brepModel();
+            if (!brep.hasBody(bodyId))
+                return errResponse(id, "Body not found: " + bodyId);
+            kernel::BRepQuery bq = brep.query(bodyId);
+            if (faceIndex < 0 || faceIndex >= bq.faceCount())
+                return errResponse(id, "Invalid faceIndex");
+            kernel::FaceInfo fi = bq.faceInfo(faceIndex);
+            if (fi.surfaceType != kernel::SurfaceType::Plane)
+                return errResponse(id, "Selected face is not planar");
+
+            features::SketchParams sp;
+            sp.planeId = bodyId + ":face:" + std::to_string(faceIndex);
+            sp.originX = fi.centroidX;
+            sp.originY = fi.centroidY;
+            sp.originZ = fi.centroidZ;
+            // Build coordinate frame from face normal
+            double nx = fi.normalX, ny = fi.normalY, nz = fi.normalZ;
+            double ux = 0, uy = 1, uz = 0;
+            if (std::abs(ny) > 0.9) { ux = 1; uy = 0; uz = 0; }
+            sp.xDirX = uy * nz - uz * ny;
+            sp.xDirY = uz * nx - ux * nz;
+            sp.xDirZ = ux * ny - uy * nx;
+            double xLen = std::sqrt(sp.xDirX * sp.xDirX + sp.xDirY * sp.xDirY + sp.xDirZ * sp.xDirZ);
+            if (xLen > 1e-9) { sp.xDirX /= xLen; sp.xDirY /= xLen; sp.xDirZ /= xLen; }
+            sp.yDirX = ny * sp.xDirZ - nz * sp.xDirY;
+            sp.yDirY = nz * sp.xDirX - nx * sp.xDirZ;
+            sp.yDirZ = nx * sp.xDirY - ny * sp.xDirX;
+
             std::string featureId = doc.addSketch(sp);
             return okResponse(id, [&](JsonWriter& w) {
                 w.writeString("sketchId", featureId);
@@ -780,11 +826,33 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
                 p.posY = cmd.getNumber("posY", 0);
                 p.posZ = cmd.getNumber("posZ", 0);
             }
+            // Support faceIndex for automatic direction from face normal
+            int faceIdx = static_cast<int>(cmd.getNumber("faceIndex", -1));
             const JsonValue* dir = cmd.getArray("direction");
             if (dir && dir->arrayVal.size() >= 3) {
                 p.dirX = dir->arrayVal[0]->numberVal;
                 p.dirY = dir->arrayVal[1]->numberVal;
                 p.dirZ = dir->arrayVal[2]->numberVal;
+            } else if (faceIdx >= 0 && !p.targetBodyId.empty()) {
+                // Compute direction from face normal (into the face)
+                auto& brep = doc.brepModel();
+                if (brep.hasBody(p.targetBodyId)) {
+                    try {
+                        kernel::BRepQuery bq = brep.query(p.targetBodyId);
+                        if (faceIdx < bq.faceCount()) {
+                            kernel::FaceInfo fi = bq.faceInfo(faceIdx);
+                            p.dirX = -fi.normalX;
+                            p.dirY = -fi.normalY;
+                            p.dirZ = -fi.normalZ;
+                        } else {
+                            p.dirX = 0; p.dirY = 0; p.dirZ = -1;
+                        }
+                    } catch (...) {
+                        p.dirX = 0; p.dirY = 0; p.dirZ = -1;
+                    }
+                } else {
+                    p.dirX = 0; p.dirY = 0; p.dirZ = -1;
+                }
             } else {
                 p.dirX = cmd.getNumber("dirX", 0);
                 p.dirY = cmd.getNumber("dirY", 0);

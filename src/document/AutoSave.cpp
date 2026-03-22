@@ -4,6 +4,8 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QFileInfo>
+#include <QDateTime>
+#include <algorithm>
 
 namespace document {
 
@@ -41,29 +43,77 @@ void AutoSave::clearAutoSave()
         QFile::remove(path);
 }
 
+QString AutoSave::autoSaveDir()
+{
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                  + "/autosave";
+    QDir().mkpath(dir);
+    return dir;
+}
+
 QString AutoSave::autoSavePath() const
 {
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dir);
+    QString dir = autoSaveDir();
     QString docName = QString::fromStdString(m_doc->name()).replace(' ', '_');
-    return dir + "/autosave_" + docName + ".kcd";
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    return dir + "/autosave_" + docName + "_" + timestamp + ".kcd";
 }
 
 QString AutoSave::recoveryPath(const QString& docName)
 {
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString name = docName.isEmpty() ? "Untitled" : docName;
-    name.replace(' ', '_');
-    QString path = dir + "/autosave_" + name + ".kcd";
-    return QFile::exists(path) ? path : QString();
+    QString dir = autoSaveDir();
+    QDir autoDir(dir);
+    if (!autoDir.exists())
+        return QString();
+
+    // Find all auto-save files, sorted by modification time (newest first)
+    QStringList nameFilters;
+    if (docName.isEmpty()) {
+        nameFilters << "autosave_*.kcd";
+    } else {
+        QString safeName = docName;
+        safeName.replace(' ', '_');
+        nameFilters << ("autosave_" + safeName + "_*.kcd");
+    }
+
+    QFileInfoList files = autoDir.entryInfoList(nameFilters, QDir::Files, QDir::Time);
+    if (files.isEmpty())
+        return QString();
+
+    return files.first().absoluteFilePath();
+}
+
+void AutoSave::cleanupOldAutoSaves(int maxKeep)
+{
+    QString dir = autoSaveDir();
+    QDir autoDir(dir);
+    if (!autoDir.exists())
+        return;
+
+    QFileInfoList files = autoDir.entryInfoList(
+        {"autosave_*.kcd"}, QDir::Files, QDir::Time);
+
+    // Keep only the newest maxKeep files, delete the rest
+    for (int i = maxKeep; i < files.size(); ++i) {
+        QFile::remove(files[i].absoluteFilePath());
+    }
 }
 
 void AutoSave::performAutoSave()
 {
     if (!m_doc || !m_doc->isModified()) return;
 
-    QString path = autoSavePath();
-    Serializer::save(*m_doc, path.toStdString());
+    try {
+        QString path = autoSavePath();
+        Serializer::save(*m_doc, path.toStdString());
+
+        // Clean up old auto-saves, keeping only the 3 most recent
+        cleanupOldAutoSaves(3);
+
+        emit autoSaved();
+    } catch (...) {
+        // Auto-save is best-effort; do not crash if it fails
+    }
 }
 
 } // namespace document

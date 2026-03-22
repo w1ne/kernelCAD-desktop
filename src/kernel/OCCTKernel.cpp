@@ -5,6 +5,23 @@
 #include <set>
 #include <unordered_set>
 
+// OCCT error handling
+#include <Standard_Failure.hxx>
+
+// Macro to wrap OCCT calls that might throw Standard_Failure.
+// Converts OCCT exceptions to std::runtime_error with a descriptive message.
+#define OCCT_SAFE_BEGIN try {
+#define OCCT_SAFE_END(fallbackMsg) \
+    } catch (const Standard_Failure& e) { \
+        throw std::runtime_error(std::string(fallbackMsg) + ": " + e.GetMessageString()); \
+    } catch (const std::runtime_error&) { \
+        throw; /* re-throw our own errors unmodified */ \
+    } catch (const std::exception& e) { \
+        throw std::runtime_error(std::string(fallbackMsg) + ": " + e.what()); \
+    } catch (...) { \
+        throw std::runtime_error(std::string(fallbackMsg) + ": unknown geometry kernel error"); \
+    }
+
 // OCCT includes
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
@@ -93,33 +110,45 @@ OCCTKernel::~OCCTKernel() = default;
 
 TopoDS_Shape OCCTKernel::makeBox(double dx, double dy, double dz)
 {
+    OCCT_SAFE_BEGIN
     return BRepPrimAPI_MakeBox(dx, dy, dz).Shape();
+    OCCT_SAFE_END("Box creation failed (dimensions: " + std::to_string(dx) + "x" +
+        std::to_string(dy) + "x" + std::to_string(dz) + "mm). All dimensions must be positive")
 }
 
 TopoDS_Shape OCCTKernel::makeCylinder(double radius, double height)
 {
+    OCCT_SAFE_BEGIN
     return BRepPrimAPI_MakeCylinder(radius, height).Shape();
+    OCCT_SAFE_END("Cylinder creation failed. Radius and height must be positive")
 }
 
 TopoDS_Shape OCCTKernel::makeSphere(double radius)
 {
+    OCCT_SAFE_BEGIN
     return BRepPrimAPI_MakeSphere(radius).Shape();
+    OCCT_SAFE_END("Sphere creation failed. Radius must be positive")
 }
 
 TopoDS_Shape OCCTKernel::makeTorus(double majorRadius, double minorRadius)
 {
+    OCCT_SAFE_BEGIN
     return BRepPrimAPI_MakeTorus(majorRadius, minorRadius).Shape();
+    OCCT_SAFE_END("Torus creation failed. Major radius must be greater than minor radius")
 }
 
 TopoDS_Shape OCCTKernel::makePipe(double outerRadius, double innerRadius, double height)
 {
+    OCCT_SAFE_BEGIN
     auto outer = makeCylinder(outerRadius, height);
     auto inner = makeCylinder(innerRadius, height);
     return booleanCut(outer, inner);
+    OCCT_SAFE_END("Pipe creation failed. Outer radius must be greater than inner radius")
 }
 
 TopoDS_Shape OCCTKernel::stitch(const std::vector<TopoDS_Shape>& shapes, double tolerance)
 {
+    OCCT_SAFE_BEGIN
     BRepBuilderAPI_Sewing sewing(tolerance);
     for (const auto& s : shapes)
         sewing.Add(s);
@@ -136,15 +165,18 @@ TopoDS_Shape OCCTKernel::stitch(const std::vector<TopoDS_Shape>& shapes, double 
             return solid.Solid();
     } catch (...) {}
     return result;
+    OCCT_SAFE_END("Stitch failed. Check that the shapes share common edges")
 }
 
 TopoDS_Shape OCCTKernel::splitFace(const TopoDS_Shape& shape, int faceIndex,
                                     const TopoDS_Shape& splittingWire)
 {
+    OCCT_SAFE_BEGIN
     TopTools_IndexedMapOfShape faceMap;
     TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
     if (faceIndex < 0 || faceIndex >= faceMap.Extent())
-        throw std::runtime_error("splitFace: invalid face index");
+        throw std::runtime_error("Split face failed: invalid face index " +
+            std::to_string(faceIndex) + " (body has " + std::to_string(faceMap.Extent()) + " faces)");
 
     const TopoDS_Face& face = TopoDS::Face(faceMap(faceIndex + 1));
 
@@ -156,23 +188,28 @@ TopoDS_Shape OCCTKernel::splitFace(const TopoDS_Shape& shape, int faceIndex,
 
     splitter.Build();
     if (!splitter.IsDone())
-        throw std::runtime_error("splitFace failed");
+        throw std::runtime_error("Split face failed: the splitting wire does not properly divide the face");
 
     return splitter.Shape();
+    OCCT_SAFE_END("Split face failed. Check that the wire lies on the selected face")
 }
 
 TopoDS_Shape OCCTKernel::patch(const TopoDS_Shape& boundaryWire)
 {
+    OCCT_SAFE_BEGIN
     TopoDS_Wire wire = TopoDS::Wire(boundaryWire);
     BRepBuilderAPI_MakeFace maker(wire);
     if (!maker.IsDone())
-        throw std::runtime_error("patch: cannot create face from wire");
+        throw std::runtime_error("Patch failed: cannot create face from wire. "
+            "Ensure the wire forms a closed planar boundary");
     return maker.Face();
+    OCCT_SAFE_END("Patch failed. Check that the boundary wire is closed and planar")
 }
 
 TopoDS_Shape OCCTKernel::rib(const TopoDS_Shape& body, const TopoDS_Shape& profile,
                               double thickness, double depth)
 {
+    OCCT_SAFE_BEGIN
     // Extrude the profile
     gp_Vec dir(0, 0, depth);
     TopoDS_Shape extruded = BRepPrimAPI_MakePrism(profile, dir).Shape();
@@ -182,11 +219,13 @@ TopoDS_Shape OCCTKernel::rib(const TopoDS_Shape& body, const TopoDS_Shape& profi
 
     // Union with body
     return booleanUnion(body, thickened);
+    OCCT_SAFE_END("Rib failed. Check that the profile intersects the body")
 }
 
 TopoDS_Shape OCCTKernel::web(const TopoDS_Shape& body, const TopoDS_Shape& profile,
                               double thickness, double depth, int count, double spacing)
 {
+    OCCT_SAFE_BEGIN
     TopoDS_Shape result = body;
     for (int i = 0; i < count; ++i) {
         double offset = i * spacing;
@@ -194,10 +233,12 @@ TopoDS_Shape OCCTKernel::web(const TopoDS_Shape& body, const TopoDS_Shape& profi
         result = rib(result, offsetProfile, thickness, depth);
     }
     return result;
+    OCCT_SAFE_END("Web failed. Check profile, spacing, and body geometry")
 }
 
 TopoDS_Shape OCCTKernel::booleanUnion(const TopoDS_Shape& a, const TopoDS_Shape& b)
 {
+    OCCT_SAFE_BEGIN
     // Try BOPAlgo_BOP first (more robust with coplanar faces, tolerance mismatches)
     BOPAlgo_BOP bop;
     bop.AddArgument(a);
@@ -217,10 +258,12 @@ TopoDS_Shape OCCTKernel::booleanUnion(const TopoDS_Shape& a, const TopoDS_Shape&
         return fuse.Shape();
 
     return a;  // last resort
+    OCCT_SAFE_END("Boolean union failed. Check that both bodies are valid solids")
 }
 
 TopoDS_Shape OCCTKernel::booleanCut(const TopoDS_Shape& target, const TopoDS_Shape& tool)
 {
+    OCCT_SAFE_BEGIN
     BOPAlgo_BOP bop;
     bop.AddArgument(target);
     bop.AddTool(tool);
@@ -239,10 +282,12 @@ TopoDS_Shape OCCTKernel::booleanCut(const TopoDS_Shape& target, const TopoDS_Sha
         return cut.Shape();
 
     return target;  // last resort
+    OCCT_SAFE_END("Boolean cut failed. Check that both bodies are valid and overlapping")
 }
 
 TopoDS_Shape OCCTKernel::booleanIntersect(const TopoDS_Shape& a, const TopoDS_Shape& b)
 {
+    OCCT_SAFE_BEGIN
     BOPAlgo_BOP bop;
     bop.AddArgument(a);
     bop.AddTool(b);
@@ -261,6 +306,7 @@ TopoDS_Shape OCCTKernel::booleanIntersect(const TopoDS_Shape& a, const TopoDS_Sh
         return common.Shape();
 
     return a;  // last resort
+    OCCT_SAFE_END("Boolean intersect failed. Check that both bodies overlap")
 }
 
 TopoDS_Shape OCCTKernel::combine(const TopoDS_Shape& target, const TopoDS_Shape& tool,
@@ -276,6 +322,7 @@ TopoDS_Shape OCCTKernel::combine(const TopoDS_Shape& target, const TopoDS_Shape&
 
 TopoDS_Shape OCCTKernel::splitBody(const TopoDS_Shape& body, const TopoDS_Shape& splittingTool)
 {
+    OCCT_SAFE_BEGIN
     BRepAlgoAPI_Splitter splitter;
 
     TopTools_ListOfShape arguments;
@@ -287,16 +334,17 @@ TopoDS_Shape OCCTKernel::splitBody(const TopoDS_Shape& body, const TopoDS_Shape&
     splitter.SetTools(tools);
 
     splitter.Build();
-    if (!splitter.IsDone())
-        return body;
+    if (!splitter.IsDone()) return body;
 
     return splitter.Shape();
+    OCCT_SAFE_END("Split body failed. Check that the splitting tool intersects the body")
 }
 
 TopoDS_Shape OCCTKernel::offsetFaces(const TopoDS_Shape& shape,
                                       const std::vector<int>& faceIndices,
                                       double distance)
 {
+    OCCT_SAFE_BEGIN
     // Strategy: use BRepOffsetAPI_MakeThickSolid with the selected faces.
     // MakeThickSolid removes the listed faces and offsets the remaining shell,
     // but we want the opposite: offset only the listed faces outward.
@@ -337,73 +385,93 @@ TopoDS_Shape OCCTKernel::offsetFaces(const TopoDS_Shape& shape,
     BRepOffsetAPI_MakeThickSolid offsetter;
     offsetter.MakeThickSolidByJoin(shape, facesToOffset, distance, 1e-3);
     offsetter.Build();
-    if (!offsetter.IsDone())
-        return shape;
+    if (!offsetter.IsDone()) return shape;
 
     return offsetter.Shape();
+    OCCT_SAFE_END("Offset faces failed (distance=" + std::to_string(distance) +
+        "mm). Try a smaller offset or different faces")
 }
 
 TopoDS_Shape OCCTKernel::extrude(const TopoDS_Shape& profile, double distance)
 {
+    OCCT_SAFE_BEGIN
     gp_Vec direction(0, 0, distance);
     return BRepPrimAPI_MakePrism(profile, direction).Shape();
+    OCCT_SAFE_END("Extrude failed (distance=" + std::to_string(distance) +
+        "mm). Check that the sketch profile is a valid closed contour")
 }
 
 TopoDS_Shape OCCTKernel::extrudeSymmetric(const TopoDS_Shape& profile, double totalDistance)
 {
+    OCCT_SAFE_BEGIN
     gp_Vec dirPos(0, 0, totalDistance / 2.0);
     gp_Vec dirNeg(0, 0, -totalDistance / 2.0);
     TopoDS_Shape pos = BRepPrimAPI_MakePrism(profile, dirPos).Shape();
     TopoDS_Shape neg = BRepPrimAPI_MakePrism(profile, dirNeg).Shape();
     return booleanUnion(pos, neg);
+    OCCT_SAFE_END("Symmetric extrude failed (distance=" + std::to_string(totalDistance) +
+        "mm). Check that the profile is valid")
 }
 
 TopoDS_Shape OCCTKernel::extrudeTwoSides(const TopoDS_Shape& profile, double dist1, double dist2)
 {
+    OCCT_SAFE_BEGIN
     gp_Vec dir1(0, 0, dist1);
     gp_Vec dir2(0, 0, -dist2);
     TopoDS_Shape s1 = BRepPrimAPI_MakePrism(profile, dir1).Shape();
     TopoDS_Shape s2 = BRepPrimAPI_MakePrism(profile, dir2).Shape();
     return booleanUnion(s1, s2);
+    OCCT_SAFE_END("Two-sided extrude failed. Check that the profile is valid")
 }
 
 TopoDS_Shape OCCTKernel::extrudeThroughAll(const TopoDS_Shape& profile)
 {
+    OCCT_SAFE_BEGIN
     gp_Vec dir(0, 0, 10000.0);
     return BRepPrimAPI_MakePrism(profile, dir).Shape();
+    OCCT_SAFE_END("Through-all extrude failed. Check that the profile is valid")
 }
 
 TopoDS_Shape OCCTKernel::revolve(const TopoDS_Shape& profile, double angleDeg)
 {
+    OCCT_SAFE_BEGIN
     gp_Ax1 axis(gp_Pnt(0,0,0), gp_Dir(0,0,1));
     double angleRad = angleDeg * M_PI / 180.0;
     return BRepPrimAPI_MakeRevol(profile, axis, angleRad).Shape();
+    OCCT_SAFE_END("Revolve failed (angle=" + std::to_string(angleDeg) +
+        " deg). Check that the profile does not cross the axis of revolution")
 }
 
 static TopoDS_Shape filletAttempt(const TopoDS_Shape& shape,
                                    const std::vector<int>& edgeIds,
                                    double radius)
 {
-    BRepFilletAPI_MakeFillet mk(shape);
+    try {
+        BRepFilletAPI_MakeFillet mk(shape);
 
-    if (edgeIds.empty()) {
-        TopExp_Explorer ex(shape, TopAbs_EDGE);
-        for (; ex.More(); ex.Next())
-            mk.Add(radius, TopoDS::Edge(ex.Current()));
-    } else {
-        TopTools_IndexedMapOfShape edgeMap;
-        TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
-        for (int idx : edgeIds) {
-            if (idx >= 0 && idx < edgeMap.Extent())
-                mk.Add(radius, TopoDS::Edge(edgeMap(idx + 1)));
+        if (edgeIds.empty()) {
+            TopExp_Explorer ex(shape, TopAbs_EDGE);
+            for (; ex.More(); ex.Next())
+                mk.Add(radius, TopoDS::Edge(ex.Current()));
+        } else {
+            TopTools_IndexedMapOfShape edgeMap;
+            TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+            for (int idx : edgeIds) {
+                if (idx >= 0 && idx < edgeMap.Extent())
+                    mk.Add(radius, TopoDS::Edge(edgeMap(idx + 1)));
+            }
         }
-    }
 
-    mk.Build();
-    if (!mk.IsDone())
+        mk.Build();
+        if (!mk.IsDone())
+            return TopoDS_Shape();  // null = failed
+
+        return mk.Shape();
+    } catch (const Standard_Failure&) {
         return TopoDS_Shape();  // null = failed
-
-    return mk.Shape();
+    } catch (...) {
+        return TopoDS_Shape();
+    }
 }
 
 TopoDS_Shape OCCTKernel::fillet(const TopoDS_Shape& shape,
@@ -459,26 +527,32 @@ static TopoDS_Shape chamferAttempt(const TopoDS_Shape& shape,
                                     const std::vector<int>& edgeIds,
                                     double distance)
 {
-    BRepFilletAPI_MakeChamfer mk(shape);
+    try {
+        BRepFilletAPI_MakeChamfer mk(shape);
 
-    if (edgeIds.empty()) {
-        TopExp_Explorer ex(shape, TopAbs_EDGE);
-        for (; ex.More(); ex.Next())
-            mk.Add(distance, TopoDS::Edge(ex.Current()));
-    } else {
-        TopTools_IndexedMapOfShape edgeMap;
-        TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
-        for (int idx : edgeIds) {
-            if (idx >= 0 && idx < edgeMap.Extent())
-                mk.Add(distance, TopoDS::Edge(edgeMap(idx + 1)));
+        if (edgeIds.empty()) {
+            TopExp_Explorer ex(shape, TopAbs_EDGE);
+            for (; ex.More(); ex.Next())
+                mk.Add(distance, TopoDS::Edge(ex.Current()));
+        } else {
+            TopTools_IndexedMapOfShape edgeMap;
+            TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+            for (int idx : edgeIds) {
+                if (idx >= 0 && idx < edgeMap.Extent())
+                    mk.Add(distance, TopoDS::Edge(edgeMap(idx + 1)));
+            }
         }
-    }
 
-    mk.Build();
-    if (!mk.IsDone())
+        mk.Build();
+        if (!mk.IsDone())
+            return TopoDS_Shape();
+
+        return mk.Shape();
+    } catch (const Standard_Failure&) {
         return TopoDS_Shape();
-
-    return mk.Shape();
+    } catch (...) {
+        return TopoDS_Shape();
+    }
 }
 
 TopoDS_Shape OCCTKernel::chamfer(const TopoDS_Shape& shape,
@@ -625,6 +699,7 @@ std::vector<int> OCCTKernel::expandTangentChain(const TopoDS_Shape& shape,
 
 TopoDS_Shape OCCTKernel::sweep(const TopoDS_Shape& profile, const TopoDS_Shape& path)
 {
+    OCCT_SAFE_BEGIN
     // Extract the wire from the path shape
     TopoDS_Wire pathWire;
     if (path.ShapeType() == TopAbs_WIRE) {
@@ -635,20 +710,24 @@ TopoDS_Shape OCCTKernel::sweep(const TopoDS_Shape& profile, const TopoDS_Shape& 
         if (ex.More())
             pathWire = TopoDS::Wire(ex.Current());
         else
-            return profile; // fallback: return profile unchanged
+            throw std::runtime_error("Sweep failed: path does not contain a wire");
     }
 
     BRepOffsetAPI_MakePipe pipe(pathWire, profile);
     pipe.Build();
-    if (!pipe.IsDone()) return profile;
+    if (!pipe.IsDone())
+        throw std::runtime_error("Sweep failed: could not sweep profile along path. "
+            "Try simplifying the path or using a smaller profile");
     return pipe.Shape();
+    OCCT_SAFE_END("Sweep failed. The path may be self-intersecting or twisted")
 }
 
 TopoDS_Shape OCCTKernel::loft(const std::vector<TopoDS_Shape>& sections, bool isClosed)
 {
     if (sections.empty())
-        return TopoDS_Shape();
+        throw std::runtime_error("Loft failed: no cross-section profiles provided");
 
+    OCCT_SAFE_BEGIN
     BRepOffsetAPI_ThruSections lofter(/*isSolid=*/Standard_True, /*ruled=*/Standard_False);
     lofter.SetSmoothing(Standard_True);
 
@@ -667,8 +746,11 @@ TopoDS_Shape OCCTKernel::loft(const std::vector<TopoDS_Shape>& sections, bool is
         lofter.SetSmoothing(Standard_True);
 
     lofter.Build();
-    if (!lofter.IsDone()) return sections.front();
+    if (!lofter.IsDone())
+        throw std::runtime_error("Loft failed: sections may be incompatible. "
+            "Ensure all profiles have the same number of vertices/edges");
     return lofter.Shape();
+    OCCT_SAFE_END("Loft failed. Check that the cross-section profiles are compatible")
 }
 
 TopoDS_Shape OCCTKernel::shell(const TopoDS_Shape& shape, double thickness,
@@ -718,18 +800,22 @@ TopoDS_Shape OCCTKernel::shell(const TopoDS_Shape& shape, double thickness,
         }
     }
 
+    OCCT_SAFE_BEGIN
     BRepOffsetAPI_MakeThickSolid hollower;
     hollower.MakeThickSolidByJoin(shape, facesToRemove, -thickness,
                                    1e-3 /*tolerance*/);
     hollower.Build();
     if (!hollower.IsDone()) return shape;
     return hollower.Shape();
+    OCCT_SAFE_END("Shell failed (thickness=" + std::to_string(thickness) +
+        "mm). Try reducing wall thickness or selecting different faces")
 }
 
 TopoDS_Shape OCCTKernel::mirror(const TopoDS_Shape& shape,
                                 double planeOx, double planeOy, double planeOz,
                                 double planeNx, double planeNy, double planeNz)
 {
+    OCCT_SAFE_BEGIN
     gp_Pnt origin(planeOx, planeOy, planeOz);
     gp_Dir normal(planeNx, planeNy, planeNz);
     gp_Ax2 mirrorPlane(origin, normal);
@@ -747,6 +833,7 @@ TopoDS_Shape OCCTKernel::mirror(const TopoDS_Shape& shape,
     fuse.Build();
     if (!fuse.IsDone()) return shape;
     return fuse.Shape();
+    OCCT_SAFE_END("Mirror failed. Check that the mirror plane is valid")
 }
 
 TopoDS_Shape OCCTKernel::rectangularPattern(const TopoDS_Shape& shape,
@@ -755,6 +842,7 @@ TopoDS_Shape OCCTKernel::rectangularPattern(const TopoDS_Shape& shape,
                                              double dirX2, double dirY2, double dirZ2,
                                              double spacing2, int count2)
 {
+    OCCT_SAFE_BEGIN
     if (count1 < 1) count1 = 1;
     if (count2 < 1) count2 = 1;
 
@@ -790,6 +878,7 @@ TopoDS_Shape OCCTKernel::rectangularPattern(const TopoDS_Shape& shape,
     }
 
     return result;
+    OCCT_SAFE_END("Rectangular pattern failed. Check spacing and directions")
 }
 
 TopoDS_Shape OCCTKernel::circularPattern(const TopoDS_Shape& shape,
@@ -797,6 +886,7 @@ TopoDS_Shape OCCTKernel::circularPattern(const TopoDS_Shape& shape,
                                           double axisDx, double axisDy, double axisDz,
                                           int count, double totalAngleDeg)
 {
+    OCCT_SAFE_BEGIN
     if (count < 2) return shape;
 
     gp_Pnt axisOrigin(axisOx, axisOy, axisOz);
@@ -821,12 +911,14 @@ TopoDS_Shape OCCTKernel::circularPattern(const TopoDS_Shape& shape,
     }
 
     return result;
+    OCCT_SAFE_END("Circular pattern failed. Check axis direction and count")
 }
 
 // ── Move / Transform ops ─────────────────────────────────────────────────────
 
 TopoDS_Shape OCCTKernel::transform(const TopoDS_Shape& shape, const double matrix[16])
 {
+    OCCT_SAFE_BEGIN
     // Build a gp_Trsf from the 4x4 column-major matrix.
     // OCCT gp_Trsf supports affine transforms (rotation + translation + uniform scale).
     // We extract the 3x3 rotation/scale part and the translation vector.
@@ -841,16 +933,19 @@ TopoDS_Shape OCCTKernel::transform(const TopoDS_Shape& shape, const double matri
     BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
     if (!transformer.IsDone()) return shape;
     return transformer.Shape();
+    OCCT_SAFE_END("Transform failed. Check that the matrix is a valid affine transformation")
 }
 
 TopoDS_Shape OCCTKernel::translate(const TopoDS_Shape& shape, double dx, double dy, double dz)
 {
+    OCCT_SAFE_BEGIN
     gp_Trsf trsf;
     trsf.SetTranslation(gp_Vec(dx, dy, dz));
 
     BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
     if (!transformer.IsDone()) return shape;
     return transformer.Shape();
+    OCCT_SAFE_END("Translate failed")
 }
 
 TopoDS_Shape OCCTKernel::rotate(const TopoDS_Shape& shape,
@@ -858,6 +953,7 @@ TopoDS_Shape OCCTKernel::rotate(const TopoDS_Shape& shape,
                                 double axisDx, double axisDy, double axisDz,
                                 double angleDeg)
 {
+    OCCT_SAFE_BEGIN
     gp_Pnt axisOrigin(axisOx, axisOy, axisOz);
     gp_Dir axisDir(axisDx, axisDy, axisDz);
     gp_Ax1 axis(axisOrigin, axisDir);
@@ -870,6 +966,7 @@ TopoDS_Shape OCCTKernel::rotate(const TopoDS_Shape& shape,
     BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
     if (!transformer.IsDone()) return shape;
     return transformer.Shape();
+    OCCT_SAFE_END("Rotate failed")
 }
 
 // ── Draft / Thicken ops ──────────────────────────────────────────────────────
@@ -879,6 +976,7 @@ TopoDS_Shape OCCTKernel::draft(const TopoDS_Shape& shape,
                                double angleDeg,
                                double pullDirX, double pullDirY, double pullDirZ)
 {
+    OCCT_SAFE_BEGIN
     double angleRad = angleDeg * M_PI / 180.0;
     gp_Dir pullDir(pullDirX, pullDirY, pullDirZ);
 
@@ -900,10 +998,13 @@ TopoDS_Shape OCCTKernel::draft(const TopoDS_Shape& shape,
     drafter.Build();
     if (!drafter.IsDone()) return shape;
     return drafter.Shape();
+    OCCT_SAFE_END("Draft failed (angle=" + std::to_string(angleDeg) +
+        " deg). Try a smaller angle or different faces")
 }
 
 TopoDS_Shape OCCTKernel::thicken(const TopoDS_Shape& shape, double thickness)
 {
+    OCCT_SAFE_BEGIN
     // BRepOffset_MakeOffset offsets all faces of a shape (surface or shell)
     // to create a solid.
     BRepOffset_MakeOffset offsetter;
@@ -913,6 +1014,8 @@ TopoDS_Shape OCCTKernel::thicken(const TopoDS_Shape& shape, double thickness)
     offsetter.MakeOffsetShape();
     if (!offsetter.IsDone()) return shape;
     return offsetter.Shape();
+    OCCT_SAFE_END("Thicken failed (thickness=" + std::to_string(thickness) +
+        "mm). Try a different thickness value")
 }
 
 TopoDS_Shape OCCTKernel::hole(const TopoDS_Shape& shape,
@@ -920,6 +1023,7 @@ TopoDS_Shape OCCTKernel::hole(const TopoDS_Shape& shape,
                               double dirX, double dirY, double dirZ,
                               double diameter, double depth)
 {
+    OCCT_SAFE_BEGIN
     double radius = diameter / 2.0;
     // Through-all: use a large depth to guarantee full penetration
     double cutDepth = (depth <= 0.0) ? 1000.0 : depth;
@@ -936,6 +1040,8 @@ TopoDS_Shape OCCTKernel::hole(const TopoDS_Shape& shape,
     cut.Build();
     if (!cut.IsDone()) return shape;
     return cut.Shape();
+    OCCT_SAFE_END("Hole failed (diameter=" + std::to_string(diameter) +
+        "mm). Check position and direction are valid")
 }
 
 TopoDS_Shape OCCTKernel::counterboreHole(const TopoDS_Shape& shape,
@@ -944,6 +1050,7 @@ TopoDS_Shape OCCTKernel::counterboreHole(const TopoDS_Shape& shape,
                                           double diameter, double depth,
                                           double cboreDiameter, double cboreDepth)
 {
+    OCCT_SAFE_BEGIN
     // First cut the main (smaller) hole
     TopoDS_Shape result = hole(shape, posX, posY, posZ,
                                dirX, dirY, dirZ,
@@ -963,6 +1070,7 @@ TopoDS_Shape OCCTKernel::counterboreHole(const TopoDS_Shape& shape,
     cut.Build();
     if (!cut.IsDone()) return result;
     return cut.Shape();
+    OCCT_SAFE_END("Counterbore hole failed. Check dimensions and position")
 }
 
 TopoDS_Shape OCCTKernel::countersinkHole(const TopoDS_Shape& shape,
@@ -984,6 +1092,7 @@ TopoDS_Shape OCCTKernel::countersinkHole(const TopoDS_Shape& shape,
     double csinkRadius = csinkDiameter / 2.0;
     double holeRadius  = diameter / 2.0;
 
+    OCCT_SAFE_BEGIN
     // Cone height from the geometry: h = (R - r) / tan(halfAngle)
     double tanHalf = std::tan(halfAngleRad);
     if (tanHalf < 1e-12) return result; // degenerate angle
@@ -1004,6 +1113,7 @@ TopoDS_Shape OCCTKernel::countersinkHole(const TopoDS_Shape& shape,
     cut.Build();
     if (!cut.IsDone()) return result;
     return cut.Shape();
+    OCCT_SAFE_END("Countersink hole failed. Check dimensions and position")
 }
 
 // ── Thread ops ────────────────────────────────────────────────────────────────
@@ -1020,6 +1130,7 @@ TopoDS_Shape OCCTKernel::thread(const TopoDS_Shape& shape,
     if (!isModeled)
         return shape;
 
+    OCCT_SAFE_BEGIN
     // Find the cylindrical face
     TopoDS_Face cylFace;
     bool found = false;
@@ -1173,6 +1284,8 @@ TopoDS_Shape OCCTKernel::thread(const TopoDS_Shape& shape,
         if (!fuse.IsDone()) return shape;
         return fuse.Shape();
     }
+    OCCT_SAFE_END("Thread failed (pitch=" + std::to_string(pitch) +
+        "mm). Check that the target has a cylindrical face")
 }
 
 // ── Scale ops ─────────────────────────────────────────────────────────────────
@@ -1180,18 +1293,21 @@ TopoDS_Shape OCCTKernel::thread(const TopoDS_Shape& shape,
 TopoDS_Shape OCCTKernel::scaleUniform(const TopoDS_Shape& shape, double factor,
                                        double centerX, double centerY, double centerZ)
 {
+    OCCT_SAFE_BEGIN
     gp_Trsf trsf;
     trsf.SetScale(gp_Pnt(centerX, centerY, centerZ), factor);
 
     BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
     if (!transformer.IsDone()) return shape;
     return transformer.Shape();
+    OCCT_SAFE_END("Scale failed. Factor must be non-zero")
 }
 
 TopoDS_Shape OCCTKernel::scaleNonUniform(const TopoDS_Shape& shape,
                                           double factorX, double factorY, double factorZ,
                                           double centerX, double centerY, double centerZ)
 {
+    OCCT_SAFE_BEGIN
     // For non-uniform scale we need gp_GTrsf (general transformation).
     // Strategy: translate to origin, apply scale matrix, translate back.
     gp_GTrsf gtrsf;
@@ -1211,6 +1327,7 @@ TopoDS_Shape OCCTKernel::scaleNonUniform(const TopoDS_Shape& shape,
     BRepBuilderAPI_GTransform transformer(shape, gtrsf, /*copy=*/Standard_True);
     if (!transformer.IsDone()) return shape;
     return transformer.Shape();
+    OCCT_SAFE_END("Non-uniform scale failed. All scale factors must be non-zero")
 }
 
 std::vector<TopoDS_Shape> OCCTKernel::importSTEP(const std::string& path)
@@ -1746,6 +1863,7 @@ TopoDS_Shape OCCTKernel::pathPattern(const TopoDS_Shape& shape,
                                       int count, double startOffset,
                                       double endOffset)
 {
+    OCCT_SAFE_BEGIN
     if (count < 1)
         throw std::runtime_error("pathPattern: count must be >= 1");
 
@@ -1879,6 +1997,7 @@ TopoDS_Shape OCCTKernel::pathPattern(const TopoDS_Shape& shape,
     }
 
     return result;
+    OCCT_SAFE_END("Path pattern failed. Check that the path is a valid wire")
 }
 
 // ── Coil (Helical Sweep) ────────────────────────────────────────────────────
@@ -1890,9 +2009,11 @@ TopoDS_Shape OCCTKernel::coil(const TopoDS_Shape& profileShape,
                                double taperAngleDeg)
 {
     if (turns <= 0)
-        throw std::runtime_error("coil: turns must be > 0");
+        throw std::runtime_error("Coil failed: turns must be > 0");
     if (radius <= 0)
-        throw std::runtime_error("coil: radius must be > 0");
+        throw std::runtime_error("Coil failed: radius must be > 0");
+
+    OCCT_SAFE_BEGIN
     if (pitch <= 0)
         throw std::runtime_error("coil: pitch must be > 0");
 
@@ -1976,10 +2097,13 @@ TopoDS_Shape OCCTKernel::coil(const TopoDS_Shape& profileShape,
     pipeShell.Build();
 
     if (!pipeShell.IsDone())
-        throw std::runtime_error("coil: MakePipeShell failed");
+        throw std::runtime_error("Coil failed: pipe shell sweep did not complete. "
+            "Try a smaller profile or different helix parameters");
 
     pipeShell.MakeSolid();
     return pipeShell.Shape();
+    OCCT_SAFE_END("Coil failed (radius=" + std::to_string(radius) + ", pitch=" +
+        std::to_string(pitch) + "). Check helix parameters and profile")
 }
 
 // ── Delete Faces ────────────────────────────────────────────────────────────
@@ -1990,6 +2114,7 @@ TopoDS_Shape OCCTKernel::deleteFaces(const TopoDS_Shape& shape,
     if (faceIndices.empty())
         return shape;
 
+    OCCT_SAFE_BEGIN
     // Collect the faces to remove
     TopTools_ListOfShape facesToRemove;
     int idx = 0;
@@ -2000,7 +2125,7 @@ TopoDS_Shape OCCTKernel::deleteFaces(const TopoDS_Shape& shape,
     }
 
     if (facesToRemove.IsEmpty())
-        throw std::runtime_error("deleteFaces: no matching faces found");
+        throw std::runtime_error("Delete faces: no matching faces found for the given indices");
 
     // Use MakeThickSolid with zero offset on the selected faces to remove them.
     // This effectively removes the face and heals the gap.
@@ -2010,9 +2135,11 @@ TopoDS_Shape OCCTKernel::deleteFaces(const TopoDS_Shape& shape,
     thickSolid.Build();
 
     if (!thickSolid.IsDone())
-        throw std::runtime_error("deleteFaces: MakeThickSolid failed");
+        throw std::runtime_error("Delete faces: gap healing did not complete. "
+            "Try deleting fewer faces or different faces");
 
     return thickSolid.Shape();
+    OCCT_SAFE_END("Delete faces failed. The gap could not be healed")
 }
 
 // ── Replace Face ────────────────────────────────────────────────────────────
@@ -2020,6 +2147,7 @@ TopoDS_Shape OCCTKernel::deleteFaces(const TopoDS_Shape& shape,
 TopoDS_Shape OCCTKernel::replaceFace(const TopoDS_Shape& shape, int faceIndex,
                                       const TopoDS_Shape& newFace)
 {
+    OCCT_SAFE_BEGIN
     // Find the target face by index
     TopoDS_Face oldFace;
     int idx = 0;
@@ -2031,7 +2159,8 @@ TopoDS_Shape OCCTKernel::replaceFace(const TopoDS_Shape& shape, int faceIndex,
     }
 
     if (oldFace.IsNull())
-        throw std::runtime_error("replaceFace: face index out of range");
+        throw std::runtime_error("Replace face failed: face index " +
+            std::to_string(faceIndex) + " is out of range");
 
     // Extract the first face from newFace shape
     TopoDS_Face replacementFace;
@@ -2041,7 +2170,7 @@ TopoDS_Shape OCCTKernel::replaceFace(const TopoDS_Shape& shape, int faceIndex,
     }
 
     if (replacementFace.IsNull())
-        throw std::runtime_error("replaceFace: replacement shape contains no faces");
+        throw std::runtime_error("Replace face failed: replacement shape contains no faces");
 
     // Rebuild the shape, substituting the old face with the new one
     BRep_Builder bbuilder;
@@ -2065,6 +2194,7 @@ TopoDS_Shape OCCTKernel::replaceFace(const TopoDS_Shape& shape, int faceIndex,
     bbuilder.Add(solid, newShell);
 
     return solid;
+    OCCT_SAFE_END("Replace face failed. Check that the replacement face is compatible")
 }
 
 // ── Reverse Normals ─────────────────────────────────────────────────────────
@@ -2072,6 +2202,7 @@ TopoDS_Shape OCCTKernel::replaceFace(const TopoDS_Shape& shape, int faceIndex,
 TopoDS_Shape OCCTKernel::reverseNormals(const TopoDS_Shape& shape,
                                           const std::vector<int>& faceIndices)
 {
+    OCCT_SAFE_BEGIN
     if (faceIndices.empty()) {
         // Reverse the entire shape orientation
         TopoDS_Shape reversed = shape.Reversed();
@@ -2101,6 +2232,7 @@ TopoDS_Shape OCCTKernel::reverseNormals(const TopoDS_Shape& shape,
     bbuilder.Add(solid, newShell);
 
     return solid;
+    OCCT_SAFE_END("Reverse normals failed")
 }
 
 } // namespace kernel

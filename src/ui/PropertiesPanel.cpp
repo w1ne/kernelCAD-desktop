@@ -451,6 +451,19 @@ void PropertiesPanel::showFeature(const QString& featureId)
         schedulePropertyChanged(featureId, propertyName, newValue);
     };
 
+    // Show error banner if the feature is in error state
+    if (feat->healthState() == features::HealthState::Error &&
+        !feat->errorMessage().empty()) {
+        auto* errorLabel = new QLabel(this);
+        errorLabel->setText(QString::fromStdString(feat->errorMessage()));
+        errorLabel->setWordWrap(true);
+        errorLabel->setStyleSheet(
+            "QLabel { color: #ff4444; background: #3a1a1a; "
+            "border: 1px solid #ff4444; border-radius: 4px; "
+            "padding: 6px; margin-bottom: 4px; }");
+        m_formLayout->addRow(errorLabel);
+    }
+
     // Set header and delegate form building to PropertyFormFactory
     auto setHeader = [&](const QString& typeName) {
         setHeaderText(QString::fromStdString(feat->name()), typeName);

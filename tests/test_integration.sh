@@ -146,6 +146,42 @@ run_test "Add constraint" \
 {"cmd":"sketchAddConstraint","id":5,"sketchId":"sketch_1","type":"Horizontal","entity1":"pt_1","entity2":"pt_2"}' \
     '"ok":true'
 
+# ── Sketch on Alternate Planes ─────────────────────────────────────
+echo ""
+echo "--- Sketch on Alternate Planes ---"
+
+run_test "Sketch on XZ plane" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createSketch","id":2,"plane":"XZ"}
+{"cmd":"sketchAddRectangle","id":3,"sketchId":"sketch_1","x1":0,"y1":0,"x2":40,"y2":30}
+{"cmd":"sketchSolve","id":4,"sketchId":"sketch_1"}
+{"cmd":"extrude","id":5,"sketchId":"sketch_1","distance":20}
+{"cmd":"listFeatures","id":6}' \
+    '"Extrude"'
+
+run_test "Sketch on YZ plane" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createSketch","id":2,"plane":"YZ"}' \
+    '"sketchId"'
+
+run_test "Sketch on face of box" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"createSketchOnFace","id":3,"bodyId":"body_1","faceIndex":0}' \
+    '"sketchId"'
+
+run_test "Sketch on face rejects non-planar" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createCylinder","id":2,"radius":10,"height":30}
+{"cmd":"createSketchOnFace","id":3,"bodyId":"body_1","faceIndex":0}' \
+    '"ok"'
+
+run_test "Hole on face with faceIndex direction" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"hole","id":3,"bodyId":"body_1","posX":25,"posY":15,"posZ":20,"faceIndex":0,"diameter":"8 mm","depth":"10 mm"}' \
+    '"featureId"'
+
 # ── Feature Pipeline ────────────────────────────────────────────────
 echo ""
 echo "--- Feature Pipeline ---"
@@ -274,6 +310,49 @@ run_test "Recompute" \
 {"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
 {"cmd":"recompute","id":3}' \
     '"ok":true'
+
+# ── Error Handling & Crash Recovery ────────────────────────────────
+echo ""
+echo "--- Error Handling ---"
+
+run_test "Fillet with too-large radius doesn't crash" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":"100 mm"}' \
+    '"ok"'
+
+run_test "Shell with too-large thickness doesn't crash" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"shell","id":3,"bodyId":"body_1","thickness":100}' \
+    '"ok"'
+
+run_test "Boolean with nonexistent body returns error" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"combine","id":3,"targetBodyId":"body_1","toolBodyId":"nonexistent","operation":"Join"}' \
+    '"ok":false'
+
+run_test "Chamfer with too-large distance doesn't crash" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"chamfer","id":3,"bodyId":"body_1","distance":"100 mm"}' \
+    '"ok"'
+
+run_test "Model usable after fillet error" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":"100 mm"}
+{"cmd":"listBodies","id":4}' \
+    '"body_1"'
+
+run_test "Recompute after error preserves geometry" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":"100 mm"}
+{"cmd":"recompute","id":4}
+{"cmd":"listBodies","id":5}' \
+    '"body_1"'
 
 # ── Summary ─────────────────────────────────────────────────────────
 echo ""

@@ -185,6 +185,13 @@ void CommandController::onCreateSketch()
     if (m_mainWindow->sketchEditor()->isEditing())
         m_mainWindow->sketchEditor()->finishEditing();
 
+    // If a planar face is already selected, create sketch on it immediately
+    const auto& sel = m_selectionMgr->selection();
+    if (!sel.empty() && sel[0].faceIndex >= 0 && !sel[0].bodyId.empty()) {
+        handleSketchPlaneSelection(sel[0]);
+        return;
+    }
+
     // Enter "pick a plane" mode -- wait for user to click an origin plane or planar face
     m_pendingSketchPlane = true;
     m_pendingCommand = PendingCommand::SketchPlane;
@@ -1051,9 +1058,29 @@ void CommandController::onAddHole()
     params.posX = holePosX;
     params.posY = holePosY;
     params.posZ = holePosZ;
-    params.dirX = 0;
-    params.dirY = 0;
-    params.dirZ = -1;
+
+    // Compute hole direction from the selected face normal (into the face)
+    double holeDirX = 0, holeDirY = 0, holeDirZ = -1;
+    if (!sel.empty() && sel[0].faceIndex >= 0 && !sel[0].bodyId.empty()) {
+        auto& brepQ = m_document->brepModel();
+        if (brepQ.hasBody(sel[0].bodyId)) {
+            try {
+                kernel::BRepQuery bq = brepQ.query(sel[0].bodyId);
+                if (sel[0].faceIndex < bq.faceCount()) {
+                    kernel::FaceInfo fi = bq.faceInfo(sel[0].faceIndex);
+                    // Direction into the face (reversed normal)
+                    holeDirX = -fi.normalX;
+                    holeDirY = -fi.normalY;
+                    holeDirZ = -fi.normalZ;
+                }
+            } catch (...) {
+                // Keep default direction
+            }
+        }
+    }
+    params.dirX = holeDirX;
+    params.dirY = holeDirY;
+    params.dirZ = holeDirZ;
 
     std::ostringstream diaOss, depOss;
     diaOss << inputs.getNumeric("diameter", 10) << " mm";

@@ -23,8 +23,12 @@ public:
     /// Delete the autosave file (call on normal save or new document).
     void clearAutoSave();
 
-    /// Check if a recovery file exists. Returns its path, or empty string.
-    static QString recoveryPath(const QString& docName);
+    /// Check if any recovery file exists. Returns the most recent path, or empty string.
+    static QString recoveryPath(const QString& docName = QString());
+
+signals:
+    /// Emitted after a successful auto-save so the UI can show a brief status message.
+    void autoSaved();
 
 private slots:
     void performAutoSave();
@@ -36,6 +40,12 @@ private:
     int m_intervalSec = 300; // 5 minutes
 
     QString autoSavePath() const;
+
+    /// Remove old auto-save files, keeping only the most recent maxKeep entries.
+    static void cleanupOldAutoSaves(int maxKeep = 3);
+
+    /// Return the auto-save directory path.
+    static QString autoSaveDir();
 };
 
 } // namespace document

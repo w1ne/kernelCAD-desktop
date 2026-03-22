@@ -310,6 +310,32 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Auto-save (5 minute interval)
     m_autoSave = new document::AutoSave(m_document.get(), this);
+    connect(m_autoSave, &document::AutoSave::autoSaved, this, [this]() {
+        statusBar()->showMessage(tr("Auto-saved"), 3000);
+    });
+
+    // Crash recovery: check for auto-save files from a previous session
+    {
+        QString recoveryFile = document::AutoSave::recoveryPath();
+        if (!recoveryFile.isEmpty()) {
+            auto ret = QMessageBox::question(this, tr("Recover Document"),
+                tr("An auto-saved document was found from a previous session.\n"
+                   "Would you like to recover it?"),
+                QMessageBox::Yes | QMessageBox::No);
+            if (ret == QMessageBox::Yes) {
+                try {
+                    m_document->load(recoveryFile.toStdString());
+                    refreshAllPanels();
+                    statusBar()->showMessage(tr("Recovered from auto-save"), 5000);
+                } catch (const std::exception& e) {
+                    QMessageBox::warning(this, tr("Recovery Failed"),
+                        tr("Could not recover auto-save: %1").arg(e.what()));
+                }
+            }
+            // Clean up the recovery file regardless of choice
+            QFile::remove(recoveryFile);
+        }
+    }
 
     // Command palette (Ctrl+K)
     setupCommandPalette();
@@ -344,40 +370,33 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     auto* groupWidget = new QWidget;
     groupWidget->setObjectName("RibbonGroup");
     auto* groupLayout = new QVBoxLayout(groupWidget);
-    groupLayout->setContentsMargins(4, 0, 4, 0);
+    groupLayout->setContentsMargins(6, 2, 6, 0);
     groupLayout->setSpacing(0);
 
-    // Button row
+    // Button row — icon-only, 32x32 icons in 40x40 buttons
     auto* buttonRow = new QHBoxLayout;
-    buttonRow->setSpacing(2);
+    buttonRow->setSpacing(1);
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(28, 28));
-        btn->setText(tool.name);
-        btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        btn->setIconSize(QSize(32, 32));
+        btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(48, 52);
+        btn->setFixedSize(40, 40);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
-        QFont btnFont = btn->font();
-        btnFont.setPointSize(9);
-        btn->setFont(btnFont);
         if (tool.action)
             connect(btn, &QToolButton::clicked, this, tool.action);
         buttonRow->addWidget(btn);
-
-        // Tag with tool name for hover-filter lookup
-        btn->setProperty("_toolName", tool.name);
     }
     groupLayout->addLayout(buttonRow);
 
-    // Group label as clickable dropdown button (shows all commands in this group)
-    auto* groupLabel = new QPushButton(groupName + QString::fromUtf8(" \xe2\x96\xbe"));
+    // Group label — uppercase, small, centered; click opens dropdown with all commands
+    auto* groupLabel = new QPushButton(groupName.toUpper() + QString::fromUtf8(" \xe2\x96\xbe"));
     groupLabel->setFlat(true);
-    groupLabel->setStyleSheet("color: #777; font-size: 10px; border: none; padding: 0 2px;");
+    groupLabel->setObjectName("RibbonGroupLabel");
     groupLabel->setCursor(Qt::PointingHandCursor);
     // Capture copies of tools and extras for the dropdown lambda
     auto toolsCopy = tools;
@@ -408,7 +427,8 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(58);
+    sep->setFixedHeight(48);
+    sep->setStyleSheet("background: #3a3a3a; border: none;");
     layout->addWidget(sep);
 }
 
@@ -467,7 +487,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(88);
+    m_ribbon->setFixedHeight(72);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID

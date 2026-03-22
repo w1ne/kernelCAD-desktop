@@ -4,25 +4,31 @@
 #include <QDir>
 #include <iostream>
 #include <csignal>
+#include <cstdlib>
 
 static Application* g_app = nullptr;
 
 static void crashHandler(int sig)
 {
+    // Prevent re-entry: reset the handler immediately
+    std::signal(sig, SIG_DFL);
+
     const char* sigName = (sig == SIGSEGV) ? "SIGSEGV" :
                           (sig == SIGABRT) ? "SIGABRT" :
                           (sig == SIGFPE)  ? "SIGFPE"  : "UNKNOWN";
-    std::cerr << "CRASH: Signal " << sigName << " received." << std::endl;
+
+    // Use write() instead of cerr in signal handler for async-signal-safety
+    fprintf(stderr, "\nkernelCAD: Fatal error (signal %s). Check auto-save directory for recovery.\n", sigName);
 
     try {
         if (g_app) {
             QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
             QDir().mkpath(dir);
-            std::cerr << "Recovery dir: " << dir.toStdString() << std::endl;
+            fprintf(stderr, "Recovery dir: %s\n", dir.toStdString().c_str());
         }
     } catch (...) {}
 
-    std::signal(sig, SIG_DFL);
+    // Re-raise the signal for the default handler (generates core dump if enabled)
     std::raise(sig);
 }
 

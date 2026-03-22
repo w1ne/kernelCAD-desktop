@@ -79,37 +79,49 @@ void Application::setupDarkTheme()
 
         /* ── Ribbon tab widget ──────────────────────────────────────── */
         QTabWidget#Ribbon::pane {
-            background: #2d2d2d; border: none; border-top: 1px solid #3a3a3a;
+            background: #333333; border: none;
+            border-top: 1px solid #3a3a3a;
+            border-bottom: 1px solid #3a3a3a;
         }
         QTabWidget#Ribbon > QTabBar::tab {
-            background: #2d2d2d; color: #888; padding: 4px 14px;
+            background: transparent; color: #888; padding: 6px 16px;
             border: none; border-bottom: 2px solid transparent;
             font-weight: 600; font-size: 11px; letter-spacing: 1px;
         }
         QTabWidget#Ribbon > QTabBar::tab:selected {
-            background: #2d2d2d; color: #fff;
-            border-bottom: 2px solid #0078d4;
+            color: #fff; border-bottom: 2px solid #0078d4;
         }
         QTabWidget#Ribbon > QTabBar::tab:hover:!selected { color: #bbb; }
 
         /* ── Ribbon buttons ─────────────────────────────────────────── */
         QToolButton#RibbonButton {
-            background: transparent; border: 1px solid transparent;
-            border-radius: 4px; color: #aaa; font-size: 9px;
+            background: transparent; border: none;
+            border-bottom: 2px solid transparent;
+            border-radius: 0; padding: 4px;
         }
         QToolButton#RibbonButton:hover {
-            background: #383838; border: 1px solid transparent;
+            background: rgba(255, 255, 255, 0.06);
+            border-bottom: 2px solid transparent;
         }
-        QToolButton#RibbonButton:pressed { background: #094771; }
-        QToolButton#RibbonButton:checked { background: #094771; border: 1px solid #0078d4; border-radius: 4px; }
+        QToolButton#RibbonButton:checked {
+            background: rgba(255, 255, 255, 0.08);
+            border-bottom: 2px solid #0078d4;
+        }
+        QToolButton#RibbonButton:pressed {
+            background: rgba(255, 255, 255, 0.12);
+        }
 
         /* ── Ribbon group label ─────────────────────────────────────── */
-        QLabel#RibbonGroupLabel {
-            font-size: 10px; color: #777; padding: 0; margin: 0;
+        QPushButton#RibbonGroupLabel {
+            font-size: 10px; font-weight: 500; color: #777;
+            letter-spacing: 0.5px; padding: 2px 4px 4px 4px;
+            border: none; background: transparent;
+            min-height: 14px; max-height: 16px;
         }
+        QPushButton#RibbonGroupLabel:hover { color: #aaa; background: transparent; border: none; }
 
         /* ── Ribbon separator ───────────────────────────────────────── */
-        QFrame#RibbonSeparator { color: #3a3a3a; }
+        QFrame#RibbonSeparator { background: #3a3a3a; border: none; }
 
         /* ── Dock widgets ──────────────────────────────────────────── */
         QDockWidget { color: #ccc; }
