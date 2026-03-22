@@ -211,6 +211,12 @@ private:
     /// Find the nearest ellipse within `threshold` sketch-space units.
     std::string findNearestEllipse(double sx, double sy, double threshold = 5.0);
 
+    /// Find the nearest dimension constraint label near (sx, sy).
+    std::string findNearestConstraint(double sx, double sy, double threshold = 8.0);
+
+    /// Open an edit dialog for the currently selected constraint.
+    void editSelectedConstraint();
+
     /// Composite pick: try point first, then line, circle, arc.
     SketchPickResult pickEntity(double sx, double sy, double threshold = 5.0);
 

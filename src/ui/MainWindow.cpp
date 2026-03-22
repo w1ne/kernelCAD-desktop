@@ -742,6 +742,20 @@ void MainWindow::setupMenuBar()
     fileMenu->addSeparator();
     fileMenu->addAction(tr("Export STEP..."), this, &MainWindow::onExportSTEP);
     fileMenu->addAction(tr("Export STL..."),  this, &MainWindow::onExportSTL);
+    fileMenu->addAction(tr("Export 3MF..."), this, [this]() {
+        QString path = QFileDialog::getSaveFileName(this, tr("Export 3MF"), {}, tr("3MF Files (*.3mf)"));
+        if (path.isEmpty()) return;
+        auto& brep = m_document->brepModel();
+        auto ids = brep.bodyIds();
+        if (ids.empty()) { statusBar()->showMessage(tr("Nothing to export")); return; }
+        TopoDS_Compound compound;
+        BRep_Builder builder;
+        builder.MakeCompound(compound);
+        for (const auto& id : ids)
+            builder.Add(compound, brep.getShape(id));
+        bool ok = m_document->kernel().export3MF(compound, path.toStdString());
+        statusBar()->showMessage(ok ? tr("Exported 3MF: %1").arg(path) : tr("Export failed"));
+    });
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Quit"), qApp, &QApplication::quit, QKeySequence::Quit);
 
@@ -2455,23 +2469,38 @@ void MainWindow::onAddHole()
         }
     }
 
+    // Show the Hole dialog so user can set diameter, depth, type — like Fusion 360
+    auto cmd = std::make_unique<document::HoleInteractiveCommand>();
+    CommandDialog dlg(cmd.get(), m_document.get(), this);
+    dlg.setWindowTitle(tr("Hole"));
+    if (dlg.exec() != QDialog::Accepted) {
+        statusBar()->showMessage(tr("Hole cancelled"), 2000);
+        return;
+    }
+
+    auto inputs = dlg.values();
     features::HoleParams params;
     params.targetBodyId = lastBodyId;
-    params.holeType     = features::HoleType::Simple;
+    params.holeType     = static_cast<features::HoleType>(inputs.getInt("holeType", 0));
     params.posX = holePosX;
     params.posY = holePosY;
     params.posZ = holePosZ;
     params.dirX = 0;
     params.dirY = 0;
-    params.dirZ = -1;   // drill downward into the top face
-    params.diameterExpr = "10 mm";
-    params.depthExpr    = "20 mm";
+    params.dirZ = -1;
+
+    std::ostringstream diaOss, depOss;
+    diaOss << inputs.getNumeric("diameter", 10) << " mm";
+    depOss << inputs.getNumeric("depth", 20) << " mm";
+    params.diameterExpr = diaOss.str();
+    params.depthExpr    = depOss.str();
 
     try {
         m_document->executeCommand(
             std::make_unique<document::AddHoleCommand>(std::move(params)));
-        statusBar()->showMessage(
-            tr("Added hole (10 mm dia, 20 mm deep)"));
+        statusBar()->showMessage(tr("Added hole (%1 dia, %2 deep)")
+            .arg(QString::fromStdString(params.diameterExpr),
+                 QString::fromStdString(params.depthExpr)));
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Hole Failed"),
             tr("Could not create hole: %1").arg(e.what()));

@@ -5,6 +5,7 @@
 #include "../sketch/Sketch.h"
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QGuiApplication>
 #include <QSurfaceFormat>
 #include <QOpenGLFramebufferObject>
 #include <QPainter>
@@ -1734,9 +1735,11 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
 
         emit occurrenceDragged(delta.x(), delta.y(), delta.z());
     }
-    else if (m_activeButton == Qt::LeftButton && m_isDragging) {
-        if (m_lockRotation) {
-            // -- Pan instead of rotate when rotation is locked (sketch mode) --
+    else if (m_activeButton == Qt::MiddleButton && m_isDragging) {
+        // Fusion 360 mapping: middle-button = orbit, middle+Shift = pan
+        bool shiftHeld = (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+        if (m_lockRotation || shiftHeld) {
+            // -- Pan --
             const float dx2 = static_cast<float>(pos.x() - m_lastMousePos.x());
             const float dy2 = static_cast<float>(pos.y() - m_lastMousePos.y());
 
@@ -1778,8 +1781,8 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
             }
         }
     }
-    else if (m_activeButton == Qt::MiddleButton) {
-        // -- Pan -------------------------------------------------------------
+    else if (m_activeButton == Qt::RightButton && m_isDragging) {
+        // -- Right-button pan (alternative) -----------------------------------
         const float dx = static_cast<float>(pos.x() - m_lastMousePos.x());
         const float dy = static_cast<float>(pos.y() - m_lastMousePos.y());
 

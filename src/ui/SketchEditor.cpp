@@ -288,6 +288,118 @@ std::string SketchEditor::findNearestEllipse(double sx, double sy, double thresh
     return bestId;
 }
 
+std::string SketchEditor::findNearestConstraint(double sx, double sy, double threshold)
+{
+    if (!m_sketch) return {};
+
+    std::string bestId;
+    double bestDist = threshold;
+
+    for (const auto& [cid, con] : m_sketch->constraints()) {
+        // Only pick dimension constraints (those with visible labels)
+        bool isDimension = (con.type == sketch::ConstraintType::Distance ||
+                            con.type == sketch::ConstraintType::DistancePointLine ||
+                            con.type == sketch::ConstraintType::Radius ||
+                            con.type == sketch::ConstraintType::FixedAngle ||
+                            con.type == sketch::ConstraintType::AngleBetween);
+        if (!isDimension) continue;
+
+        // Compute the label position (midpoint of referenced entities)
+        double lx = 0, ly = 0;
+        int count = 0;
+
+        if (con.type == sketch::ConstraintType::Radius) {
+            // Label is near the circle/arc edge
+            auto cIt = m_sketch->circles().find(con.entityIds.empty() ? "" : con.entityIds[0]);
+            if (cIt != m_sketch->circles().end()) {
+                const auto& cp = m_sketch->point(cIt->second.centerPointId);
+                lx = cp.x + con.value * 0.7;  // offset to the right of center
+                ly = cp.y;
+                count = 1;
+            }
+            auto aIt = m_sketch->arcs().find(con.entityIds.empty() ? "" : con.entityIds[0]);
+            if (aIt != m_sketch->arcs().end()) {
+                const auto& cp = m_sketch->point(aIt->second.centerPointId);
+                lx = cp.x + con.value * 0.7;
+                ly = cp.y;
+                count = 1;
+            }
+        } else {
+            // Label at midpoint of the two referenced points/entities
+            for (const auto& eid : con.entityIds) {
+                auto pIt = m_sketch->points().find(eid);
+                if (pIt != m_sketch->points().end()) {
+                    lx += pIt->second.x;
+                    ly += pIt->second.y;
+                    ++count;
+                }
+                // Also check if it's a line (use midpoint)
+                auto lineIt = m_sketch->lines().find(eid);
+                if (lineIt != m_sketch->lines().end()) {
+                    const auto& p1 = m_sketch->point(lineIt->second.startPointId);
+                    const auto& p2 = m_sketch->point(lineIt->second.endPointId);
+                    lx += (p1.x + p2.x) * 0.5;
+                    ly += (p1.y + p2.y) * 0.5;
+                    ++count;
+                }
+            }
+        }
+
+        if (count == 0) continue;
+        lx /= count;
+        ly /= count;
+
+        double dx = sx - lx;
+        double dy = sy - ly;
+        double dist = std::sqrt(dx * dx + dy * dy);
+
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestId = cid;
+        }
+    }
+    return bestId;
+}
+
+void SketchEditor::editSelectedConstraint()
+{
+    if (m_selectedConstraintId.empty() || !m_sketch) return;
+
+    auto conIt = m_sketch->constraints().find(m_selectedConstraintId);
+    if (conIt == m_sketch->constraints().end()) return;
+
+    const auto& con = conIt->second;
+    bool isDimension = (con.type == sketch::ConstraintType::Distance ||
+                        con.type == sketch::ConstraintType::DistancePointLine ||
+                        con.type == sketch::ConstraintType::Radius ||
+                        con.type == sketch::ConstraintType::FixedAngle ||
+                        con.type == sketch::ConstraintType::AngleBetween);
+    if (!isDimension) return;
+
+    QString label;
+    switch (con.type) {
+        case sketch::ConstraintType::Radius: label = "Radius (mm):"; break;
+        case sketch::ConstraintType::FixedAngle:
+        case sketch::ConstraintType::AngleBetween: label = "Angle (deg):"; break;
+        default: label = "Distance (mm):"; break;
+    }
+
+    bool ok = false;
+    double newVal = QInputDialog::getDouble(
+        m_viewport, "Edit Dimension", label, con.value, 0.001, 1e6, 3, &ok);
+    if (ok && newVal > 0) {
+        auto entityIds = con.entityIds;
+        auto type = con.type;
+        m_sketch->removeConstraint(m_selectedConstraintId);
+        m_sketch->addConstraint(type, entityIds, newVal);
+        m_selectedConstraintId.clear();
+        m_sketch->solve();
+        if (m_viewport) m_viewport->update();
+        emit constraintSelected("", "", "");
+        emit sketchChanged();
+    }
+}
+
 SketchPickResult SketchEditor::pickEntity(double sx, double sy, double threshold)
 {
     SketchPickResult result;
@@ -399,9 +511,30 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
         }
     }
 
-    // ── Pointer (None) tool: deselect constraints ────────────────────────
+    // ── Pointer (None) tool: pick constraints or entities ──────────────
     if (m_tool == SketchTool::None) {
-        m_selectedConstraintId.clear();
+        // Try to pick a constraint near the click (dimension labels, etc.)
+        std::string hitConstraintId = findNearestConstraint(sx, sy, 8.0);
+        if (!hitConstraintId.empty()) {
+            if (m_selectedConstraintId == hitConstraintId) {
+                // Clicked same constraint again — open edit dialog
+                editSelectedConstraint();
+            } else {
+                // Select the constraint
+                m_selectedConstraintId = hitConstraintId;
+                emit constraintSelected(
+                    QString::fromStdString(hitConstraintId), "", "");
+            }
+            if (m_viewport) m_viewport->update();
+            return true;
+        }
+
+        // Nothing hit — deselect
+        if (!m_selectedConstraintId.empty()) {
+            m_selectedConstraintId.clear();
+            emit constraintSelected("", "", "");
+            if (m_viewport) m_viewport->update();
+        }
         return false;
     }
 
