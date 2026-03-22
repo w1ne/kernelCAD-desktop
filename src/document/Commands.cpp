@@ -1,4 +1,6 @@
 #include "Commands.h"
+#include <QCoreApplication>
+// qDebug is available via Qt headers
 #include "Document.h"
 #include "../kernel/BRepModel.h"
 #include <TopoDS_Shape.hxx>
@@ -31,11 +33,15 @@ void AddExtrudeCommand::execute(Document& doc)
 
 void AddExtrudeCommand::undo(Document& doc)
 {
-    // Remove the feature from the timeline and the body from BRepModel
+    fprintf(stderr, "UNDO Extrude: featureId=%s bodyId=%s timeline=%zu bodies=%zu\n",
+             m_featureId.c_str(), m_bodyId.c_str(),
+             doc.timeline().count(), doc.brepModel().bodyIds().size());
     doc.timeline().remove(m_featureId);
     doc.brepModel().removeBody(m_bodyId);
     doc.recompute();
     doc.setModified(true);
+    fprintf(stderr, "UNDO DONE: timeline=%zu bodies=%zu\n",
+             doc.timeline().count(), doc.brepModel().bodyIds().size());
 }
 
 // ── AddRevolveCommand ─────────────────────────────────────────────────────────
