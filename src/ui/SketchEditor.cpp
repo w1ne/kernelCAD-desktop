@@ -2007,6 +2007,12 @@ void SketchEditor::finalizeRectangle()
     std::string lt = m_sketch->addLine(p2, p3);  // top
     std::string ll = m_sketch->addLine(p3, p0);  // left
 
+    // Record for undo (all 4 lines — undo removes them in reverse order)
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, lb, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, lr, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, lt, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, ll, ""});
+
     m_sketch->solve();
 
     // Auto-apply H/V constraints to rectangle edges
@@ -2014,14 +2020,6 @@ void SketchEditor::finalizeRectangle()
     autoConstrainLastEntity(lr);
     autoConstrainLastEntity(lt);
     autoConstrainLastEntity(ll);
-
-    // Auto-dimension: width (bottom edge) and height (right edge)
-    {
-        double width  = std::abs(x2 - x1);
-        double height = std::abs(y2 - y1);
-        m_sketch->addConstraint(sketch::ConstraintType::Distance, {p0, p1}, width);
-        m_sketch->addConstraint(sketch::ConstraintType::Distance, {p1, p2}, height);
-    }
 
     if (m_autoConstrain)
         m_sketch->autoConstrain();
@@ -2044,6 +2042,8 @@ void SketchEditor::finalizeCircle()
     }
 
     std::string circleId = m_sketch->addCircle(cx, cy, radius);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, circleId, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, circleId, ""});
     m_sketch->solve();
 
     // Auto-dimension: add a Radius constraint showing the circle's radius
@@ -2073,7 +2073,8 @@ void SketchEditor::finalizeArc()
     double startAngle = std::atan2(dy1, dx1);
     double endAngle = std::atan2(m_currentY - cy, m_currentX - cx);
 
-    m_sketch->addArc(cx, cy, radius, startAngle, endAngle);
+    auto arcId = m_sketch->addArc(cx, cy, radius, startAngle, endAngle);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, arcId, ""});
     m_sketch->solve();
 
     if (m_autoConstrain)
@@ -2092,7 +2093,8 @@ void SketchEditor::finalizeSpline()
         return;
     }
 
-    m_sketch->addSpline(m_splinePoints);
+    auto splineId = m_sketch->addSpline(m_splinePoints);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, splineId, ""});
     m_sketch->solve();
 
     if (m_autoConstrain)
@@ -2119,7 +2121,8 @@ void SketchEditor::finalizeEllipse()
     double rotation = std::atan2(dy, dx);
     double minorR = majorR * 0.5;  // default aspect ratio; user can edit after
 
-    m_sketch->addEllipse(cx, cy, majorR, minorR, rotation);
+    auto ellipseId = m_sketch->addEllipse(cx, cy, majorR, minorR, rotation);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, ellipseId, ""});
     m_sketch->solve();
 
     if (m_autoConstrain)
@@ -2164,17 +2167,17 @@ void SketchEditor::finalizePolygon()
         lineIds.push_back(m_sketch->addLine(ptIds[i], ptIds[next], construction));
     }
 
-    // Add coincident constraints at each vertex to close the polygon
-    // (already closed by sharing point IDs)
+    // Record all polygon lines for undo
+    for (const auto& lid : lineIds)
+        m_sketchUndoStack.push_back({SketchAction::AddEntity, lid, ""});
 
     m_sketch->solve();
 
-    // Auto-apply H/V constraints to nearly-aligned polygon edges
-    for (const auto& lid : lineIds)
-        autoConstrainLastEntity(lid);
-
-    if (m_autoConstrain)
+    if (m_autoConstrain) {
+        for (const auto& lid : lineIds)
+            autoConstrainLastEntity(lid);
         m_sketch->autoConstrain();
+    }
 
     m_drawingInProgress = false;
     emit sketchChanged();
@@ -2218,17 +2221,22 @@ void SketchEditor::finalizeSlot()
     // Two semicircular arcs at each end
     std::string c1 = m_sketch->addPoint(x1, y1);  // center of arc 1
     std::string c2 = m_sketch->addPoint(x2, y2);  // center of arc 2
-    m_sketch->addArc(c1, p4, p1, halfWidth, construction);
-    m_sketch->addArc(c2, p2, p3, halfWidth, construction);
+    auto arc1Id = m_sketch->addArc(c1, p4, p1, halfWidth, construction);
+    auto arc2Id = m_sketch->addArc(c2, p2, p3, halfWidth, construction);
+
+    // Record all slot entities for undo
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, sl1, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, sl2, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, arc1Id, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, arc2Id, ""});
 
     m_sketch->solve();
 
-    // Auto-apply H/V constraints to slot lines
-    autoConstrainLastEntity(sl1);
-    autoConstrainLastEntity(sl2);
-
-    if (m_autoConstrain)
+    if (m_autoConstrain) {
+        autoConstrainLastEntity(sl1);
+        autoConstrainLastEntity(sl2);
         m_sketch->autoConstrain();
+    }
 
     m_drawingInProgress = false;
     m_slotClickCount = 0;
@@ -2273,7 +2281,8 @@ void SketchEditor::finalizeCircle3Point()
         return;
     }
 
-    m_sketch->addCircle(cx, cy, r);
+    auto circ3Id = m_sketch->addCircle(cx, cy, r);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, circ3Id, ""});
     m_sketch->solve();
 
     if (m_autoConstrain)
@@ -2333,7 +2342,8 @@ void SketchEditor::finalizeArc3Point()
         endAngle = ea;
     }
 
-    m_sketch->addArc(cx, cy, r, startAngle, endAngle);
+    auto arc3Id = m_sketch->addArc(cx, cy, r, startAngle, endAngle);
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, arc3Id, ""});
     m_sketch->solve();
 
     if (m_autoConstrain)
@@ -2370,16 +2380,20 @@ void SketchEditor::finalizeRectangleCenter()
     std::string rcl2 = m_sketch->addLine(p2, p3, construction);
     std::string rcl3 = m_sketch->addLine(p3, p0, construction);
 
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, rcl0, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, rcl1, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, rcl2, ""});
+    m_sketchUndoStack.push_back({SketchAction::AddEntity, rcl3, ""});
+
     m_sketch->solve();
 
-    // Auto-apply H/V constraints to center-rectangle edges
-    autoConstrainLastEntity(rcl0);
-    autoConstrainLastEntity(rcl1);
-    autoConstrainLastEntity(rcl2);
-    autoConstrainLastEntity(rcl3);
-
-    if (m_autoConstrain)
+    if (m_autoConstrain) {
+        autoConstrainLastEntity(rcl0);
+        autoConstrainLastEntity(rcl1);
+        autoConstrainLastEntity(rcl2);
+        autoConstrainLastEntity(rcl3);
         m_sketch->autoConstrain();
+    }
 
     m_drawingInProgress = false;
     emit sketchChanged();

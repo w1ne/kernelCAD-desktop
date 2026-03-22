@@ -108,27 +108,6 @@ signals:
     void finishSketchClicked();
 
 private:
-    void buildExtrudeForm(const QString& featureId, const features::ExtrudeFeature* feat);
-    void buildRevolveForm(const QString& featureId, const features::RevolveFeature* feat);
-    void buildFilletForm(const QString& featureId, const features::FilletFeature* feat);
-    void buildChamferForm(const QString& featureId, const features::ChamferFeature* feat);
-    void buildSketchForm(const QString& featureId, const features::SketchFeature* feat);
-    void buildRectangularPatternForm(const QString& featureId, const features::RectangularPatternFeature* feat);
-    void buildShellForm(const QString& featureId, const features::ShellFeature* feat);
-    void buildSweepForm(const QString& featureId, const features::SweepFeature* feat);
-    void buildLoftForm(const QString& featureId, const features::LoftFeature* feat);
-    void buildHoleForm(const QString& featureId, const features::HoleFeature* feat);
-    void buildMirrorForm(const QString& featureId, const features::MirrorFeature* feat);
-    void buildCircularPatternForm(const QString& featureId, const features::CircularPatternFeature* feat);
-    void buildMoveForm(const QString& featureId, const features::MoveFeature* feat);
-    void buildDraftForm(const QString& featureId, const features::DraftFeature* feat);
-    void buildThickenForm(const QString& featureId, const features::ThickenFeature* feat);
-    void buildThreadForm(const QString& featureId, const features::ThreadFeature* feat);
-    void buildScaleForm(const QString& featureId, const features::ScaleFeature* feat);
-    void buildCombineForm(const QString& featureId, const features::CombineFeature* feat);
-    void buildSplitBodyForm(const QString& featureId, const features::SplitBodyFeature* feat);
-    void buildOffsetFacesForm(const QString& featureId, const features::OffsetFacesFeature* feat);
-    void buildGenericForm(const QString& featureId, const features::Feature* feat);
     void clearFormWidgets();
     void setHeaderText(const QString& featureName, const QString& featureType);
 

@@ -52,3 +52,16 @@ target_include_directories(test_sketch_buttons PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_sketch_buttons PRIVATE
   kernelcad_compiler_options Qt6::Core Qt6::Test Qt6::Widgets)
 add_test(NAME SketchButtons COMMAND test_sketch_buttons)
+
+# ── OCCTKernel tests ───────────────────────────────────────────────────────
+add_executable(test_kernel
+  test_OCCTKernel.cpp
+  ${CMAKE_SOURCE_DIR}/src/kernel/OCCTKernel.cpp
+  ${CMAKE_SOURCE_DIR}/src/kernel/StableReference.cpp
+)
+target_include_directories(test_kernel PRIVATE ${CMAKE_SOURCE_DIR}/src ${OpenCASCADE_INCLUDE_DIR})
+target_link_libraries(test_kernel PRIVATE
+  kernelcad_compiler_options Qt6::Core Qt6::Test
+  TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
+  TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing)
+add_test(NAME OCCTKernel COMMAND test_kernel)

@@ -79,9 +79,11 @@ add_executable(kernelCAD
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp
   ui/IconFactory.cpp
+  ui/IconDrawFunctions.cpp
   ui/ParameterTablePanel.cpp
   ui/PreferencesDialog.cpp
   ui/DrawingView.cpp
+  ui/PropertyFormFactory.cpp
 )
 
 target_include_directories(kernelCAD PRIVATE

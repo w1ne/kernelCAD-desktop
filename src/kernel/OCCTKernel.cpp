@@ -86,8 +86,8 @@ namespace kernel {
 
 struct OCCTKernel::Impl {};
 
-OCCTKernel::OCCTKernel() : m_impl(new Impl) {}
-OCCTKernel::~OCCTKernel() { delete m_impl; }
+OCCTKernel::OCCTKernel() : m_impl(std::make_unique<Impl>()) {}
+OCCTKernel::~OCCTKernel() = default;
 
 TopoDS_Shape OCCTKernel::makeBox(double dx, double dy, double dz)
 {

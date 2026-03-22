@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <memory>
 #include <TopoDS_Shape.hxx>
 
 namespace kernel {
@@ -290,7 +291,7 @@ public:
 
 private:
     struct Impl;
-    Impl* m_impl = nullptr;
+    std::unique_ptr<Impl> m_impl;
 };
 
 } // namespace kernel

@@ -9,8 +9,8 @@
 #include "CommandHistory.h"
 #include "DependencyGraph.h"
 #include "Component.h"
-#include "../kernel/OCCTKernel.h"
-#include "../kernel/BRepModel.h"
+// Forward declarations — full headers in Document.cpp
+namespace kernel { class OCCTKernel; class BRepModel; }
 #include "../kernel/Appearance.h"
 #include <TopoDS_Shape.hxx>
 #include "../features/ExtrudeFeature.h"

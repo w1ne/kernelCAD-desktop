@@ -1,5 +1,7 @@
 #include "ScriptEngine.h"
 #include "../document/Document.h"
+#include "../kernel/OCCTKernel.h"
+#include "../kernel/BRepModel.h"
 #include "../document/JsonReader.h"
 #include "../document/JsonWriter.h"
 #include "../sketch/SketchConstraint.h"

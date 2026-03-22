@@ -1,5 +1,6 @@
 #include "InteractiveCommands.h"
 #include "Document.h"
+#include "../kernel/BRepModel.h"
 #include <sstream>
 
 namespace document {

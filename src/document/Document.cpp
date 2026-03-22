@@ -1,4 +1,6 @@
 #include "Document.h"
+#include "../kernel/OCCTKernel.h"
+#include "../kernel/BRepModel.h"
 #include "Serializer.h"
 #include "../kernel/StableReference.h"
 #include <TopoDS_Shape.hxx>
