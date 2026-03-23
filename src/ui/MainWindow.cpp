@@ -691,6 +691,8 @@ void MainWindow::setupToolBar()
 
         layout->addStretch();
         m_sketchTabIndex = m_ribbon->addTab(tab, tr("SKETCH"));
+        // Hide SKETCH tab by default — only shown during sketch editing (like Fusion 360)
+        m_ribbon->setTabVisible(m_sketchTabIndex, false);
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -2731,8 +2733,11 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     if (m_deleteAction)   m_deleteAction->setEnabled(false);
 
     showSketchToolBar(true);
-    // Auto-switch ribbon to SKETCH tab
-    if (m_ribbon) m_ribbon->setCurrentIndex(m_sketchTabIndex);
+    // Show SKETCH tab and switch to it
+    if (m_ribbon) {
+        m_ribbon->setTabVisible(m_sketchTabIndex, true);
+        m_ribbon->setCurrentIndex(m_sketchTabIndex);
+    }
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  A:Arc  D:Dim  T:Trim  X:Construction  Esc:Finish"));
 
@@ -2759,8 +2764,11 @@ void MainWindow::onSketchEditingFinished()
 
     showSketchToolBar(false);
     hideConfirmBar();
-    // Auto-switch ribbon back to SOLID tab
-    if (m_ribbon) m_ribbon->setCurrentIndex(m_solidTabIndex);
+    // Hide SKETCH tab and switch back to SOLID tab
+    if (m_ribbon) {
+        m_ribbon->setTabVisible(m_sketchTabIndex, false);
+        m_ribbon->setCurrentIndex(m_solidTabIndex);
+    }
 
     // Re-enable feature shortcuts that were disabled during sketch editing
     if (m_extrudeAction)  m_extrudeAction->setEnabled(true);

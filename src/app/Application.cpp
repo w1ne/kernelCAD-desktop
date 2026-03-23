@@ -47,12 +47,14 @@ void Application::setupDarkTheme()
 
         QToolTip { color: #e0e0e0; background-color: #2a2a2a; border: 1px solid #3a3a3a;
                    padding: 4px 6px; font-size: 11px; }
-        QMenuBar { background-color: #2d2d2d; color: #ccc; border: none; }
-        QMenuBar::item { padding: 5px 10px; }
+        QMenuBar { background-color: #2d2d2d; color: #e0e0e0; border: none; }
+        QMenuBar::item { padding: 5px 10px; color: #e0e0e0; background: transparent; }
         QMenuBar::item:selected { background-color: #094771; color: white; }
-        QMenu { background: #252526; border: 1px solid #3a3a3a; padding: 4px 0; }
-        QMenu::item { padding: 6px 30px 6px 20px; color: #ccc; }
-        QMenu::item:selected { background: #094771; color: white; }
+        QMenuBar::item:!selected { color: #e0e0e0; }
+        QMenu { background-color: #252526; border: 1px solid #3a3a3a; padding: 4px 0; }
+        QMenu::item { padding: 6px 30px 6px 20px; color: #e0e0e0; background: transparent; }
+        QMenu::item:selected { background-color: #094771; color: white; }
+        QMenu::item:disabled { color: #666666; }
         QMenu::separator { height: 1px; background: #3a3a3a; margin: 4px 10px; }
 
         /* ── Default toolbar (sketch bar, etc.) ─────────────────────── */
