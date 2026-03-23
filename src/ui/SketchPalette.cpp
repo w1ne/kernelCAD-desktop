@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QPalette>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
 #include <QEvent>
@@ -51,9 +52,19 @@ void SketchPalette::buildUI()
     m_rootLayout->setContentsMargins(12, 10, 12, 12);
     m_rootLayout->setSpacing(6);
 
+    // Helper to force white/light text on any widget
+    auto setLightText = [](QWidget* w, const QColor& color = QColor(204, 204, 204)) {
+        QPalette pal = w->palette();
+        pal.setColor(QPalette::WindowText, color);
+        pal.setColor(QPalette::Text, color);
+        pal.setColor(QPalette::ButtonText, color);
+        w->setPalette(pal);
+    };
+
     // ── Title ─────────────────────────────────────────────────────────────
     auto* titleLabel = new QLabel(tr("SKETCH PALETTE"), this);
     titleLabel->setObjectName("paletteTitle");
+    setLightText(titleLabel, QColor(255, 255, 255));
     m_rootLayout->addWidget(titleLabel);
 
     // Separator
@@ -66,14 +77,17 @@ void SketchPalette::buildUI()
     // ── Options section ───────────────────────────────────────────────────
     auto* optHeader = new QLabel(tr("Options"), this);
     optHeader->setObjectName("sectionHeader");
+    setLightText(optHeader, QColor(170, 170, 170));
     m_rootLayout->addWidget(optHeader);
 
     m_snapToGrid = new QCheckBox(tr("Snap to Grid"), this);
     m_snapToGrid->setChecked(true);
+    setLightText(m_snapToGrid);
     m_rootLayout->addWidget(m_snapToGrid);
 
     m_showInference = new QCheckBox(tr("Show Inference Lines"), this);
     m_showInference->setChecked(true);
+    setLightText(m_showInference);
     m_rootLayout->addWidget(m_showInference);
 
     // Separator
@@ -86,22 +100,27 @@ void SketchPalette::buildUI()
     // ── Display section ───────────────────────────────────────────────────
     auto* dispHeader = new QLabel(tr("Display"), this);
     dispHeader->setObjectName("sectionHeader");
+    setLightText(dispHeader, QColor(170, 170, 170));
     m_rootLayout->addWidget(dispHeader);
 
     m_showPoints = new QCheckBox(tr("Show Points"), this);
     m_showPoints->setChecked(true);
+    setLightText(m_showPoints);
     m_rootLayout->addWidget(m_showPoints);
 
     m_showDimensions = new QCheckBox(tr("Show Dimensions"), this);
     m_showDimensions->setChecked(true);
+    setLightText(m_showDimensions);
     m_rootLayout->addWidget(m_showDimensions);
 
     m_showConstraints = new QCheckBox(tr("Show Constraints"), this);
     m_showConstraints->setChecked(true);
+    setLightText(m_showConstraints);
     m_rootLayout->addWidget(m_showConstraints);
 
     m_showConstruction = new QCheckBox(tr("Show Construction"), this);
     m_showConstruction->setChecked(true);
+    setLightText(m_showConstruction);
     m_rootLayout->addWidget(m_showConstruction);
 
     // Separator
@@ -114,17 +133,20 @@ void SketchPalette::buildUI()
     // ── Sketch Info section ───────────────────────────────────────────────
     auto* infoHeader = new QLabel(tr("Sketch Info"), this);
     infoHeader->setObjectName("sectionHeader");
+    setLightText(infoHeader, QColor(170, 170, 170));
     m_rootLayout->addWidget(infoHeader);
 
-    auto addStatRow = [this](const QString& label) -> QLabel* {
+    auto addStatRow = [this, &setLightText](const QString& label) -> QLabel* {
         auto* row = new QWidget(this);
         auto* hl = new QHBoxLayout(row);
         hl->setContentsMargins(0, 0, 0, 0);
         hl->setSpacing(4);
         auto* nameLabel = new QLabel(label, row);
         nameLabel->setObjectName("statName");
+        setLightText(nameLabel, QColor(153, 153, 153));
         auto* valueLabel = new QLabel("0", row);
         valueLabel->setObjectName("statValue");
+        setLightText(valueLabel, QColor(204, 204, 204));
         valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         hl->addWidget(nameLabel);
         hl->addStretch();
@@ -149,6 +171,10 @@ void SketchPalette::buildUI()
     m_finishButton = new QPushButton(tr("Finish Sketch"), this);
     m_finishButton->setObjectName("finishButton");
     m_finishButton->setFixedHeight(32);
+    m_finishButton->setStyleSheet(
+        "QPushButton { background-color: #5294e2; color: white; border: none; "
+        "border-radius: 4px; font-weight: bold; font-size: 12px; }"
+        "QPushButton:hover { background-color: #6aa5ef; }");
     m_rootLayout->addWidget(m_finishButton);
 
     // ── Signal connections ────────────────────────────────────────────────
@@ -183,64 +209,23 @@ void SketchPalette::buildUI()
 
 void SketchPalette::applyStyleSheet()
 {
+    // Use inline styles on the widget itself — avoid CSS selectors that
+    // get overridden by GTK platform theme on some Linux distributions.
     setStyleSheet(
-        "QWidget#SketchPalette {"
-        "  background-color: rgba(42, 42, 42, 240);"
-        "  border: 1px solid #3a3a3a;"
-        "  border-radius: 6px;"
-        "}"
-        "QLabel {"
-        "  color: #cccccc;"
-        "  font-size: 11px;"
-        "  background: transparent;"
-        "}"
-        "QLabel#paletteTitle {"
-        "  color: #ffffff;"
-        "  font-size: 12px;"
-        "  font-weight: bold;"
-        "}"
-        "QLabel#sectionHeader {"
-        "  color: #aaaaaa;"
-        "  font-size: 11px;"
-        "  font-weight: bold;"
-        "}"
-        "QLabel#statName {"
-        "  color: #999999;"
-        "}"
-        "QLabel#statValue {"
-        "  color: #cccccc;"
-        "}"
-        "QCheckBox {"
-        "  color: #cccccc;"
-        "  spacing: 6px;"
-        "  font-size: 11px;"
-        "}"
-        "QCheckBox::indicator {"
-        "  width: 14px; height: 14px;"
-        "  border: 1px solid #555;"
-        "  border-radius: 2px;"
-        "  background-color: #333;"
-        "}"
-        "QCheckBox::indicator:checked {"
-        "  background-color: #5294e2;"
-        "  border-color: #5294e2;"
-        "}"
-        "QPushButton#finishButton {"
-        "  background-color: #5294e2;"
-        "  color: #ffffff;"
-        "  border: none;"
-        "  border-radius: 4px;"
-        "  font-weight: bold;"
-        "  font-size: 12px;"
-        "  padding: 8px;"
-        "}"
-        "QPushButton#finishButton:hover {"
-        "  background-color: #6aa5ef;"
-        "}"
-        "QFrame {"
-        "  max-height: 1px;"
-        "}"
+        "background-color: rgba(42, 42, 42, 240);"
+        "border: 1px solid #3a3a3a;"
+        "border-radius: 6px;"
     );
+
+    // Force all child widgets to use light text via palette
+    QPalette widgetPal = palette();
+    widgetPal.setColor(QPalette::WindowText, QColor(204, 204, 204));
+    widgetPal.setColor(QPalette::Text, QColor(204, 204, 204));
+    widgetPal.setColor(QPalette::ButtonText, QColor(204, 204, 204));
+    widgetPal.setColor(QPalette::Window, QColor(42, 42, 42));
+    widgetPal.setColor(QPalette::Base, QColor(51, 51, 51));
+    widgetPal.setColor(QPalette::Button, QColor(51, 51, 51));
+    setPalette(widgetPal);
 }
 
 // =============================================================================
