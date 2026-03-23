@@ -386,8 +386,11 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(48, 52);
-        btn->setFont(QFont(btn->font().family(), 7));
+        btn->setFixedSize(48, 56);
+        btn->setFont(QFont(btn->font().family(), 8));
+        QPalette btnPal = btn->palette();
+        btnPal.setColor(QPalette::ButtonText, QColor(200, 200, 200));
+        btn->setPalette(btnPal);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -460,7 +463,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(96);
+    m_ribbon->setFixedHeight(100);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
