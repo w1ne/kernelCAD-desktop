@@ -685,6 +685,10 @@ void Viewport3D::paintGL()
         drawSketchSnapAndDimensionOverlay();
     }
 
+    // -- Welcome overlay (shown when no bodies are loaded) ────────────────
+    if (!m_meshLoaded && !m_sketchModeActive)
+        drawWelcomeOverlay();
+
     // -- ViewCube overlay (top-right corner) ------------------------------
     drawViewCubeOverlay();
 
@@ -1690,6 +1694,19 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
         }
         // Even if not consumed (hover), trigger repaint for hover feedback
         update();
+    }
+
+    // Track ViewCube hover (only when no button pressed to avoid interfering with orbit/pan)
+    if (m_activeButton == Qt::NoButton) {
+        int hovered = hitTestViewCubeFace(event->pos());
+        if (hovered != m_viewCubeHoveredFace) {
+            m_viewCubeHoveredFace = hovered;
+            if (hovered >= 0)
+                setCursor(Qt::PointingHandCursor);
+            else
+                unsetCursor();
+            update();
+        }
     }
 
     const QPoint pos = event->pos();
@@ -3694,6 +3711,46 @@ void Viewport3D::drawSketchConstraintOverlay()
 }
 
 // =============================================================================
+// Welcome overlay (shown when viewport is empty)
+// =============================================================================
+
+void Viewport3D::drawWelcomeOverlay()
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    const int w = width();
+    const int h = height();
+
+    // Title
+    QFont titleFont = painter.font();
+    titleFont.setPixelSize(22);
+    titleFont.setWeight(QFont::Light);
+    painter.setFont(titleFont);
+    painter.setPen(QColor(180, 180, 180));
+    painter.drawText(QRect(0, h / 2 - 60, w, 30), Qt::AlignCenter, "kernelCAD");
+
+    // Subtitle with shortcuts
+    QFont subFont = painter.font();
+    subFont.setPixelSize(13);
+    subFont.setWeight(QFont::Normal);
+    painter.setFont(subFont);
+    painter.setPen(QColor(120, 120, 120));
+    painter.drawText(QRect(0, h / 2 - 25, w, 20), Qt::AlignCenter,
+                     "Press S to create a sketch  |  Ctrl+O to open a file  |  Ctrl+N for new document");
+
+    // Keyboard shortcut hints
+    QFont hintFont = subFont;
+    hintFont.setPixelSize(11);
+    painter.setFont(hintFont);
+    painter.setPen(QColor(100, 100, 100));
+    painter.drawText(QRect(0, h / 2 + 10, w, 16), Qt::AlignCenter,
+                     "Click an origin plane to start sketching");
+
+    painter.end();
+}
+
 // ViewCube overlay
 // =============================================================================
 
@@ -3772,9 +3829,13 @@ void Viewport3D::drawViewCubeOverlay()
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // Semi-transparent background circle behind the cube
+    // Drop shadow behind the cube
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(40, 40, 40, 100));
+    painter.setBrush(QColor(0, 0, 0, 40));
+    painter.drawEllipse(QPointF(cx + 2, cy + 2), kViewCubeSize * 0.54, kViewCubeSize * 0.54);
+
+    // Semi-transparent background circle behind the cube
+    painter.setBrush(QColor(40, 40, 40, 120));
     painter.drawEllipse(QPointF(cx, cy), kViewCubeSize * 0.52, kViewCubeSize * 0.52);
 
     // Draw faces back-to-front
@@ -3786,9 +3847,15 @@ void Viewport3D::drawViewCubeOverlay()
             poly << p[face.v[j]];
 
         // Face fill: slightly transparent gray, brighter for front-facing
+        bool isHovered = (order[fi].idx == m_viewCubeHoveredFace && order[fi].avgZ > 0);
         int alpha = (order[fi].avgZ > 0) ? 180 : 100;
-        painter.setBrush(QColor(70, 75, 80, alpha));
-        painter.setPen(QPen(QColor(180, 180, 180, 200), 1.0));
+        if (isHovered) {
+            painter.setBrush(QColor(0, 120, 212, 200));
+            painter.setPen(QPen(QColor(220, 220, 220, 230), 1.0));
+        } else {
+            painter.setBrush(QColor(70, 75, 80, alpha));
+            painter.setPen(QPen(QColor(180, 180, 180, 200), 1.0));
+        }
         painter.drawPolygon(poly);
 
         // Draw label only on front-facing faces (positive average Z = closer)
@@ -3798,9 +3865,9 @@ void Viewport3D::drawViewCubeOverlay()
                 center += p[face.v[j]];
             center /= 4.0;
 
-            painter.setPen(QColor(220, 220, 220));
+            painter.setPen(isHovered ? QColor(255, 255, 255) : QColor(220, 220, 220));
             QFont f = painter.font();
-            f.setPixelSize(10);
+            f.setPixelSize(isHovered ? 11 : 10);
             f.setBold(true);
             painter.setFont(f);
             painter.drawText(QRectF(center.x() - 30, center.y() - 8, 60, 16),
@@ -3919,6 +3986,62 @@ bool Viewport3D::handleViewCubeClick(const QPoint& pos)
     }
 
     return false;
+}
+
+int Viewport3D::hitTestViewCubeFace(const QPoint& pos) const
+{
+    const float cx = width() - kViewCubeMargin - kViewCubeSize * 0.5f;
+    const float cy = kViewCubeMargin + kViewCubeSize * 0.5f;
+    const float ddx = pos.x() - cx;
+    const float ddy = pos.y() - cy;
+    const float radius = kViewCubeSize * 0.55f;
+    if (ddx * ddx + ddy * ddy > radius * radius)
+        return -1;
+
+    QMatrix4x4 viewMat;
+    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
+    QMatrix4x4 viewRot;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            viewRot(r, c) = viewMat(r, c);
+
+    const float hs = kViewCubeSize * 0.35f;
+    const QVector3D corners[8] = {
+        {-hs, -hs, -hs}, { hs, -hs, -hs}, { hs,  hs, -hs}, {-hs,  hs, -hs},
+        {-hs, -hs,  hs}, { hs, -hs,  hs}, { hs,  hs,  hs}, {-hs,  hs,  hs}
+    };
+    QPointF pt2d[8];
+    float ptz[8];
+    for (int i = 0; i < 8; ++i) {
+        QVector3D rr = viewRot.map(corners[i]);
+        pt2d[i] = QPointF(cx + rr.x(), cy - rr.y());
+        ptz[i] = rr.z();
+    }
+
+    const int faceVerts[6][4] = {
+        {4,5,6,7}, {1,0,3,2}, {5,1,2,6}, {0,4,7,3}, {7,6,2,3}, {0,1,5,4}
+    };
+
+    struct FO { int idx; float avgZ; };
+    FO order[6];
+    for (int i = 0; i < 6; ++i) {
+        float z = 0;
+        for (int j = 0; j < 4; ++j) z += ptz[faceVerts[i][j]];
+        order[i] = {i, z * 0.25f};
+    }
+    std::sort(std::begin(order), std::end(order),
+              [](const FO& a, const FO& b) { return a.avgZ > b.avgZ; });
+
+    QPointF clickPt(pos);
+    for (int fi = 0; fi < 6; ++fi) {
+        if (order[fi].avgZ <= 0) break;
+        QPolygonF poly;
+        for (int j = 0; j < 4; ++j)
+            poly << pt2d[faceVerts[order[fi].idx][j]];
+        if (poly.containsPoint(clickPt, Qt::OddEvenFill))
+            return order[fi].idx;
+    }
+    return -1;
 }
 
 // =============================================================================

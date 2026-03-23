@@ -133,6 +133,7 @@ add_executable(test_workflows
   ${CMAKE_SOURCE_DIR}/src/features/SplitBodyFeature.cpp
   ${CMAKE_SOURCE_DIR}/src/features/SplitFaceFeature.cpp
   ${CMAKE_SOURCE_DIR}/src/features/StitchFeature.cpp
+  ${CMAKE_SOURCE_DIR}/src/features/UnstitchFeature.cpp
   ${CMAKE_SOURCE_DIR}/src/features/SweepFeature.cpp
   ${CMAKE_SOURCE_DIR}/src/features/ThickenFeature.cpp
   ${CMAKE_SOURCE_DIR}/src/features/ThreadFeature.cpp

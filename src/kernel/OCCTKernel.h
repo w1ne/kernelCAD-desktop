@@ -165,6 +165,10 @@ public:
 
     // ── Stitch / Split Face / Patch ops ─────────────────────────────────
     TopoDS_Shape stitch(const std::vector<TopoDS_Shape>& shapes, double tolerance = 1e-3);
+
+    /// Unstitch (separate) a compound/solid into individual face shells.
+    /// Each face becomes a separate entry in the returned compound.
+    TopoDS_Shape unstitch(const TopoDS_Shape& shape);
     TopoDS_Shape splitFace(const TopoDS_Shape& shape, int faceIndex,
                            const TopoDS_Shape& splittingWire);
     TopoDS_Shape patch(const TopoDS_Shape& boundaryWire);

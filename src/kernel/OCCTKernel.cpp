@@ -168,6 +168,21 @@ TopoDS_Shape OCCTKernel::stitch(const std::vector<TopoDS_Shape>& shapes, double 
     OCCT_SAFE_END("Stitch failed. Check that the shapes share common edges")
 }
 
+TopoDS_Shape OCCTKernel::unstitch(const TopoDS_Shape& shape)
+{
+    OCCT_SAFE_BEGIN
+    TopoDS_Compound compound;
+    BRep_Builder builder;
+    builder.MakeCompound(compound);
+
+    TopExp_Explorer faceEx(shape, TopAbs_FACE);
+    for (; faceEx.More(); faceEx.Next()) {
+        builder.Add(compound, faceEx.Current());
+    }
+    return compound;
+    OCCT_SAFE_END("Unstitch failed")
+}
+
 TopoDS_Shape OCCTKernel::splitFace(const TopoDS_Shape& shape, int faceIndex,
                                     const TopoDS_Shape& splittingWire)
 {

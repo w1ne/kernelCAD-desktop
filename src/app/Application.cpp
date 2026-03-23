@@ -45,8 +45,8 @@ void Application::setupDarkTheme()
         /* ── Smoother fonts ────────────────────────────────────────── */
         * { font-family: "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif; }
 
-        QToolTip { color: #e0e0e0; background-color: #2a2a2a; border: 1px solid #3a3a3a;
-                   padding: 4px 6px; font-size: 11px; }
+        QToolTip { color: #e0e0e0; background-color: #1e1e1e; border: 1px solid #444;
+                   padding: 6px 10px; font-size: 12px; border-radius: 4px; }
         QMenuBar { background-color: #2d2d2d; color: #e0e0e0; border: none; }
         QMenuBar::item { padding: 5px 10px; color: #e0e0e0; background: transparent; }
         QMenuBar::item:selected { background-color: #094771; color: white; }
@@ -121,7 +121,15 @@ void Application::setupDarkTheme()
             font-size: 11px; font-weight: 600; color: #999;
             border-bottom: 1px solid #3a3a3a;
         }
-        QDockWidget::close-button, QDockWidget::float-button { icon-size: 0px; }
+        QDockWidget::close-button, QDockWidget::float-button {
+            border: none; background: transparent; padding: 2px;
+            icon-size: 12px; subcontrol-position: top right;
+        }
+        QDockWidget::close-button:hover, QDockWidget::float-button:hover {
+            background: rgba(255, 255, 255, 0.1); border-radius: 3px;
+        }
+        QDockWidget::close-button { subcontrol-position: top right; right: 4px; }
+        QDockWidget::float-button { subcontrol-position: top right; right: 20px; }
 
         /* ── Status bar (colored accent) ───────────────────────────── */
         QStatusBar { background-color: #007acc; color: white; font-size: 11px; }

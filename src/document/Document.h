@@ -41,6 +41,7 @@ namespace kernel { class OCCTKernel; class BRepModel; }
 #include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
 #include "../features/StitchFeature.h"
+#include "../features/UnstitchFeature.h"
 #include "../features/SplitFaceFeature.h"
 #include "../features/PatchFeature.h"
 #include "../features/RibFeature.h"
@@ -181,6 +182,9 @@ public:
 
     /// Stitch shells/faces into a solid. Returns the body ID.
     std::string addStitch(features::StitchParams params);
+
+    /// Unstitch (separate) a solid into individual face shells. Returns the body ID.
+    std::string addUnstitch(features::UnstitchParams params);
 
     /// Split a face on a body with a wire. Returns the body ID.
     std::string addSplitFace(features::SplitFaceParams params);

@@ -56,6 +56,7 @@ add_executable(kernelCAD
   features/Joint.cpp
   features/SketchFeature.cpp
   features/StitchFeature.cpp
+  features/UnstitchFeature.cpp
   features/SplitFaceFeature.cpp
   features/PatchFeature.cpp
   features/RibFeature.cpp
@@ -180,6 +181,7 @@ add_executable(kernelcad-cli
   features/Joint.cpp
   features/SketchFeature.cpp
   features/StitchFeature.cpp
+  features/UnstitchFeature.cpp
   features/SplitFaceFeature.cpp
   features/PatchFeature.cpp
   features/RibFeature.cpp

@@ -69,6 +69,12 @@ public:
     void onNewComponent();
     void onInsertComponent();
     void onAddJoint();
+    void onAddSliderJoint();
+    void onAddCylindricalJoint();
+    void onAddPinSlotJoint();
+    void onAddBallJoint();
+    void onCheckInterference();
+    void onUnstitch();
 
     // ── Delete ──────────────────────────────────────────────────────────
     void onDeleteSelectedFeature();

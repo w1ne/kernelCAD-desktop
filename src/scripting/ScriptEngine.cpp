@@ -60,6 +60,7 @@ static std::string featureTypeStr(features::FeatureType t)
     case features::FeatureType::ConstructionAxis:   return "ConstructionAxis";
     case features::FeatureType::ConstructionPoint:  return "ConstructionPoint";
     case features::FeatureType::Stitch:             return "Stitch";
+    case features::FeatureType::Unstitch:           return "Unstitch";
     case features::FeatureType::SplitFace:          return "SplitFace";
     case features::FeatureType::Patch:              return "Patch";
     case features::FeatureType::Rib:                return "Rib";
@@ -1019,6 +1020,55 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
             std::string bodyId = doc.addWeb(p);
             return okResponse(id, [&](JsonWriter& w) {
                 w.writeString("bodyId", bodyId);
+            });
+        }
+
+        if (cmdName == "unstitch") {
+            features::UnstitchParams p;
+            p.targetBodyId = cmd.getString("targetBodyId");
+            if (p.targetBodyId.empty()) return errResponse(id, "Missing 'targetBodyId'");
+            std::string bodyId = doc.addUnstitch(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("bodyId", bodyId);
+            });
+        }
+        if (cmdName == "addJoint") {
+            features::JointParams p;
+            p.occurrenceOneId = cmd.getString("occurrenceOneId", "");
+            p.occurrenceTwoId = cmd.getString("occurrenceTwoId", "");
+            std::string typeStr = cmd.getString("type", "Rigid");
+            if (typeStr == "Revolute")        p.jointType = features::JointType::Revolute;
+            else if (typeStr == "Slider")     p.jointType = features::JointType::Slider;
+            else if (typeStr == "Cylindrical") p.jointType = features::JointType::Cylindrical;
+            else if (typeStr == "PinSlot")    p.jointType = features::JointType::PinSlot;
+            else if (typeStr == "Planar")     p.jointType = features::JointType::Planar;
+            else if (typeStr == "Ball")       p.jointType = features::JointType::Ball;
+            else                               p.jointType = features::JointType::Rigid;
+            std::string featureId = doc.addJoint(p);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("featureId", featureId);
+            });
+        }
+        if (cmdName == "checkInterference") {
+            auto& brep = doc.brepModel();
+            auto ids = brep.bodyIds();
+            if (ids.size() < 2)
+                return errResponse(id, "Need at least 2 bodies for interference check");
+            std::vector<std::pair<std::string, TopoDS_Shape>> bodies;
+            for (const auto& bid : ids)
+                bodies.emplace_back(bid, brep.getShape(bid));
+            auto results = doc.kernel().checkInterference(bodies);
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeNumber("interferenceCount", static_cast<double>(results.size()));
+                w.beginArray("interferences");
+                for (const auto& r : results) {
+                    w.beginObject();
+                    w.writeString("body1", r.body1Id);
+                    w.writeString("body2", r.body2Id);
+                    w.writeNumber("volume", r.volume);
+                    w.endObject();
+                }
+                w.endArray();
             });
         }
 

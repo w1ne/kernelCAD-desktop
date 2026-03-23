@@ -1458,6 +1458,35 @@ std::string Document::addStitch(features::StitchParams params)
     return bodyId;
 }
 
+std::string Document::addUnstitch(features::UnstitchParams params)
+{
+    std::string targetId = params.targetBodyId;
+    if (!m_brepModel->hasBody(targetId))
+        throw std::runtime_error("Unstitch: target body '" + targetId + "' not found");
+
+    TopoDS_Shape targetShape = m_brepModel->getShape(targetId);
+
+    std::ostringstream featureIdStream;
+    featureIdStream << "unstitch_" << m_nextBodyCounter;
+    std::string featureId = featureIdStream.str();
+
+    std::ostringstream bodyIdStream;
+    bodyIdStream << "body_" << m_nextBodyCounter;
+    std::string bodyId = bodyIdStream.str();
+    m_nextBodyCounter++;
+
+    auto feature = std::make_shared<features::UnstitchFeature>(featureId, std::move(params));
+    TopoDS_Shape result = feature->execute(*m_kernel, targetShape);
+    m_brepModel->addBody(bodyId, result);
+
+    m_depGraph.addNode(featureId);
+    registerBodyFeature(bodyId, featureId);
+    appendFeatureToTimeline(feature);
+
+    m_modified = true;
+    return bodyId;
+}
+
 std::string Document::addSplitFace(features::SplitFaceParams params)
 {
     std::string targetId = params.targetBodyId;

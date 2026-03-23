@@ -397,6 +397,9 @@ private:
     /// Draw a small ViewCube overlay in the top-right corner using QPainter.
     void drawViewCubeOverlay();
 
+    /// Draw a welcome message when the viewport has no bodies.
+    void drawWelcomeOverlay();
+
     /// Handle a click inside the ViewCube area. Returns true if consumed.
     bool handleViewCubeClick(const QPoint& pos);
 
@@ -405,6 +408,12 @@ private:
     // ViewCube constants
     static constexpr int kViewCubeSize   = 100; // cube area in pixels
     static constexpr int kViewCubeMargin =  10; // margin from top-right corner
+
+    /// Index of the currently hovered ViewCube face (-1 = none).
+    int m_viewCubeHoveredFace = -1;
+
+    /// Hit-test which ViewCube face the mouse is over. Returns face index or -1.
+    int hitTestViewCubeFace(const QPoint& pos) const;
 
     // ── preview mesh overlay ───────────────────────────────────────────
     QOpenGLVertexArrayObject m_previewVao;

@@ -617,6 +617,11 @@ void MainWindow::registerAllTools()
             {}, tr("Appearance"),
             [this]() { statusBar()->showMessage(tr("Appearance \u2014 not yet implemented")); }, 170, true);
 
+    regTool(reg, "emboss", "Emboss", "", "Modify", "SOLID", "",
+            IconFactory::createIcon("extrude"), tr("Emboss/Deboss \u2014 Extrude a profile into or out of a face"),
+            [this]() { m_commandController->onExtrudeSketch(); }, 180, true,
+            true, "face");
+
     // ── Pattern group ───────────────────────────────────────────────────
     regTool(reg, "mirror", "Mirror", "", "Pattern", "SOLID", "Model",
             IconFactory::createIcon("mirror"), tr("Mirror \u2014 Mirror across a plane"),
@@ -864,10 +869,32 @@ void MainWindow::registerAllTools()
             IconFactory::createIcon("insert"), tr("Insert Component \u2014 Import a .kcd file"),
             [this]() { m_commandController->onInsertComponent(); }, 30);
 
+    regTool(reg, "jointSlider", "Slider Joint", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("joint"), tr("Slider Joint \u2014 1 DOF linear motion"),
+            [this]() { m_commandController->onAddSliderJoint(); }, 40, true);
+
+    regTool(reg, "jointCylindrical", "Cylindrical Joint", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("joint"), tr("Cylindrical Joint \u2014 rotation + translation along axis"),
+            [this]() { m_commandController->onAddCylindricalJoint(); }, 50, true);
+
+    regTool(reg, "jointPinSlot", "Pin-Slot Joint", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("joint"), tr("Pin-Slot Joint \u2014 rotation + perpendicular translation"),
+            [this]() { m_commandController->onAddPinSlotJoint(); }, 60, true);
+
+    regTool(reg, "jointBall", "Ball Joint", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("joint"), tr("Ball Joint \u2014 3 DOF rotation"),
+            [this]() { m_commandController->onAddBallJoint(); }, 70, true);
+
+    // ── Assembly Modify group ───────────────────────────────────────────
+    regTool(reg, "unstitch", "Unstitch", "", "Modify", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("stitch"), tr("Unstitch \u2014 Separate a body into individual faces"),
+            [this]() { m_commandController->onUnstitch(); }, 80, true,
+            true, "body");
+
     // ── Assembly Inspect group ──────────────────────────────────────────
     regTool(reg, "checkInterference", "Interference", "", "Inspect", "ASSEMBLY", "Assembly",
             IconFactory::createIcon("interference"), tr("Check Interference"),
-            [this]() { onCheckInterference(); }, 10);
+            [this]() { m_commandController->onCheckInterference(); }, 10);
 
     // ════════════════════════════════════════════════════════════════════════
     // Non-ribbon tools (File, Edit, View -- for command palette & menus)
@@ -3375,7 +3402,8 @@ void MainWindow::setupConfirmBar()
     layout->addWidget(m_confirmCancelBtn);
 
     m_confirmBar->setStyleSheet(
-        "QWidget#ConfirmBar { background: rgba(30, 30, 30, 210); border-radius: 8px; }");
+        "QWidget#ConfirmBar { background: rgba(30, 30, 30, 230); border: 1px solid rgba(255,255,255,0.08);"
+        "  border-radius: 12px; }");
     m_confirmBar->adjustSize();
     m_confirmBar->setVisible(false);
 
@@ -3415,10 +3443,7 @@ void MainWindow::showConfirmBar(const QString& toolName)
     int vpH  = m_viewport->height();
     m_confirmBar->move((vpW - barW) / 2, vpH - barH - 20);
     m_confirmBar->raise();
-    // Floating confirm bar disabled -- keyboard hints are shown in the status
-    // bar instead (Enter/Escape).  The widget is kept alive so button
-    // connections remain valid; it simply never becomes visible.
-    // m_confirmBar->setVisible(true);
+    m_confirmBar->setVisible(true);
 }
 
 void MainWindow::hideConfirmBar()
@@ -3523,8 +3548,17 @@ void MainWindow::updateStatusBarInfo()
 
     QString projName = m_viewport->isPerspective() ? tr("Persp") : tr("Ortho");
 
+    QString filterName;
+    switch (m_selectionMgr->filter()) {
+    case SelectionFilter::Faces:  filterName = tr("Faces");  break;
+    case SelectionFilter::Edges:  filterName = tr("Edges");  break;
+    case SelectionFilter::Bodies: filterName = tr("Bodies"); break;
+    default:                      filterName = tr("All");    break;
+    }
+
     m_statusRight->setText(
-        tr("Grid: %1 | %2 | %3")
+        tr("mm | %1 | Grid: %2 | %3 | %4")
+            .arg(filterName)
             .arg(gridOn ? tr("On") : tr("Off"))
             .arg(viewModeName)
             .arg(projName));
@@ -3634,7 +3668,17 @@ void MainWindow::showMarkingMenuForContext(const QPoint& globalPos)
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
     if (obj == m_viewport) {
-        if (event->type() == QEvent::MouseButtonPress) {
+        if (event->type() == QEvent::Resize) {
+            // Reposition floating confirm bar on viewport resize
+            if (m_confirmBar && m_confirmBar->isVisible()) {
+                m_confirmBar->adjustSize();
+                int barW = m_confirmBar->width();
+                int barH = m_confirmBar->height();
+                int vpW  = m_viewport->width();
+                int vpH  = m_viewport->height();
+                m_confirmBar->move((vpW - barW) / 2, vpH - barH - 20);
+            }
+        } else if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::RightButton) {
                 m_rightClickPos = me->globalPos();

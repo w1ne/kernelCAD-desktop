@@ -29,6 +29,7 @@
 #include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
 #include "../features/StitchFeature.h"
+#include "../features/UnstitchFeature.h"
 #include "../features/SplitFaceFeature.h"
 #include "../features/PatchFeature.h"
 #include "../features/RibFeature.h"
@@ -581,6 +582,22 @@ public:
 
 private:
     features::StitchParams m_params;
+    std::string m_bodyId;
+    std::string m_featureId;
+};
+
+// ── AddUnstitchCommand ──────────────────────────────────────────────────────
+
+class AddUnstitchCommand : public Command {
+public:
+    explicit AddUnstitchCommand(features::UnstitchParams params);
+
+    std::string description() const override { return "Add Unstitch"; }
+    void execute(Document& doc) override;
+    void undo(Document& doc) override;
+
+private:
+    features::UnstitchParams m_params;
     std::string m_bodyId;
     std::string m_featureId;
 };

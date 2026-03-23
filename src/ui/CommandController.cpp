@@ -1447,6 +1447,98 @@ void CommandController::onAddJoint()
     m_mainWindow->jointCreator()->begin(features::JointType::Rigid);
 }
 
+void CommandController::onAddSliderJoint()
+{
+    if (m_mainWindow->jointCreator()->state() != JointCreator::State::Idle) {
+        m_mainWindow->jointCreator()->cancel();
+        return;
+    }
+    m_mainWindow->jointCreator()->begin(features::JointType::Slider);
+}
+
+void CommandController::onAddCylindricalJoint()
+{
+    if (m_mainWindow->jointCreator()->state() != JointCreator::State::Idle) {
+        m_mainWindow->jointCreator()->cancel();
+        return;
+    }
+    m_mainWindow->jointCreator()->begin(features::JointType::Cylindrical);
+}
+
+void CommandController::onAddPinSlotJoint()
+{
+    if (m_mainWindow->jointCreator()->state() != JointCreator::State::Idle) {
+        m_mainWindow->jointCreator()->cancel();
+        return;
+    }
+    m_mainWindow->jointCreator()->begin(features::JointType::PinSlot);
+}
+
+void CommandController::onAddBallJoint()
+{
+    if (m_mainWindow->jointCreator()->state() != JointCreator::State::Idle) {
+        m_mainWindow->jointCreator()->cancel();
+        return;
+    }
+    m_mainWindow->jointCreator()->begin(features::JointType::Ball);
+}
+
+void CommandController::onCheckInterference()
+{
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+
+    if (ids.size() < 2) {
+        m_mainWindow->statusBar()->showMessage(tr("Need at least 2 bodies for interference check"), 3000);
+        return;
+    }
+
+    std::vector<std::pair<std::string, TopoDS_Shape>> bodies;
+    for (const auto& id : ids)
+        bodies.push_back({id, brep.getShape(id)});
+
+    auto results = m_document->kernel().checkInterference(bodies);
+
+    if (results.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No interference detected"), 3000);
+    } else {
+        QString msg = tr("%1 interference(s) found:").arg(static_cast<int>(results.size()));
+        for (const auto& r : results) {
+            msg += tr("\n  %1 <-> %2: %3 mm^3")
+                .arg(QString::fromStdString(r.body1Id))
+                .arg(QString::fromStdString(r.body2Id))
+                .arg(r.volume, 0, 'f', 2);
+        }
+        QMessageBox::information(m_mainWindow, tr("Interference Check"), msg);
+    }
+}
+
+void CommandController::onUnstitch()
+{
+    if (!m_selectionMgr->hasSelection()) {
+        m_mainWindow->statusBar()->showMessage(tr("Select a body to unstitch"), 3000);
+        return;
+    }
+
+    const auto& hit = m_selectionMgr->selection().front();
+    if (hit.bodyId.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No body selected"), 3000);
+        return;
+    }
+
+    try {
+        features::UnstitchParams params;
+        params.targetBodyId = hit.bodyId;
+        auto cmd = std::make_unique<document::AddUnstitchCommand>(std::move(params));
+        m_document->executeCommand(std::move(cmd));
+        m_mainWindow->statusBar()->showMessage(tr("Body unstitched into separate faces"));
+        m_mainWindow->refreshAllPanels();
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Unstitch Failed"),
+            tr("Could not unstitch: %1").arg(e.what()));
+    }
+}
+
 // =============================================================================
 // Delete selected feature
 // =============================================================================

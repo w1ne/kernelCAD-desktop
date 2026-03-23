@@ -354,6 +354,57 @@ run_test "Recompute after error preserves geometry" \
 {"cmd":"listBodies","id":5}' \
     '"body_1"'
 
+# ── Interference Check ──────────────────────────────────────────────
+echo ""
+echo "--- Interference Check ---"
+
+run_test "Interference check with no overlap" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"createSphere","id":3,"radius":5}
+{"cmd":"checkInterference","id":4}' \
+    '"interferenceCount"'
+
+run_test "Interference check needs 2 bodies" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"checkInterference","id":3}' \
+    '"ok":false'
+
+# ── Joint Types ────────────────────────────────────────────────────
+echo ""
+echo "--- Joint Types ---"
+
+run_test "Add rigid joint" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"addJoint","id":2,"type":"Rigid"}' \
+    '"featureId"'
+
+run_test "Add slider joint" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"addJoint","id":2,"type":"Slider"}' \
+    '"featureId"'
+
+run_test "Add ball joint" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"addJoint","id":2,"type":"Ball"}' \
+    '"featureId"'
+
+# ── Unstitch ───────────────────────────────────────────────────────
+echo ""
+echo "--- Unstitch ---"
+
+run_test "Unstitch a box" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"unstitch","id":3,"targetBodyId":"body_1"}' \
+    '"bodyId"'
+
+run_test "Unstitch missing body fails" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"unstitch","id":2,"targetBodyId":"nonexistent"}' \
+    '"ok":false'
+
 # ── Summary ─────────────────────────────────────────────────────────
 echo ""
 echo "==========================================="

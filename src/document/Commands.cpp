@@ -873,6 +873,32 @@ void AddStitchCommand::undo(Document& doc)
     doc.setModified(true);
 }
 
+// ── AddUnstitchCommand ──────────────────────────────────────────────────────
+
+AddUnstitchCommand::AddUnstitchCommand(features::UnstitchParams params)
+    : m_params(std::move(params))
+{}
+
+void AddUnstitchCommand::execute(Document& doc)
+{
+    if (!m_params.targetBodyId.empty() && !doc.brepModel().hasBody(m_params.targetBodyId))
+        throw std::runtime_error("Target body '" + m_params.targetBodyId + "' not found");
+
+    m_bodyId = doc.addUnstitch(m_params);
+
+    auto& tl = doc.timeline();
+    if (tl.count() > 0)
+        m_featureId = tl.entry(tl.count() - 1).id;
+}
+
+void AddUnstitchCommand::undo(Document& doc)
+{
+    doc.timeline().remove(m_featureId);
+    doc.brepModel().removeBody(m_bodyId);
+    doc.recompute();
+    doc.setModified(true);
+}
+
 // ── AddSplitFaceCommand ─────────────────────────────────────────────────────
 
 AddSplitFaceCommand::AddSplitFaceCommand(features::SplitFaceParams params)
