@@ -371,21 +371,21 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     groupWidget->setObjectName("RibbonGroup");
     groupWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* groupLayout = new QVBoxLayout(groupWidget);
-    groupLayout->setContentsMargins(4, 4, 4, 0);
-    groupLayout->setSpacing(1);
+    groupLayout->setContentsMargins(2, 2, 2, 2);
+    groupLayout->setSpacing(2);
 
-    // Button row — icon-only, 32x32 icons in 40x40 buttons
+    // Button row — icon-only, 28x28 icons in 34x34 buttons
     auto* buttonRow = new QHBoxLayout;
-    buttonRow->setSpacing(1);
+    buttonRow->setSpacing(2);
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(32, 32));
+        btn->setIconSize(QSize(28, 28));
         btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(40, 40);
+        btn->setFixedSize(34, 34);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -395,10 +395,10 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     groupLayout->addLayout(buttonRow);
 
     // Group label — uppercase, tiny, centered below icons
-    auto* groupLabel = new QLabel(groupName.toUpper());
+    auto* groupLabel = new QLabel(groupName);
     groupLabel->setAlignment(Qt::AlignCenter);
-    groupLabel->setFont(QFont(groupLabel->font().family(), 7));
-    groupLabel->setFixedHeight(12);
+    groupLabel->setFont(QFont(groupLabel->font().family(), 8));
+    groupLabel->setFixedHeight(14);
     groupLabel->setStyleSheet("color: #777; font-weight: 500; "
                               "letter-spacing: 0.5px; background: transparent; border: none; "
                               "padding: 0; margin: 0;");
@@ -413,7 +413,7 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(40);
+    sep->setFixedHeight(34);
     sep->setStyleSheet("background: #3a3a3a; border: none;");
     layout->addWidget(sep);
 }
@@ -2737,8 +2737,6 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  A:Arc  D:Dim  T:Trim  X:Construction  Esc:Finish"));
 
-    // Clear properties panel during sketch editing — the floating SketchPalette handles everything
-    m_properties->clear();
 
     // Show the floating sketch palette over the viewport
     // Show sketch settings in the Properties panel (not a floating palette)
