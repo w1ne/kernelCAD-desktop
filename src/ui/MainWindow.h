@@ -218,9 +218,8 @@ private:
     void onSectionSliderChanged(int value);
 
     // ── Ribbon toolbar (tabbed icon bar) ───────────────────────────────────
-    QWidget*    m_ribbonContainer = nullptr;  // top-level container for quick-access + ribbon
+    QWidget*    m_ribbonContainer = nullptr;  // top-level container for ribbon
     QTabWidget* m_ribbon          = nullptr;
-    QWidget*    m_quickAccessBar  = nullptr;
     int         m_solidTabIndex   = 0;
     int         m_sketchTabIndex  = 0;
     int         m_assemblyTabIndex = 0;

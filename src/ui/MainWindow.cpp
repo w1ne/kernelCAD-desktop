@@ -430,51 +430,37 @@ void MainWindow::setupToolBar()
     containerLayout->setContentsMargins(0, 0, 0, 0);
     containerLayout->setSpacing(0);
 
-    // ── Quick-access toolbar (New, Open, Save, Undo, Redo) ──────────────
-    m_quickAccessBar = new QWidget;
-    m_quickAccessBar->setObjectName("QuickAccessBar");
-    m_quickAccessBar->setFixedHeight(26);
-    auto* qaLayout = new QHBoxLayout(m_quickAccessBar);
-    qaLayout->setContentsMargins(8, 2, 8, 2);
-    qaLayout->setSpacing(4);
+    // ── Undo/Redo in the menu bar corner (replaces the old quick-access bar) ──
+    {
+        auto* cornerWidget = new QWidget(this);
+        auto* cornerLayout = new QHBoxLayout(cornerWidget);
+        cornerLayout->setContentsMargins(0, 0, 4, 0);
+        cornerLayout->setSpacing(2);
 
-    auto makeQAButton = [this](const QString& iconName, const QString& text,
-                                const QString& tip, auto slot) -> QToolButton* {
-        auto* btn = new QToolButton;
-        btn->setIcon(IconFactory::createIcon(iconName, 16));
-        btn->setIconSize(QSize(16, 16));
-        btn->setText(text);
-        btn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        btn->setToolTip(tip);
-        btn->setAutoRaise(true);
-        btn->setMinimumSize(22, 22);
-        btn->setObjectName("QuickAccessButton");
-        connect(btn, &QToolButton::clicked, this, slot);
-        return btn;
-    };
+        auto* undoBtn = new QToolButton(cornerWidget);
+        undoBtn->setIcon(IconFactory::createIcon("undo", 16));
+        undoBtn->setToolTip(tr("Undo (Ctrl+Z)"));
+        undoBtn->setAutoRaise(true);
+        undoBtn->setFixedSize(24, 24);
+        connect(undoBtn, &QToolButton::clicked, this, &MainWindow::onUndo);
 
-    qaLayout->addWidget(makeQAButton("new",  tr("New"),  tr("New (Ctrl+N)"),  &MainWindow::onNewDocument));
-    qaLayout->addWidget(makeQAButton("open", tr("Open"), tr("Open (Ctrl+O)"), &MainWindow::onOpenDocument));
-    qaLayout->addWidget(makeQAButton("save", tr("Save"), tr("Save (Ctrl+S)"), &MainWindow::onSaveDocument));
+        auto* redoBtn = new QToolButton(cornerWidget);
+        redoBtn->setIcon(IconFactory::createIcon("redo", 16));
+        redoBtn->setToolTip(tr("Redo (Ctrl+Shift+Z)"));
+        redoBtn->setAutoRaise(true);
+        redoBtn->setFixedSize(24, 24);
+        connect(redoBtn, &QToolButton::clicked, this, &MainWindow::onRedo);
 
-    // Small separator
-    auto* qaSep = new QFrame;
-    qaSep->setFrameShape(QFrame::VLine);
-    qaSep->setObjectName("RibbonSeparator");
-    qaSep->setFixedSize(1, 16);
-    qaLayout->addWidget(qaSep);
-
-    qaLayout->addWidget(makeQAButton("undo", tr("Undo"), tr("Undo (Ctrl+Z)"), &MainWindow::onUndo));
-    qaLayout->addWidget(makeQAButton("redo", tr("Redo"), tr("Redo (Ctrl+Shift+Z)"), &MainWindow::onRedo));
-
-    qaLayout->addStretch();
-    containerLayout->addWidget(m_quickAccessBar);
+        cornerLayout->addWidget(undoBtn);
+        cornerLayout->addWidget(redoBtn);
+        menuBar()->setCornerWidget(cornerWidget);
+    }
 
     // ── Ribbon tab widget ───────────────────────────────────────────────
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(96);
+    m_ribbon->setFixedHeight(80);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID

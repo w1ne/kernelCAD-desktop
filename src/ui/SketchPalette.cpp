@@ -12,6 +12,7 @@
 #include <QGraphicsDropShadowEffect>
 #include <QEvent>
 #include <QResizeEvent>
+#include <QMouseEvent>
 
 // =============================================================================
 // Construction
@@ -74,21 +75,46 @@ void SketchPalette::buildUI()
     sep0->setMaximumHeight(1);
     m_rootLayout->addWidget(sep0);
 
-    // ── Options section ───────────────────────────────────────────────────
-    auto* optHeader = new QLabel(tr("Options"), this);
-    optHeader->setObjectName("sectionHeader");
-    setLightText(optHeader, QColor(170, 170, 170));
-    m_rootLayout->addWidget(optHeader);
+    // Helper: create a collapsible section header + content widget pair
+    auto makeCollapsible = [this](const QString& title) -> std::pair<QPushButton*, QWidget*> {
+        auto* header = new QPushButton(QString::fromUtf8("\u25BC ") + title, this);
+        header->setFlat(true);
+        header->setStyleSheet(
+            "text-align: left; color: #aaa; font-weight: bold; font-size: 11px;"
+            " border: none; padding: 2px 0; background: transparent;");
+        header->setCursor(Qt::PointingHandCursor);
+        m_rootLayout->addWidget(header);
 
-    m_snapToGrid = new QCheckBox(tr("Snap to Grid"), this);
-    m_snapToGrid->setChecked(true);
-    setLightText(m_snapToGrid);
-    m_rootLayout->addWidget(m_snapToGrid);
+        auto* content = new QWidget(this);
+        auto* contentLayout = new QVBoxLayout(content);
+        contentLayout->setContentsMargins(0, 0, 0, 0);
+        contentLayout->setSpacing(4);
+        m_rootLayout->addWidget(content);
 
-    m_showInference = new QCheckBox(tr("Show Inference Lines"), this);
-    m_showInference->setChecked(true);
-    setLightText(m_showInference);
-    m_rootLayout->addWidget(m_showInference);
+        connect(header, &QPushButton::clicked, [header, content, title]() {
+            bool visible = !content->isVisible();
+            content->setVisible(visible);
+            header->setText((visible ? QString::fromUtf8("\u25BC ") : QString::fromUtf8("\u25B6 ")) + title);
+        });
+
+        return {header, content};
+    };
+
+    // ── Options section (collapsible) ─────────────────────────────────────
+    {
+        auto [header, content] = makeCollapsible(tr("Options"));
+        auto* cl = qobject_cast<QVBoxLayout*>(content->layout());
+
+        m_snapToGrid = new QCheckBox(tr("Snap to Grid"), content);
+        m_snapToGrid->setChecked(true);
+        setLightText(m_snapToGrid);
+        cl->addWidget(m_snapToGrid);
+
+        m_showInference = new QCheckBox(tr("Show Inference Lines"), content);
+        m_showInference->setChecked(true);
+        setLightText(m_showInference);
+        cl->addWidget(m_showInference);
+    }
 
     // Separator
     auto* sep1 = new QFrame(this);
@@ -97,31 +123,31 @@ void SketchPalette::buildUI()
     sep1->setMaximumHeight(1);
     m_rootLayout->addWidget(sep1);
 
-    // ── Display section ───────────────────────────────────────────────────
-    auto* dispHeader = new QLabel(tr("Display"), this);
-    dispHeader->setObjectName("sectionHeader");
-    setLightText(dispHeader, QColor(170, 170, 170));
-    m_rootLayout->addWidget(dispHeader);
+    // ── Display section (collapsible) ─────────────────────────────────────
+    {
+        auto [header, content] = makeCollapsible(tr("Display"));
+        auto* cl = qobject_cast<QVBoxLayout*>(content->layout());
 
-    m_showPoints = new QCheckBox(tr("Show Points"), this);
-    m_showPoints->setChecked(true);
-    setLightText(m_showPoints);
-    m_rootLayout->addWidget(m_showPoints);
+        m_showPoints = new QCheckBox(tr("Show Points"), content);
+        m_showPoints->setChecked(true);
+        setLightText(m_showPoints);
+        cl->addWidget(m_showPoints);
 
-    m_showDimensions = new QCheckBox(tr("Show Dimensions"), this);
-    m_showDimensions->setChecked(true);
-    setLightText(m_showDimensions);
-    m_rootLayout->addWidget(m_showDimensions);
+        m_showDimensions = new QCheckBox(tr("Show Dimensions"), content);
+        m_showDimensions->setChecked(true);
+        setLightText(m_showDimensions);
+        cl->addWidget(m_showDimensions);
 
-    m_showConstraints = new QCheckBox(tr("Show Constraints"), this);
-    m_showConstraints->setChecked(true);
-    setLightText(m_showConstraints);
-    m_rootLayout->addWidget(m_showConstraints);
+        m_showConstraints = new QCheckBox(tr("Show Constraints"), content);
+        m_showConstraints->setChecked(true);
+        setLightText(m_showConstraints);
+        cl->addWidget(m_showConstraints);
 
-    m_showConstruction = new QCheckBox(tr("Show Construction"), this);
-    m_showConstruction->setChecked(true);
-    setLightText(m_showConstruction);
-    m_rootLayout->addWidget(m_showConstruction);
+        m_showConstruction = new QCheckBox(tr("Show Construction"), content);
+        m_showConstruction->setChecked(true);
+        setLightText(m_showConstruction);
+        cl->addWidget(m_showConstruction);
+    }
 
     // Separator
     auto* sep2 = new QFrame(this);
@@ -130,35 +156,36 @@ void SketchPalette::buildUI()
     sep2->setMaximumHeight(1);
     m_rootLayout->addWidget(sep2);
 
-    // ── Sketch Info section ───────────────────────────────────────────────
-    auto* infoHeader = new QLabel(tr("Sketch Info"), this);
-    infoHeader->setObjectName("sectionHeader");
-    setLightText(infoHeader, QColor(170, 170, 170));
-    m_rootLayout->addWidget(infoHeader);
+    // ── Sketch Info section (collapsible) ─────────────────────────────────
+    {
+        auto [header, content] = makeCollapsible(tr("Sketch Info"));
+        (void)header;
+        auto* cl = qobject_cast<QVBoxLayout*>(content->layout());
 
-    auto addStatRow = [this, &setLightText](const QString& label) -> QLabel* {
-        auto* row = new QWidget(this);
-        auto* hl = new QHBoxLayout(row);
-        hl->setContentsMargins(0, 0, 0, 0);
-        hl->setSpacing(4);
-        auto* nameLabel = new QLabel(label, row);
-        nameLabel->setObjectName("statName");
-        setLightText(nameLabel, QColor(153, 153, 153));
-        auto* valueLabel = new QLabel("0", row);
-        valueLabel->setObjectName("statValue");
-        setLightText(valueLabel, QColor(204, 204, 204));
-        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        hl->addWidget(nameLabel);
-        hl->addStretch();
-        hl->addWidget(valueLabel);
-        m_rootLayout->addWidget(row);
-        return valueLabel;
-    };
+        auto addStatRow = [cl, &setLightText](QWidget* parent, const QString& label) -> QLabel* {
+            auto* row = new QWidget(parent);
+            auto* hl = new QHBoxLayout(row);
+            hl->setContentsMargins(0, 0, 0, 0);
+            hl->setSpacing(4);
+            auto* nameLabel = new QLabel(label, row);
+            nameLabel->setObjectName("statName");
+            setLightText(nameLabel, QColor(153, 153, 153));
+            auto* valueLabel = new QLabel("0", row);
+            valueLabel->setObjectName("statValue");
+            setLightText(valueLabel, QColor(204, 204, 204));
+            valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            hl->addWidget(nameLabel);
+            hl->addStretch();
+            hl->addWidget(valueLabel);
+            cl->addWidget(row);
+            return valueLabel;
+        };
 
-    m_pointCount      = addStatRow(tr("Points"));
-    m_lineCount       = addStatRow(tr("Lines"));
-    m_constraintCount = addStatRow(tr("Constraints"));
-    m_dofLabel        = addStatRow(tr("DOF"));
+        m_pointCount      = addStatRow(content, tr("Points"));
+        m_lineCount       = addStatRow(content, tr("Lines"));
+        m_constraintCount = addStatRow(content, tr("Constraints"));
+        m_dofLabel        = addStatRow(content, tr("DOF"));
+    }
 
     // Separator
     auto* sep3 = new QFrame(this);
@@ -298,10 +325,47 @@ void SketchPalette::repositionOverParent()
     move(x, y);
 }
 
+// =============================================================================
+// Drag by title area
+// =============================================================================
+
+void SketchPalette::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton && event->pos().y() < 30) {
+        m_dragging = true;
+        m_dragOffset = event->globalPosition().toPoint() - pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+    } else {
+        QWidget::mousePressEvent(event);
+    }
+}
+
+void SketchPalette::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_dragging) {
+        move(event->globalPosition().toPoint() - m_dragOffset);
+        event->accept();
+    } else {
+        QWidget::mouseMoveEvent(event);
+    }
+}
+
+void SketchPalette::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_dragging) {
+        m_dragging = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+    } else {
+        QWidget::mouseReleaseEvent(event);
+    }
+}
+
 bool SketchPalette::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == parentWidget() && event->type() == QEvent::Resize) {
-        if (isVisible())
+        if (isVisible() && !m_dragging)
             repositionOverParent();
     }
     return QWidget::eventFilter(watched, event);

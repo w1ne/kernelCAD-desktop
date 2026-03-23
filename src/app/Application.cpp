@@ -68,17 +68,6 @@ void Application::setupDarkTheme()
         /* ── Ribbon toolbar wrapper (no extra chrome) ───────────────── */
         QToolBar#RibbonToolBar { background: transparent; border: none; padding: 0; margin: 0; }
 
-        /* ── Quick-access bar ───────────────────────────────────────── */
-        QWidget#QuickAccessBar { background-color: #2d2d2d; }
-        QToolButton#QuickAccessButton {
-            background: transparent; border: none; border-radius: 2px;
-            font-size: 10px; color: #aaa;
-        }
-        QToolButton#QuickAccessButton:hover {
-            background: #383838; color: #ddd;
-        }
-        QToolButton#QuickAccessButton:pressed { background: #094771; color: white; }
-
         /* ── Ribbon tab widget ──────────────────────────────────────── */
         QTabWidget#Ribbon::pane {
             background: #333333; border: none;

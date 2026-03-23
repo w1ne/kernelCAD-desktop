@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QString>
+#include <QPoint>
 
 class QCheckBox;
 class QLabel;
@@ -36,6 +37,9 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     void buildUI();
@@ -64,4 +68,8 @@ private:
 
     // Finish
     QPushButton* m_finishButton = nullptr;
+
+    // Drag support
+    bool m_dragging = false;
+    QPoint m_dragOffset;
 };

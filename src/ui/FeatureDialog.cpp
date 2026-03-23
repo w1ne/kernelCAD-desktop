@@ -258,10 +258,47 @@ void FeatureDialog::showAtPosition()
     setVisible(true);
 }
 
+// =============================================================================
+// Drag by title area
+// =============================================================================
+
+void FeatureDialog::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton && event->pos().y() < 30) {
+        m_dragging = true;
+        m_dragOffset = event->globalPosition().toPoint() - pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+    } else {
+        QWidget::mousePressEvent(event);
+    }
+}
+
+void FeatureDialog::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_dragging) {
+        move(event->globalPosition().toPoint() - m_dragOffset);
+        event->accept();
+    } else {
+        QWidget::mouseMoveEvent(event);
+    }
+}
+
+void FeatureDialog::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_dragging) {
+        m_dragging = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+    } else {
+        QWidget::mouseReleaseEvent(event);
+    }
+}
+
 bool FeatureDialog::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == parentWidget() && event->type() == QEvent::Resize) {
-        if (isVisible())
+        if (isVisible() && !m_dragging)
             repositionOverParent();
     }
     return QWidget::eventFilter(watched, event);

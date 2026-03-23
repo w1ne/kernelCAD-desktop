@@ -3,6 +3,7 @@
 #include <QVariant>
 #include <QString>
 #include <QTimer>
+#include <QPoint>
 #include "../features/ExtrudeFeature.h"
 #include "../features/FilletFeature.h"
 #include "../features/ChamferFeature.h"
@@ -79,6 +80,9 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     enum class Mode { None, Extrude, Fillet, Chamfer, Shell, Revolve, PressPull, ConstructionPlane };
@@ -159,4 +163,8 @@ private:
     features::RevolveParams  m_revolveDefaults;
     features::OffsetFacesParams m_pressPullDefaults;
     features::ConstructionPlaneParams m_cpDefaults;
+
+    // Drag support
+    bool m_dragging = false;
+    QPoint m_dragOffset;
 };
