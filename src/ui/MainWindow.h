@@ -223,6 +223,7 @@ private:
     int         m_solidTabIndex   = 0;
     int         m_sketchTabIndex  = 0;
     int         m_assemblyTabIndex = 0;
+    void registerAllTools();
     void setupToolBar();
 
     /// Ribbon helper: describes a single tool button in a ribbon group.

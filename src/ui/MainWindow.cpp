@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "ToolRegistry.h"
 #include "../scripting/PluginManager.h"
 #include "CommandController.h"
 #include "DrawingView.h"
@@ -121,6 +122,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     setupUI();
     setupMenuBar();
+    registerAllTools();
     setupToolBar();
     installToolBarHoverFilters();
     setupDocks();
@@ -620,6 +622,14 @@ void MainWindow::setupToolBar()
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawPolygon); }},
             {"Slot",      IconFactory::createIcon("slot"),      tr("Slot"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSlot); }},
+        }, {
+            // Dropdown extras (less common draw tools)
+            {"Center Rect", IconFactory::createIcon("center_rectangle"), tr("Center Rectangle"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangleCenter); }},
+            {"3pt Circle",  IconFactory::createIcon("circle_3point"),    tr("3-Point Circle"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle3Point); }},
+            {"3pt Arc",     IconFactory::createIcon("arc_3point"),       tr("3-Point Arc"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc3Point); }},
         });
         addGroupSeparator(layout);
 
@@ -639,8 +649,10 @@ void MainWindow::setupToolBar()
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainSymmetric); }},
             {"Fix",           IconFactory::createIcon("fix"),           tr("Fix \u2014 Lock a point in place"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
-            {"Dimension",     IconFactory::createIcon("dimension"),     tr("Dimension \u2014 Set a parametric dimension"),
+            {"Dimension",     IconFactory::createIcon("dimension"),     tr("Dimension (D) \u2014 Set a parametric dimension"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Dimension); }},
+            {"Auto",          IconFactory::createIcon("constraint"),    tr("Auto Constraint (K) \u2014 Infer constraint type"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
         });
         addGroupSeparator(layout);
 
