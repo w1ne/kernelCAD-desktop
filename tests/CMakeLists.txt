@@ -149,3 +149,21 @@ target_link_libraries(test_workflows PRIVATE
   TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing TKHLR TKFeat
 )
 add_test(NAME Workflows COMMAND test_workflows)
+
+# ── DrawingView tests (auto-dimensions, export) ────────────────────────────
+find_package(Qt6 REQUIRED COMPONENTS PrintSupport)
+add_executable(test_drawing_view
+  test_DrawingView.cpp
+  ${CMAKE_SOURCE_DIR}/src/ui/DrawingView.cpp
+)
+target_include_directories(test_drawing_view PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${OpenCASCADE_INCLUDE_DIR}
+)
+target_link_libraries(test_drawing_view PRIVATE
+  kernelcad_compiler_options Qt6::Core Qt6::Test Qt6::Widgets Qt6::Gui Qt6::PrintSupport
+  $<$<TARGET_EXISTS:Qt6::Svg>:Qt6::Svg>
+  TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
+  TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing TKHLR TKFeat
+)
+add_test(NAME DrawingView COMMAND test_drawing_view)

@@ -7,6 +7,14 @@
 #include <vector>
 #include <TopoDS_Shape.hxx>
 
+/// A dimension annotation line with arrows and a numeric value.
+struct DimensionLine {
+    QPointF start, end;      // endpoints in view-local model coords (before scale)
+    double value;            // actual dimension value in mm
+    bool isHorizontal;       // horizontal or vertical dimension
+    double offset;           // distance from geometry edge (mm on paper)
+};
+
 /// A 2D drawing page that generates dimensioned orthographic views from a 3D body
 /// using OCCT's HLR (Hidden Line Removal) algorithm. Supports standard 3-view layout
 /// (Front, Top, Right) plus an optional isometric view, with PDF and SVG export.
@@ -28,6 +36,12 @@ public:
     /// Export the drawing sheet to SVG.
     void exportSVG(const QString& path);
 
+    /// Number of generated views.
+    int viewCount() const { return static_cast<int>(m_views.size()); }
+
+    /// Number of dimension annotations across all views.
+    int dimensionCount() const;
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     QSize sizeHint() const override;
@@ -40,6 +54,7 @@ private:
         std::vector<QLineF> visibleEdges;     // visible edge lines
         std::vector<QLineF> hiddenEdges;      // hidden (dashed) edge lines
         QRectF  boundingRect;                 // bounding rect of 2D projected edges
+        std::vector<DimensionLine> dimensions; // auto-dimension annotations
     };
 
     std::vector<ProjectedView> m_views;
@@ -69,6 +84,13 @@ private:
     /// Draw a border frame around the drawing area.
     void drawBorder(QPainter& painter, double dpiScale);
 
-    /// Draw a single projected view (edges, label).
+    /// Draw a single projected view (edges, label, dimensions).
     void drawProjectedView(QPainter& painter, const ProjectedView& view, double dpiScale);
+
+    /// Generate automatic bounding-box dimensions for each orthographic view.
+    void addAutoDimensions();
+
+    /// Draw a single dimension line (extension lines, arrows, text).
+    void drawDimensionLine(QPainter& painter, const DimensionLine& dim,
+                           const QRectF& viewBBox, double scale);
 };

@@ -189,6 +189,8 @@ add_executable(kernelcad-cli
   sketch/SketchToShape.cpp
 )
 
+target_compile_definitions(kernelcad-cli PRIVATE KERNELCAD_CLI=1)
+
 target_include_directories(kernelcad-cli PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${OpenCASCADE_INCLUDE_DIR}

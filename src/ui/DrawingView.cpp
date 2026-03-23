@@ -130,22 +130,23 @@ void DrawingView::extractEdges2D(const TopoDS_Shape& edgeCompound,
     for (TopExp_Explorer ex(edgeCompound, TopAbs_EDGE); ex.More(); ex.Next()) {
         const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
 
-        double first = 0.0, last = 0.0;
-        Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
-        if (curve.IsNull())
-            continue;
+        // HLR result edges may store geometry as curves-on-surface (2D PCurves)
+        // rather than 3D curves, so BRep_Tool::Curve can return null.
+        // BRepAdaptor_Curve handles both representations.
+        try {
+            BRepAdaptor_Curve adaptor(edge);
+            GCPnts_UniformDeflection sampler(adaptor, deflection);
+            if (!sampler.IsDone() || sampler.NbPoints() < 2)
+                continue;
 
-        // The HLR result edges live in 2D (Z is zero), but OCCT returns
-        // them as 3D curves. We sample the curve and use X,Y as the 2D coords.
-        BRepAdaptor_Curve adaptor(edge);
-        GCPnts_UniformDeflection sampler(adaptor, deflection);
-        if (!sampler.IsDone() || sampler.NbPoints() < 2)
+            for (int i = 1; i < sampler.NbPoints(); ++i) {
+                gp_Pnt p1 = sampler.Value(i);
+                gp_Pnt p2 = sampler.Value(i + 1);
+                outLines.emplace_back(p1.X(), p1.Y(), p2.X(), p2.Y());
+            }
+        } catch (...) {
+            // Some degenerate HLR edges may not be adaptable — skip them.
             continue;
-
-        for (int i = 1; i < sampler.NbPoints(); ++i) {
-            gp_Pnt p1 = sampler.Value(i);
-            gp_Pnt p2 = sampler.Value(i + 1);
-            outLines.emplace_back(p1.X(), p1.Y(), p2.X(), p2.Y());
         }
     }
 }
@@ -233,7 +234,140 @@ void DrawingView::generateStandardViews()
         v.position = cellCenters[layoutMap[i]];
     }
 
+    addAutoDimensions();
+
     update();
+}
+
+// ─── Auto-dimensions ──────────────────────────────────────────────────────
+
+int DrawingView::dimensionCount() const
+{
+    int total = 0;
+    for (const auto& v : m_views)
+        total += static_cast<int>(v.dimensions.size());
+    return total;
+}
+
+void DrawingView::addAutoDimensions()
+{
+    for (auto& view : m_views) {
+        view.dimensions.clear();
+
+        if (view.visibleEdges.empty() && view.hiddenEdges.empty())
+            continue;
+
+        // Skip isometric view — dimensions on iso projections are misleading
+        if (view.name.contains("ISO", Qt::CaseInsensitive))
+            continue;
+
+        const QRectF& bbox = view.boundingRect;
+        double w = bbox.width();
+        double h = bbox.height();
+
+        if (w < 0.01 || h < 0.01)
+            continue;
+
+        const double offsetMM = 8.0; // offset on paper in mm
+
+        // Horizontal dimension (bottom of view) — overall width
+        {
+            DimensionLine dim;
+            dim.start = QPointF(bbox.left(), bbox.bottom());
+            dim.end   = QPointF(bbox.right(), bbox.bottom());
+            dim.value = w;
+            dim.isHorizontal = true;
+            dim.offset = offsetMM / view.scale;
+            view.dimensions.push_back(dim);
+        }
+
+        // Vertical dimension (right of view) — overall height
+        {
+            DimensionLine dim;
+            dim.start = QPointF(bbox.right(), bbox.bottom());
+            dim.end   = QPointF(bbox.right(), bbox.top());
+            dim.value = h;
+            dim.isHorizontal = false;
+            dim.offset = offsetMM / view.scale;
+            view.dimensions.push_back(dim);
+        }
+    }
+}
+
+void DrawingView::drawDimensionLine(QPainter& painter,
+                                     const DimensionLine& dim,
+                                     const QRectF& viewBBox,
+                                     double scale)
+{
+    // Center of the bounding rect in model coords
+    double cx = viewBBox.center().x();
+    double cy = viewBBox.center().y();
+
+    // Map dimension endpoints to view-local screen coords (Y flipped)
+    QPointF p1((dim.start.x() - cx) * scale, -(dim.start.y() - cy) * scale);
+    QPointF p2((dim.end.x()   - cx) * scale, -(dim.end.y()   - cy) * scale);
+
+    // Offset perpendicular to the dimension line, away from geometry
+    QPointF offset;
+    if (dim.isHorizontal)
+        offset = QPointF(0, dim.offset * scale);   // push down (positive Y on screen)
+    else
+        offset = QPointF(dim.offset * scale, 0);    // push right
+
+    QPointF op1 = p1 + offset;
+    QPointF op2 = p2 + offset;
+
+    // Dimension line style: thin blue
+    QPen dimPen(QColor(0, 100, 200), 0.15);
+    dimPen.setCapStyle(Qt::RoundCap);
+    painter.setPen(dimPen);
+
+    // Extension lines (from geometry edge to dimension line, with small gap)
+    double gap = 1.0; // 1mm gap from geometry
+    if (dim.isHorizontal) {
+        painter.drawLine(QPointF(p1.x(), p1.y() + gap), op1);
+        painter.drawLine(QPointF(p2.x(), p2.y() + gap), op2);
+    } else {
+        painter.drawLine(QPointF(p1.x() + gap, p1.y()), op1);
+        painter.drawLine(QPointF(p2.x() + gap, p2.y()), op2);
+    }
+
+    // Dimension line between the offset endpoints
+    painter.drawLine(op1, op2);
+
+    // Arrows at endpoints
+    double arrowLen = 1.5;  // mm on paper
+    QPointF dir = op2 - op1;
+    double len = std::sqrt(dir.x() * dir.x() + dir.y() * dir.y());
+    if (len > 0.01) {
+        dir /= len;
+        QPointF perp(-dir.y(), dir.x());
+
+        // Arrow at op1 (pointing toward op2)
+        painter.drawLine(op1, op1 + dir * arrowLen + perp * arrowLen * 0.3);
+        painter.drawLine(op1, op1 + dir * arrowLen - perp * arrowLen * 0.3);
+
+        // Arrow at op2 (pointing toward op1)
+        painter.drawLine(op2, op2 - dir * arrowLen + perp * arrowLen * 0.3);
+        painter.drawLine(op2, op2 - dir * arrowLen - perp * arrowLen * 0.3);
+    }
+
+    // Dimension text
+    QFont font("Helvetica", 2);
+    font.setStyleHint(QFont::SansSerif);
+    painter.setFont(font);
+    painter.setPen(Qt::black);
+
+    QPointF textPos = (op1 + op2) * 0.5;
+    QString text = QString::number(dim.value, 'f', 1);
+
+    painter.save();
+    painter.translate(textPos);
+    if (!dim.isHorizontal)
+        painter.rotate(-90);
+    // Draw text centered above the dimension line
+    painter.drawText(QRectF(-15, -3.5, 30, 3), Qt::AlignCenter, text);
+    painter.restore();
 }
 
 // ─── Rendering ─────────────────────────────────────────────────────────────
@@ -408,6 +542,11 @@ void DrawingView::drawProjectedView(QPainter& painter,
         painter.drawText(QRectF(-30, labelY, 60, 5),
                          Qt::AlignHCenter | Qt::AlignTop,
                          view.name);
+    }
+
+    // Dimension annotations
+    for (const auto& dim : view.dimensions) {
+        drawDimensionLine(painter, dim, view.boundingRect, view.scale);
     }
 
     painter.restore();

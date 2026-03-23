@@ -6,6 +6,9 @@
 #include "../document/JsonReader.h"
 #include "../document/JsonWriter.h"
 #include "../sketch/SketchConstraint.h"
+#ifndef KERNELCAD_CLI
+#include "../ui/DrawingView.h"
+#endif
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
@@ -226,6 +229,7 @@ std::string ScriptEngine::Impl::helpCommand(int id, const std::string& about)
         {"state", "{}", "{bodies,features,sketches}", "Dump current document state — use this to understand what you have."},
         {"getMesh", "{bodyId?,deflection?}", "{vertexCount,triangleCount,bbox,sampleVertices}", "Get mesh data. Returns bounding box + 100 sample vertices for spatial reasoning."},
         {"screenshot", "{path,width?,height?}", "{stlPath,bodies:[{volume,size,cog}]}", "Export STL + return body descriptions. LLM can reason about shape from dimensions."},
+        {"createDrawing", "{path}", "{path,viewCount,dimensionCount}", "Generate 2D engineering drawing (PDF or SVG) with auto-dimensions. Extension .svg for SVG, else PDF."},
         {"help", "{about?}", "{commands:[...]}", "This command. Pass about='extrude' for specific help."},
     };
 
@@ -1290,6 +1294,35 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
                 w.endArray();
             });
         }
+
+        // ── 2D Drawing generation ────────────────────────────────────────
+#ifndef KERNELCAD_CLI
+        if (cmdName == "createDrawing") {
+            std::string path = cmd.getString("path");
+            if (path.empty()) return errResponse(id, "Missing 'path'. Example: {\"cmd\":\"createDrawing\",\"path\":\"/tmp/drawing.pdf\"}");
+
+            auto bodyIds = doc.brepModel().bodyIds();
+            if (bodyIds.empty()) return errResponse(id, "No bodies for drawing");
+
+            TopoDS_Shape compound = compoundAllBodies();
+
+            DrawingView drawing;
+            drawing.setBody(compound);
+            drawing.generateStandardViews();
+
+            if (path.find(".svg") != std::string::npos || path.find(".SVG") != std::string::npos) {
+                drawing.exportSVG(QString::fromStdString(path));
+            } else {
+                drawing.exportPDF(QString::fromStdString(path));
+            }
+
+            return okResponse(id, [&](JsonWriter& w) {
+                w.writeString("path", path);
+                w.writeNumber("viewCount", static_cast<double>(drawing.viewCount()));
+                w.writeNumber("dimensionCount", static_cast<double>(drawing.dimensionCount()));
+            });
+        }
+#endif
 
         return errResponse(id, "Unknown command: " + cmdName);
     }

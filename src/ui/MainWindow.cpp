@@ -369,9 +369,10 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
 {
     auto* groupWidget = new QWidget;
     groupWidget->setObjectName("RibbonGroup");
+    groupWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* groupLayout = new QVBoxLayout(groupWidget);
-    groupLayout->setContentsMargins(6, 2, 6, 0);
-    groupLayout->setSpacing(0);
+    groupLayout->setContentsMargins(4, 4, 4, 0);
+    groupLayout->setSpacing(1);
 
     // Button row — icon-only, 32x32 icons in 40x40 buttons
     auto* buttonRow = new QHBoxLayout;
@@ -393,30 +394,14 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     }
     groupLayout->addLayout(buttonRow);
 
-    // Group label — uppercase, small, centered; click opens dropdown with all commands
-    auto* groupLabel = new QPushButton(groupName.toUpper() + QString::fromUtf8(" \xe2\x96\xbe"));
-    groupLabel->setFlat(true);
-    groupLabel->setObjectName("RibbonGroupLabel");
-    groupLabel->setCursor(Qt::PointingHandCursor);
-    // Capture copies of tools and extras for the dropdown lambda
-    auto toolsCopy = tools;
-    auto extrasCopy = dropdownExtras;
-    connect(groupLabel, &QPushButton::clicked, this, [toolsCopy, extrasCopy, groupLabel]() {
-        QMenu menu;
-        for (const auto& t : toolsCopy) {
-            if (t.action)
-                menu.addAction(t.name, t.action);
-        }
-        if (!extrasCopy.empty()) {
-            menu.addSeparator();
-            for (const auto& t : extrasCopy) {
-                if (t.action)
-                    menu.addAction(t.name, t.action);
-            }
-        }
-        menu.exec(groupLabel->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
-    });
-    groupLayout->addWidget(groupLabel, 0, Qt::AlignCenter);
+    // Group label — uppercase, small, centered below icons
+    auto* groupLabel = new QLabel(groupName.toUpper());
+    groupLabel->setAlignment(Qt::AlignCenter);
+    groupLabel->setFixedHeight(14);
+    groupLabel->setStyleSheet("color: #777; font-size: 9px; font-weight: 500; "
+                              "letter-spacing: 0.5px; background: transparent; border: none; "
+                              "padding: 0; margin: 0;");
+    groupLayout->addWidget(groupLabel);
 
     parentLayout->addWidget(groupWidget);
 }
@@ -487,7 +472,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(72);
+    m_ribbon->setFixedHeight(82);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
