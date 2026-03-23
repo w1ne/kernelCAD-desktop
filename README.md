@@ -62,7 +62,7 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 - **Per-body rendering**: Distinct colors per body, visibility toggles in feature tree, material-driven coloring
 - **Origin planes**: Semi-transparent XY (blue), XZ (red), YZ (green) planes with hover highlight — click to create sketch
 - **Origin axes**: RGB axis lines (X=red, Y=green, Z=blue) with white origin point
-- **ViewCube**: Interactive orientation cube with click-to-snap standard views
+- **ViewCube**: Interactive orientation cube with click-to-snap standard views, hover highlighting, drop shadow
 - **Standard views**: Front/Back/Left/Right/Top/Bottom/Isometric (Numpad 1/3/7/0, Ctrl+Numpad for reverse)
 - **Perspective/Orthographic toggle**: Numpad 5
 - **Smooth camera transitions**: 300ms ease-in-out animation on view changes
@@ -83,11 +83,13 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 
 ### UI
 - **Dark theme**: Full QPalette + Fusion stylesheet across all panels
-- **Tabbed ribbon toolbar**: SOLID / SKETCH / ASSEMBLY tabs with grouped icon buttons (40+ programmatic QPainter icons)
-- **Quick-access bar**: New, Open, Save, Undo, Redo (16px icons above the ribbon)
+- **Tabbed ribbon toolbar**: SOLID / SKETCH / ASSEMBLY tabs with grouped icon buttons (45+ programmatic QPainter icons), clickable group labels with dropdown menus for overflow commands
+- **Quick-access bar**: Undo, Redo (16px icons in menu bar corner)
+- **Navigation bar**: Floating bottom-center overlay with Orbit, Pan, Zoom, Fit All, Toggle Grid buttons
+- **Welcome overlay**: Centered shortcut hints shown on empty viewport
 - **Marking menu**: Right-click and hold for radial context menu (8 sectors, context-sensitive)
 - **Command palette**: Ctrl+K fuzzy search across 40+ commands with shortcut display
-- **Feature Tree**: Hierarchical browser with component tree, body visibility checkboxes, per-type colored icons, in-place rename, context menu (Delete, Suppress, Rename, Set Material)
+- **Feature Tree**: Hierarchical browser with component tree, body visibility checkboxes, per-type colored icons, health indicator dots (green/orange/red), in-place rename, context menu (Delete, Suppress, Rename, Set Material)
 - **Timeline Panel**: Compact 34x34 feature-type icons, bright blue rollback marker, group brackets, drag insertion indicator, rich HTML tooltips
 - **Properties Panel**: Editable forms for all 20 feature types with expression text fields (`width/2`) and live preview
 - **Parameter Table**: Dockable panel for named parameters (Name/Expression/Value/Unit/Comment)
@@ -147,7 +149,7 @@ cmake --build build -j$(nproc)
 cd build && ctest --output-on-failure
 ```
 
-4 test suites: SketchSolver, Timeline, DependencyGraph, ParameterStore.
+9 test suites: SketchSolver, Timeline, DependencyGraph, ParameterStore, OCCTKernel, SketchButtons, PluginManager, Workflows, DrawingView.
 
 ## Architecture
 

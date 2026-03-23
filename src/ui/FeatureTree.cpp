@@ -29,6 +29,32 @@ static constexpr int BodyIdRole = Qt::UserRole + 2;
 static constexpr int FeatureIdRole = Qt::UserRole + 3;
 
 // =====================================================================
+// overlayHealthDot -- composite a small colored dot onto an icon
+// =====================================================================
+
+static QIcon overlayHealthDot(const QIcon& base, features::HealthState state)
+{
+    if (state == features::HealthState::Healthy)
+        return base;  // no dot needed for healthy features
+
+    QColor dotColor;
+    switch (state) {
+    case features::HealthState::Error:      dotColor = QColor(220, 50, 50);  break;
+    case features::HealthState::Warning:    dotColor = QColor(220, 160, 30); break;
+    case features::HealthState::Suppressed: dotColor = QColor(120, 120, 120); break;
+    default:                                return base;
+    }
+
+    QPixmap pm = base.pixmap(16, 16);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(dotColor);
+    p.drawEllipse(QPointF(12.5, 12.5), 3.0, 3.0);  // bottom-right corner
+    return QIcon(pm);
+}
+
+// =====================================================================
 // featureIcon -- draw simple 16x16 icons per feature type
 // =====================================================================
 
@@ -334,9 +360,14 @@ void FeatureTree::buildComponentTree(QTreeWidgetItem* parentItem,
             item->setData(0, Qt::UserRole, QString::fromStdString(entry.id));
             item->setData(0, FeatureIdRole, QString::fromStdString(entry.id));
 
-            // Set feature type icon
-            if (entry.feature)
-                item->setIcon(0, featureIcon(entry.feature->type()));
+            // Set feature type icon with health indicator dot
+            if (entry.feature) {
+                QIcon icon = featureIcon(entry.feature->type());
+                features::HealthState health = entry.feature->healthState();
+                if (entry.isSuppressed)
+                    health = features::HealthState::Suppressed;
+                item->setIcon(0, overlayHealthDot(icon, health));
+            }
 
             // Make feature items editable (in-place rename)
             item->setFlags(item->flags() | Qt::ItemIsEditable);
