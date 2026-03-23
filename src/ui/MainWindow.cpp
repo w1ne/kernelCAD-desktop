@@ -380,12 +380,14 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(28, 28));
-        btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        btn->setText(tool.name);
+        btn->setIconSize(QSize(24, 24));
+        btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(36, 36);
+        btn->setFixedSize(48, 52);
+        btn->setFont(QFont(btn->font().family(), 7));
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -2732,8 +2734,7 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     if (m_measureAction)  m_measureAction->setEnabled(false);
     if (m_deleteAction)   m_deleteAction->setEnabled(false);
 
-    showSketchToolBar(true);
-    // Show SKETCH tab and switch to it
+    // Show SKETCH tab and switch to it (no separate floating toolbar — ribbon is enough)
     if (m_ribbon) {
         m_ribbon->setTabVisible(m_sketchTabIndex, true);
         m_ribbon->setCurrentIndex(m_sketchTabIndex);
@@ -2762,7 +2763,6 @@ void MainWindow::onSketchEditingFinished()
     // Restore camera to pre-sketch position (smooth animation)
     m_viewport->restoreCameraState(/*animate=*/true);
 
-    showSketchToolBar(false);
     hideConfirmBar();
     // Hide SKETCH tab and switch back to SOLID tab
     if (m_ribbon) {
