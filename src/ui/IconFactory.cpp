@@ -97,7 +97,8 @@ QIcon IconFactory::createIcon(const QString& name, int size) {
     initPainter(p, QColor(160, 160, 160, 150), 1.0);
     QColor fillColor(160, 160, 160, 100);
     p.setBrush(fillColor);
-    p.drawRoundedRect(QRectF(2, 2, size - 4, size - 4), 6, 6);
+    int margin = 2;
+    p.drawRoundedRect(QRectF(margin, margin, size - 2*margin, size - 2*margin), 4, 4);
     p.setPen(Qt::white);
     QFont f = p.font();
     f.setPixelSize(size / 2);

@@ -380,17 +380,12 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setText(tool.name);
-        btn->setIconSize(QSize(24, 24));
-        btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        btn->setIconSize(QSize(32, 32));
+        btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(48, 56);
-        btn->setFont(QFont(btn->font().family(), 8));
-        QPalette btnPal = btn->palette();
-        btnPal.setColor(QPalette::ButtonText, QColor(200, 200, 200));
-        btn->setPalette(btnPal);
+        btn->setFixedSize(40, 40);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -399,11 +394,12 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     }
     groupLayout->addLayout(buttonRow);
 
-    // Group label — uppercase, small, centered below icons
+    // Group label — uppercase, tiny, centered below icons
     auto* groupLabel = new QLabel(groupName.toUpper());
     groupLabel->setAlignment(Qt::AlignCenter);
-    groupLabel->setFixedHeight(14);
-    groupLabel->setStyleSheet("color: #777; font-size: 9px; font-weight: 500; "
+    groupLabel->setFont(QFont(groupLabel->font().family(), 7));
+    groupLabel->setFixedHeight(12);
+    groupLabel->setStyleSheet("color: #777; font-weight: 500; "
                               "letter-spacing: 0.5px; background: transparent; border: none; "
                               "padding: 0; margin: 0;");
     groupLayout->addWidget(groupLabel);
@@ -417,7 +413,7 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(44);
+    sep->setFixedHeight(40);
     sep->setStyleSheet("background: #3a3a3a; border: none;");
     layout->addWidget(sep);
 }
@@ -463,7 +459,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(100);
+    m_ribbon->setFixedHeight(80);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
@@ -1251,6 +1247,8 @@ void MainWindow::setupDocks()
     leftDock->setWidget(browserContainer);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     leftDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    leftDock->setMinimumWidth(240);
+    leftDock->setMaximumWidth(400);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // Properties -- right
@@ -1258,6 +1256,8 @@ void MainWindow::setupDocks()
     auto* rightDock = new QDockWidget(tr("Properties"), this);
     rightDock->setWidget(m_properties);
     rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    rightDock->setMinimumWidth(200);
+    rightDock->setMaximumWidth(300);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
     // Parameter Table -- tabbed alongside Properties on the right
@@ -2741,7 +2741,8 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     m_properties->clear();
 
     // Show the floating sketch palette over the viewport
-    // m_sketchPalette->showForSketch(&sketchFeat->sketch(), m_sketchEditor);
+    // Show sketch settings in the Properties panel (not a floating palette)
+    m_properties->showSketchPalettes(&sketchFeat->sketch(), m_sketchEditor);
 }
 
 void MainWindow::onSketchEditingFinished()

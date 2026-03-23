@@ -24,8 +24,8 @@
 // TimelineIconWidget -- compact 34x34 feature icon
 // ====================================================================
 
-static constexpr int kIconSize = 50;
-static constexpr int kIconInner = 28; // inner icon drawing area
+static constexpr int kIconSize = 24;
+static constexpr int kIconInner = 14; // inner icon drawing area
 
 TimelineIconWidget::TimelineIconWidget(const QString& featureId,
                                        features::FeatureType type,
@@ -406,7 +406,7 @@ void TimelineMarker::paintEvent(QPaintEvent* /*event*/)
 TimelinePanel::TimelinePanel(QWidget* parent)
     : QWidget(parent)
 {
-    setFixedHeight(68);
+    setFixedHeight(32);
     setAcceptDrops(true);
 
     // Very dark background (#1e1e1e)
