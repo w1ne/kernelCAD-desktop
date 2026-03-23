@@ -380,12 +380,12 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(32, 32));
+        btn->setIconSize(QSize(28, 28));
         btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(40, 40);
+        btn->setFixedSize(36, 36);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -412,7 +412,7 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(48);
+    sep->setFixedHeight(44);
     sep->setStyleSheet("background: #3a3a3a; border: none;");
     layout->addWidget(sep);
 }
@@ -472,7 +472,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(82);
+    m_ribbon->setFixedHeight(96);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
@@ -480,7 +480,7 @@ void MainWindow::setupToolBar()
     {
         auto* tab = new QWidget;
         auto* layout = new QHBoxLayout(tab);
-        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setContentsMargins(4, 4, 4, 2);
         layout->setSpacing(2);
 
         // Group: Create (sketch + primitives)
@@ -612,7 +612,7 @@ void MainWindow::setupToolBar()
     {
         auto* tab = new QWidget;
         auto* layout = new QHBoxLayout(tab);
-        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setContentsMargins(4, 4, 4, 2);
         layout->setSpacing(2);
 
         // Group: Draw
@@ -699,7 +699,7 @@ void MainWindow::setupToolBar()
     {
         auto* tab = new QWidget;
         auto* layout = new QHBoxLayout(tab);
-        layout->setContentsMargins(6, 2, 6, 2);
+        layout->setContentsMargins(4, 4, 4, 2);
         layout->setSpacing(2);
 
         addToolGroup(layout, "Assemble", {
