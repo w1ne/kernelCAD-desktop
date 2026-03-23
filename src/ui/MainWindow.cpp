@@ -2741,7 +2741,7 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     m_properties->clear();
 
     // Show the floating sketch palette over the viewport
-    m_sketchPalette->showForSketch(&sketchFeat->sketch(), m_sketchEditor);
+    // m_sketchPalette->showForSketch(&sketchFeat->sketch(), m_sketchEditor);
 }
 
 void MainWindow::onSketchEditingFinished()
