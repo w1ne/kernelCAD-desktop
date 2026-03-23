@@ -2748,8 +2748,8 @@ void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
     showConfirmBar(tr("Sketch: Line"));
     statusBar()->showMessage(tr("Sketch Mode \u2014 L:Line  R:Rect  C:Circle  A:Arc  D:Dim  T:Trim  X:Construction  Esc:Finish"));
 
-    // Show condensed info in the properties panel during sketch editing
-    m_properties->showSketchPalettes(&sketchFeat->sketch(), m_sketchEditor);
+    // Clear properties panel during sketch editing — the floating SketchPalette handles everything
+    m_properties->clear();
 
     // Show the floating sketch palette over the viewport
     m_sketchPalette->showForSketch(&sketchFeat->sketch(), m_sketchEditor);
