@@ -460,7 +460,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(80);
+    m_ribbon->setFixedHeight(96);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
