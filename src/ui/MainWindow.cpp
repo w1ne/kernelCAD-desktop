@@ -627,10 +627,14 @@ void MainWindow::setupToolBar()
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle); }},
             {"Arc",       IconFactory::createIcon("arc"),       tr("Arc (A)"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc); }},
+            {"Spline",    IconFactory::createIcon("spline"),    tr("Spline (S)"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSpline); }},
             {"Ellipse",   IconFactory::createIcon("ellipse"),   tr("Ellipse"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawEllipse); }},
             {"Polygon",   IconFactory::createIcon("polygon"),   tr("Polygon"),
              [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawPolygon); }},
+            {"Slot",      IconFactory::createIcon("slot"),      tr("Slot"),
+             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSlot); }},
         });
         addGroupSeparator(layout);
 
@@ -2674,10 +2678,12 @@ void MainWindow::setupSketchToolBar()
     m_sketchToolBar->setVisible(false);
 }
 
-void MainWindow::showSketchToolBar(bool visible)
+void MainWindow::showSketchToolBar(bool /*visible*/)
 {
+    // Floating sketch toolbar is disabled — all sketch tools are in the ribbon SKETCH tab.
+    // This matches Fusion 360's behavior: only one toolbar, in the ribbon.
     if (m_sketchToolBar)
-        m_sketchToolBar->setVisible(visible);
+        m_sketchToolBar->setVisible(false);
 }
 
 void MainWindow::beginSketchEditing(features::SketchFeature* sketchFeat)
