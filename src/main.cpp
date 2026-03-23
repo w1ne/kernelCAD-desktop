@@ -45,6 +45,9 @@ int main(int argc, char* argv[])
     std::signal(SIGABRT, crashHandler);
     std::signal(SIGFPE,  crashHandler);
 
+    // Force Fusion style to prevent GTK theme from overriding our colors
+    qputenv("QT_QPA_PLATFORMTHEME", "");
+
     try {
         Application app(argc, argv);
         g_app = &app;
