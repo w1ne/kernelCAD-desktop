@@ -188,6 +188,37 @@ void PropertiesPanel::showSketchPalettes(sketch::Sketch* sketch, SketchEditor* e
     sep1->setFrameShadow(QFrame::Sunken);
     m_formLayout->addRow(sep1);
 
+    // ── Options section ─────────────────────────────────────────────────
+    auto* optLabel = new QLabel(QStringLiteral(
+        "<span style='color:#aaa; font-weight:bold;'>Options</span>"));
+    m_formLayout->addRow(optLabel);
+
+    auto* snapCheck = new QCheckBox(tr("Snap to Grid"));
+    snapCheck->setChecked(m_paletteEditor ? m_paletteEditor->gridSnapEnabled() : true);
+    connect(snapCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_paletteEditor) m_paletteEditor->setGridSnap(on);
+    });
+    m_formLayout->addRow(snapCheck);
+
+    auto* autoConCheck = new QCheckBox(tr("Auto Constrain"));
+    autoConCheck->setChecked(m_paletteEditor ? m_paletteEditor->autoConstrainEnabled() : false);
+    connect(autoConCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_paletteEditor) m_paletteEditor->setAutoConstrain(on);
+    });
+    m_formLayout->addRow(autoConCheck);
+
+    auto* constructionCheck = new QCheckBox(tr("Construction Mode"));
+    constructionCheck->setChecked(m_paletteEditor ? m_paletteEditor->constructionMode() : false);
+    connect(constructionCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_paletteEditor) m_paletteEditor->setConstructionMode(on);
+    });
+    m_formLayout->addRow(constructionCheck);
+
+    auto* sep2 = new QFrame();
+    sep2->setFrameShape(QFrame::HLine);
+    sep2->setFrameShadow(QFrame::Sunken);
+    m_formLayout->addRow(sep2);
+
     // ── Finish Sketch button ─────────────────────────────────────────────
     auto* finishBtn = new QPushButton(tr("Finish Sketch"));
     finishBtn->setStyleSheet(

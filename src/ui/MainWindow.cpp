@@ -372,7 +372,7 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     groupWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto* groupLayout = new QVBoxLayout(groupWidget);
     groupLayout->setContentsMargins(2, 2, 2, 2);
-    groupLayout->setSpacing(2);
+    groupLayout->setSpacing(4);
 
     // Button row — icon-only, 28x28 icons in 34x34 buttons
     auto* buttonRow = new QHBoxLayout;
@@ -459,7 +459,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(80);
+    m_ribbon->setFixedHeight(88);
 
     // ════════════════════════════════════════════════════════════════════
     // Tab 1: SOLID
