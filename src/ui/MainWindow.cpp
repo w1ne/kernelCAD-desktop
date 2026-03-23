@@ -420,10 +420,604 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     layout->addWidget(sep);
 }
 
+// ─── Tool registry (single source of truth for all tools) ──────────────────
+
+// Helper to reduce boilerplate in registerAllTools
+static void regTool(ToolRegistry& reg,
+                    const std::string& id, const QString& name,
+                    const QString& shortcut, const QString& group,
+                    const QString& tab, const QString& menuPath,
+                    const QIcon& icon, const QString& tooltip,
+                    std::function<void()> action,
+                    int sortOrder,
+                    bool isDropdownExtra = false,
+                    bool showInCtx = false, const QString& ctxFor = {},
+                    const QString& helpParams = {}, const QString& helpReturns = {},
+                    const QString& helpHint = {})
+{
+    ToolDefinition t;
+    t.id = id;
+    t.name = name;
+    t.shortcut = shortcut;
+    t.group = group;
+    t.tab = tab;
+    t.menuPath = menuPath;
+    t.icon = icon;
+    t.tooltip = tooltip;
+    t.helpParams = helpParams;
+    t.helpReturns = helpReturns;
+    t.helpHint = helpHint;
+    t.action = std::move(action);
+    t.showInContextMenu = showInCtx;
+    t.contextMenuFor = ctxFor;
+    t.sortOrder = sortOrder;
+    t.isDropdownExtra = isDropdownExtra;
+    reg.registerTool(std::move(t));
+}
+
+void MainWindow::registerAllTools()
+{
+    auto& reg = ToolRegistry::instance();
+    reg.clear();
+
+    auto* cmd = m_commandController;  // may be null at this point; lambdas capture 'this'
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SOLID tab
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── Create group ────────────────────────────────────────────────────
+    regTool(reg, "createSketch", "Sketch", "S", "Create", "SOLID", "Sketch",
+            IconFactory::createIcon("sketch"), tr("Sketch (S) \u2014 Create a 2D sketch"),
+            [this]() { m_commandController->onCreateSketch(); }, 10,
+            false, true, "empty",
+            "{plane:\"XY\"|\"XZ\"|\"YZ\"}", "{sketchId,featureId}",
+            "Next: add geometry, then sketchSolve.");
+
+    regTool(reg, "createBox", "Box", "", "Create", "SOLID", "Model",
+            IconFactory::createIcon("box"), tr("Box \u2014 Create a parametric box"),
+            [this]() { m_commandController->onCreateBox(); }, 20,
+            false, true, "empty",
+            "{dx,dy,dz}", "{featureId,bodyId}", "All dims in mm.");
+
+    regTool(reg, "createCylinder", "Cylinder", "", "Create", "SOLID", "Model",
+            IconFactory::createIcon("cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
+            [this]() { m_commandController->onCreateCylinder(); }, 30,
+            false, false, {},
+            "{radius,height}", "{featureId,bodyId}", "Quick cylinder.");
+
+    regTool(reg, "createSphere", "Sphere", "", "Create", "SOLID", "Model",
+            IconFactory::createIcon("sphere"), tr("Sphere \u2014 Create a parametric sphere"),
+            [this]() { m_commandController->onCreateSphere(); }, 40,
+            false, false, {},
+            "{radius}", "{featureId,bodyId}", "Quick sphere.");
+
+    // Dropdown extras for Create
+    regTool(reg, "createTorus", "Torus", "", "Create", "SOLID", "Model",
+            {}, tr("Torus \u2014 Create a parametric torus"),
+            [this]() { m_commandController->onCreateTorus(); }, 50, true);
+
+    regTool(reg, "createCoil", "Coil", "", "Create", "SOLID", "Model",
+            {}, tr("Coil"),
+            [this]() { statusBar()->showMessage(tr("Coil \u2014 not yet implemented")); }, 60, true);
+
+    regTool(reg, "createPipe", "Pipe", "", "Create", "SOLID", "Model",
+            {}, tr("Pipe \u2014 Create a hollow cylinder"),
+            [this]() { m_commandController->onCreatePipe(); }, 70, true);
+
+    // ── Form group ──────────────────────────────────────────────────────
+    regTool(reg, "extrude", "Extrude", "E", "Form", "SOLID", "Model",
+            IconFactory::createIcon("extrude"), tr("Extrude (E) \u2014 Extrude a sketch or face"),
+            [this]() { m_commandController->onExtrudeSketch(); }, 10,
+            false, true, "face",
+            "{sketchId,distance,symmetric?}", "{featureId,bodyId}",
+            "Pushes 2D sketch into 3D.");
+
+    regTool(reg, "revolve", "Revolve", "", "Form", "SOLID", "Model",
+            IconFactory::createIcon("revolve"), tr("Revolve \u2014 Revolve around an axis"),
+            [this]() { m_commandController->onRevolveSketch(); }, 20);
+
+    regTool(reg, "sweep", "Sweep", "", "Form", "SOLID", "Model",
+            IconFactory::createIcon("sweep"), tr("Sweep \u2014 Sweep a profile along a path"),
+            [this]() { m_commandController->onSweepSketch(); }, 30);
+
+    regTool(reg, "loft", "Loft", "", "Form", "SOLID", "Model",
+            IconFactory::createIcon("loft"), tr("Loft \u2014 Solid between profiles"),
+            [this]() { m_commandController->onLoftTest(); }, 40);
+
+    // Dropdown extras for Form
+    regTool(reg, "extrudeFromFace", "Extrude from Face", "", "Form", "SOLID", "",
+            {}, tr("Extrude from Face"),
+            [this]() { m_commandController->onExtrudeSketch(); }, 50, true);
+
+    regTool(reg, "revolveFromSketch", "Revolve from Sketch", "", "Form", "SOLID", "",
+            {}, tr("Revolve from Sketch"),
+            [this]() { m_commandController->onRevolveSketch(); }, 60, true);
+
+    // ── Modify group ────────────────────────────────────────────────────
+    regTool(reg, "fillet", "Fillet", "F", "Modify", "SOLID", "Model",
+            IconFactory::createIcon("fillet"), tr("Fillet (F) \u2014 Round selected edges"),
+            [this]() { m_commandController->onFillet(); }, 10,
+            false, true, "edge",
+            "{bodyId,radius,edgeIds?}", "{featureId,bodyId}",
+            "Rounds edges. Omit edgeIds for all.");
+
+    regTool(reg, "chamfer", "Chamfer", "", "Modify", "SOLID", "Model",
+            IconFactory::createIcon("chamfer"), tr("Chamfer \u2014 Bevel selected edges"),
+            [this]() { m_commandController->onChamfer(); }, 20,
+            false, true, "edge",
+            "{bodyId,distance,edgeIds?}", "{featureId,bodyId}", "Bevels edges.");
+
+    regTool(reg, "shell", "Shell", "", "Modify", "SOLID", "Model",
+            IconFactory::createIcon("shell"), tr("Shell \u2014 Hollow a body"),
+            [this]() { m_commandController->onShell(); }, 30,
+            false, true, "face",
+            "{bodyId,thickness}", "{featureId,bodyId}",
+            "Hollows the body with given wall thickness.");
+
+    regTool(reg, "draft", "Draft", "D", "Modify", "SOLID", "Model",
+            IconFactory::createIcon("draft"), tr("Draft (D) \u2014 Apply draft angle to faces"),
+            [this]() { m_commandController->onDraft(); }, 40,
+            false, true, "face");
+
+    regTool(reg, "hole", "Hole", "H", "Modify", "SOLID", "Model",
+            IconFactory::createIcon("hole"), tr("Hole (H) \u2014 Create a hole on a face"),
+            [this]() { m_commandController->onAddHole(); }, 50,
+            false, true, "face",
+            "{bodyId,x,y,z,dx,dy,dz,diameter,depth}", "{featureId,bodyId}",
+            "Drill a hole at position along direction.");
+
+    // Dropdown extras for Modify
+    regTool(reg, "pressPull", "Press/Pull", "Q", "Modify", "SOLID", "Model",
+            {}, tr("Press/Pull (Q) \u2014 Push/pull faces"),
+            [this]() { m_commandController->onPressPull(); }, 60, true,
+            true, "face");
+
+    regTool(reg, "scale", "Scale", "", "Modify", "SOLID", "",
+            {}, tr("Scale"),
+            [this]() { statusBar()->showMessage(tr("Scale \u2014 not yet implemented")); }, 70, true);
+
+    regTool(reg, "combine", "Combine", "", "Modify", "SOLID", "",
+            {}, tr("Combine"),
+            [this]() { statusBar()->showMessage(tr("Combine \u2014 not yet implemented")); }, 80, true);
+
+    regTool(reg, "replaceFace", "Replace Face", "", "Modify", "SOLID", "",
+            {}, tr("Replace Face"),
+            [this]() { statusBar()->showMessage(tr("Replace Face \u2014 not yet implemented")); }, 90, true);
+
+    regTool(reg, "splitFace", "Split Face", "", "Modify", "SOLID", "",
+            {}, tr("Split Face"),
+            [this]() { statusBar()->showMessage(tr("Split Face \u2014 not yet implemented")); }, 100, true);
+
+    regTool(reg, "splitBody", "Split Body", "", "Modify", "SOLID", "",
+            {}, tr("Split Body"),
+            [this]() { statusBar()->showMessage(tr("Split Body \u2014 not yet implemented")); }, 110, true);
+
+    regTool(reg, "offsetFaces", "Offset Faces", "", "Modify", "SOLID", "",
+            {}, tr("Offset Faces"),
+            [this]() { statusBar()->showMessage(tr("Offset Faces \u2014 not yet implemented")); }, 120, true);
+
+    regTool(reg, "deleteFace", "Delete Face", "", "Modify", "SOLID", "",
+            {}, tr("Delete Face"),
+            [this]() { statusBar()->showMessage(tr("Delete Face \u2014 not yet implemented")); }, 130, true);
+
+    regTool(reg, "thread", "Thread", "", "Modify", "SOLID", "",
+            {}, tr("Thread"),
+            [this]() { statusBar()->showMessage(tr("Thread \u2014 not yet implemented")); }, 140, true);
+
+    regTool(reg, "thicken", "Thicken", "", "Modify", "SOLID", "",
+            {}, tr("Thicken"),
+            [this]() { statusBar()->showMessage(tr("Thicken \u2014 not yet implemented")); }, 150, true);
+
+    regTool(reg, "moveCopy", "Move/Copy", "", "Modify", "SOLID", "",
+            {}, tr("Move/Copy"),
+            [this]() { statusBar()->showMessage(tr("Move/Copy \u2014 not yet implemented")); }, 160, true);
+
+    regTool(reg, "appearance", "Appearance", "", "Modify", "SOLID", "",
+            {}, tr("Appearance"),
+            [this]() { statusBar()->showMessage(tr("Appearance \u2014 not yet implemented")); }, 170, true);
+
+    // ── Pattern group ───────────────────────────────────────────────────
+    regTool(reg, "mirror", "Mirror", "", "Pattern", "SOLID", "Model",
+            IconFactory::createIcon("mirror"), tr("Mirror \u2014 Mirror across a plane"),
+            [this]() { m_commandController->onMirrorLastBody(); }, 10,
+            false, true, "body",
+            "{bodyId,planeNormalX,Y,Z}", "{featureId,bodyId}",
+            "Mirror about a plane through origin.");
+
+    regTool(reg, "rectPattern", "Rect Pattern", "", "Pattern", "SOLID", "Model",
+            IconFactory::createIcon("rect_pattern"), tr("Rect Pattern \u2014 Rectangular array"),
+            [this]() { m_commandController->onRectangularPattern(); }, 20,
+            false, true, "body");
+
+    regTool(reg, "circPattern", "Circ Pattern", "", "Pattern", "SOLID", "Model",
+            IconFactory::createIcon("circ_pattern"), tr("Circ Pattern \u2014 Circular array"),
+            [this]() { m_commandController->onCircularPattern(); }, 30,
+            false, true, "body",
+            "{bodyId,count,angle}", "{featureId,bodyId}", "Repeats body around Z axis.");
+
+    // Dropdown extra for Pattern
+    regTool(reg, "pathPattern", "Path Pattern", "", "Pattern", "SOLID", "",
+            {}, tr("Path Pattern"),
+            [this]() { statusBar()->showMessage(tr("Path Pattern \u2014 not yet implemented")); }, 40, true);
+
+    // ── Construct group ─────────────────────────────────────────────────
+    regTool(reg, "constructPlane", "Plane", "", "Construct", "SOLID", "",
+            IconFactory::createIcon("plane"), tr("Construct Plane \u2014 Create a construction plane"),
+            [this]() { m_commandController->onConstructPlane(); }, 10);
+
+    regTool(reg, "constructAxis", "Axis", "", "Construct", "SOLID", "",
+            IconFactory::createIcon("axis"), tr("Construct Axis \u2014 Create a construction axis"),
+            [this]() { m_commandController->onConstructAxis(); }, 20);
+
+    regTool(reg, "constructPoint", "Point", "", "Construct", "SOLID", "",
+            IconFactory::createIcon("point"), tr("Construct Point \u2014 Create a construction point"),
+            [this]() { m_commandController->onConstructPoint(); }, 30);
+
+    // Dropdown extras for Construct
+    regTool(reg, "offsetPlane", "Offset Plane", "", "Construct", "SOLID", "",
+            {}, tr("Offset Plane"),
+            [this]() { m_commandController->onConstructPlane(); }, 40, true);
+
+    regTool(reg, "planeAtAngle", "Plane at Angle", "", "Construct", "SOLID", "",
+            {}, tr("Plane at Angle"),
+            [this]() { statusBar()->showMessage(tr("Plane at Angle \u2014 not yet implemented")); }, 50, true);
+
+    regTool(reg, "planeThrough3Points", "Plane Through 3 Points", "", "Construct", "SOLID", "",
+            {}, tr("Plane Through 3 Points"),
+            [this]() { statusBar()->showMessage(tr("Plane Through 3 Points \u2014 not yet implemented")); }, 60, true);
+
+    regTool(reg, "axisThrough2Points", "Axis Through 2 Points", "", "Construct", "SOLID", "",
+            {}, tr("Axis Through 2 Points"),
+            [this]() { m_commandController->onConstructAxis(); }, 70, true);
+
+    regTool(reg, "pointAtVertex", "Point at Vertex", "", "Construct", "SOLID", "",
+            {}, tr("Point at Vertex"),
+            [this]() { m_commandController->onConstructPoint(); }, 80, true);
+
+    // ── Inspect group ───────────────────────────────────────────────────
+    regTool(reg, "measure", "Measure", "M", "Inspect", "SOLID", "Tools",
+            IconFactory::createIcon("measure"), tr("Measure (M) \u2014 Measure distances"),
+            [this]() { m_commandController->onMeasure(); }, 10,
+            false, true, "face",   // also in edge context but we list it for face; context menu adds it separately
+            "{}", "{}", "Measure distances between entities.");
+
+    // Dropdown extras for Inspect
+    regTool(reg, "physicalProperties", "Physical Properties", "", "Inspect", "SOLID", "",
+            {}, tr("Physical Properties"),
+            [this]() { statusBar()->showMessage(tr("Physical Properties \u2014 not yet implemented")); }, 20, true);
+
+    regTool(reg, "faceCount", "Face Count", "", "Inspect", "SOLID", "",
+            {}, tr("Face Count"),
+            [this]() {
+                auto& brep = m_document->brepModel();
+                auto ids = brep.bodyIds();
+                int totalFaces = 0;
+                for (const auto& id : ids) {
+                    auto bq = brep.query(id);
+                    totalFaces += bq.faceCount();
+                }
+                statusBar()->showMessage(tr("Total faces: %1").arg(totalFaces));
+            }, 30, true);
+
+    regTool(reg, "edgeCount", "Edge Count", "", "Inspect", "SOLID", "",
+            {}, tr("Edge Count"),
+            [this]() {
+                auto& brep = m_document->brepModel();
+                auto ids = brep.bodyIds();
+                int totalEdges = 0;
+                for (const auto& id : ids) {
+                    auto bq = brep.query(id);
+                    totalEdges += bq.edgeCount();
+                }
+                statusBar()->showMessage(tr("Total edges: %1").arg(totalEdges));
+            }, 40, true);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SKETCH tab
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── Draw group ──────────────────────────────────────────────────────
+    regTool(reg, "sketchLine", "Line", "L", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("line"), tr("Line (L)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawLine); }, 10);
+
+    regTool(reg, "sketchRectangle", "Rectangle", "R", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("rectangle"), tr("Rectangle (R)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangle); }, 20);
+
+    regTool(reg, "sketchCircle", "Circle", "C", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("circle"), tr("Circle (C)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle); }, 30);
+
+    regTool(reg, "sketchArc", "Arc", "A", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("arc"), tr("Arc (A)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc); }, 40);
+
+    regTool(reg, "sketchSpline", "Spline", "S", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("spline"), tr("Spline (S)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSpline); }, 50);
+
+    regTool(reg, "sketchEllipse", "Ellipse", "", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("ellipse"), tr("Ellipse"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawEllipse); }, 60);
+
+    regTool(reg, "sketchPolygon", "Polygon", "", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("polygon"), tr("Polygon"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawPolygon); }, 70);
+
+    regTool(reg, "sketchSlot", "Slot", "", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("slot"), tr("Slot"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSlot); }, 80);
+
+    // Dropdown extras for Draw
+    regTool(reg, "sketchCenterRect", "Center Rect", "", "Draw", "SKETCH", "",
+            IconFactory::createIcon("center_rectangle"), tr("Center Rectangle"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangleCenter); }, 90, true);
+
+    regTool(reg, "sketchCircle3Point", "3pt Circle", "", "Draw", "SKETCH", "",
+            IconFactory::createIcon("circle_3point"), tr("3-Point Circle"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle3Point); }, 100, true);
+
+    regTool(reg, "sketchArc3Point", "3pt Arc", "", "Draw", "SKETCH", "",
+            IconFactory::createIcon("arc_3point"), tr("3-Point Arc"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc3Point); }, 110, true);
+
+    // ── Constrain group ─────────────────────────────────────────────────
+    regTool(reg, "constrainCoincident", "Coincident", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("coincident"), tr("Coincident \u2014 Merge two points"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainCoincident); }, 10);
+
+    regTool(reg, "constrainParallel", "Parallel", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("parallel_c"), tr("Parallel \u2014 Make lines parallel"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainParallel); }, 20);
+
+    regTool(reg, "constrainPerpendicular", "Perpendicular", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("perpendicular"), tr("Perpendicular \u2014 Make lines perpendicular"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainPerpendicular); }, 30);
+
+    regTool(reg, "constrainTangent", "Tangent", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("tangent_c"), tr("Tangent \u2014 Make curves tangent"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainTangent); }, 40);
+
+    regTool(reg, "constrainEqual", "Equal", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("equal_c"), tr("Equal \u2014 Equal length or radius"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainEqual); }, 50);
+
+    regTool(reg, "constrainSymmetric", "Symmetric", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("symmetric_c"), tr("Symmetric \u2014 Mirror about a line"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainSymmetric); }, 60);
+
+    regTool(reg, "constrainFix", "Fix", "", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("fix"), tr("Fix \u2014 Lock a point in place"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }, 70);
+
+    regTool(reg, "dimension", "Dimension", "D", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("dimension"), tr("Dimension (D) \u2014 Set a parametric dimension"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Dimension); }, 80);
+
+    regTool(reg, "autoConstraint", "Auto", "K", "Constrain", "SKETCH", "",
+            IconFactory::createIcon("constraint"), tr("Auto Constraint (K) \u2014 Infer constraint type"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }, 90);
+
+    // ── Sketch Modify group ─────────────────────────────────────────────
+    regTool(reg, "sketchTrim", "Trim", "T", "Modify", "SKETCH", "",
+            IconFactory::createIcon("trim"), tr("Trim (T)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Trim); }, 10);
+
+    regTool(reg, "sketchExtend", "Extend", "E", "Modify", "SKETCH", "",
+            IconFactory::createIcon("extend"), tr("Extend (E)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Extend); }, 20);
+
+    regTool(reg, "sketchOffset", "Offset", "O", "Modify", "SKETCH", "",
+            IconFactory::createIcon("offset"), tr("Offset (O)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Offset); }, 30);
+
+    regTool(reg, "sketchFillet", "Fillet", "F", "Modify", "SKETCH", "",
+            IconFactory::createIcon("fillet"), tr("Sketch Fillet (F)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchFillet); }, 40);
+
+    regTool(reg, "sketchChamfer", "Chamfer", "G", "Modify", "SKETCH", "",
+            IconFactory::createIcon("chamfer"), tr("Sketch Chamfer (G)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchChamfer); }, 50);
+
+    // ── Reference group ─────────────────────────────────────────────────
+    regTool(reg, "projectEdge", "Project", "P", "Reference", "SKETCH", "",
+            IconFactory::createIcon("project"), tr("Project Edge (P)"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ProjectEdge); }, 10);
+
+    regTool(reg, "constructionMode", "Construction", "X", "Reference", "SKETCH", "",
+            IconFactory::createIcon("construction"), tr("Construction Mode (X)"),
+            [this]() { /* toggled via keyboard X in sketch editor */ }, 20);
+
+    regTool(reg, "importDxf", "Import DXF", "", "Reference", "SKETCH", "Sketch",
+            IconFactory::createIcon("import_dxf"), tr("Import DXF into sketch"),
+            [this]() { onImportDxfToSketch(); }, 30);
+
+    regTool(reg, "importSvg", "Import SVG", "", "Reference", "SKETCH", "Sketch",
+            IconFactory::createIcon("import_svg"), tr("Import SVG into sketch"),
+            [this]() { onImportSvgToSketch(); }, 40);
+
+    // ── Control group ───────────────────────────────────────────────────
+    regTool(reg, "sketchSelect", "Select", "", "Control", "SKETCH", "",
+            IconFactory::createIcon("select"), tr("Select"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::None); }, 10);
+
+    regTool(reg, "finishSketch", "Finish", "", "Control", "SKETCH", "",
+            IconFactory::createIcon("finish"), tr("Finish Sketch"),
+            [this]() { if (m_sketchEditor) m_sketchEditor->finishEditing(); }, 20);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ASSEMBLY tab
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── Assemble group ──────────────────────────────────────────────────
+    regTool(reg, "joint", "Joint", "J", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("joint"), tr("Joint (J) \u2014 Click two faces to create a joint"),
+            [this]() { m_commandController->onAddJoint(); }, 10);
+
+    regTool(reg, "newComponent", "New Component", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("component"), tr("New Component \u2014 Add a new component"),
+            [this]() { m_commandController->onNewComponent(); }, 20);
+
+    regTool(reg, "insertComponent", "Insert .kcd", "", "Assemble", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("insert"), tr("Insert Component \u2014 Import a .kcd file"),
+            [this]() { m_commandController->onInsertComponent(); }, 30);
+
+    // ── Assembly Inspect group ──────────────────────────────────────────
+    regTool(reg, "checkInterference", "Interference", "", "Inspect", "ASSEMBLY", "Assembly",
+            IconFactory::createIcon("interference"), tr("Check Interference"),
+            [this]() { onCheckInterference(); }, 10);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Non-ribbon tools (File, Edit, View -- for command palette & menus)
+    // ════════════════════════════════════════════════════════════════════════
+
+    regTool(reg, "newDocument", "New Document", "Ctrl+N", "", "", "File",
+            {}, tr("New Document"),
+            [this]() { onNewDocument(); }, 10);
+
+    regTool(reg, "openDocument", "Open...", "Ctrl+O", "", "", "File",
+            {}, tr("Open Document"),
+            [this]() { onOpenDocument(); }, 20);
+
+    regTool(reg, "saveDocument", "Save", "Ctrl+S", "", "", "File",
+            {}, tr("Save Document"),
+            [this]() { onSaveDocument(); }, 30);
+
+    regTool(reg, "importFile", "Import File...", "Ctrl+I", "", "", "File",
+            {}, tr("Import STEP/IGES"),
+            [this]() { onImportFile(); }, 40);
+
+    regTool(reg, "importStl", "Import STL as Body...", "", "", "", "File",
+            {}, tr("Import STL as Body"),
+            [this]() { onImportSTL(); }, 50);
+
+    regTool(reg, "exportStep", "Export STEP...", "", "", "", "File",
+            {}, tr("Export STEP"),
+            [this]() { onExportSTEP(); }, 60);
+
+    regTool(reg, "exportStl", "Export STL...", "", "", "", "File",
+            {}, tr("Export STL"),
+            [this]() { onExportSTL(); }, 70);
+
+    regTool(reg, "undo", "Undo", "Ctrl+Z", "", "", "Edit",
+            {}, tr("Undo"),
+            [this]() { onUndo(); }, 10);
+
+    regTool(reg, "redo", "Redo", "Ctrl+Y", "", "", "Edit",
+            {}, tr("Redo"),
+            [this]() { onRedo(); }, 20);
+
+    regTool(reg, "deleteFeature", "Delete", "Del", "", "", "Edit",
+            {}, tr("Delete the selected feature"),
+            [this]() { m_commandController->onDeleteSelectedFeature(); }, 30,
+            false, true, "face");
+
+    regTool(reg, "editSketch", "Edit Sketch", "", "", "", "Sketch",
+            {}, tr("Edit Sketch"),
+            [this]() { m_commandController->onEditSketch(); }, 20);
+
+    // ── View tools (command palette only) ───────────────────────────────
+    regTool(reg, "fitAll", "Fit All", "Home", "", "", "View",
+            {}, tr("Fit All"),
+            [this]() { m_viewport->fitAll(); }, 10);
+
+    regTool(reg, "viewFront", "Front View", "Num1", "", "", "View",
+            {}, tr("Front View"),
+            [this]() { m_viewport->setStandardView(StandardView::Front); }, 20);
+
+    regTool(reg, "viewBack", "Back View", "", "", "", "View",
+            {}, tr("Back View"),
+            [this]() { m_viewport->setStandardView(StandardView::Back); }, 30);
+
+    regTool(reg, "viewLeft", "Left View", "", "", "", "View",
+            {}, tr("Left View"),
+            [this]() { m_viewport->setStandardView(StandardView::Left); }, 40);
+
+    regTool(reg, "viewRight", "Right View", "Num3", "", "", "View",
+            {}, tr("Right View"),
+            [this]() { m_viewport->setStandardView(StandardView::Right); }, 50);
+
+    regTool(reg, "viewTop", "Top View", "Num7", "", "", "View",
+            {}, tr("Top View"),
+            [this]() { m_viewport->setStandardView(StandardView::Top); }, 60);
+
+    regTool(reg, "viewBottom", "Bottom View", "", "", "", "View",
+            {}, tr("Bottom View"),
+            [this]() { m_viewport->setStandardView(StandardView::Bottom); }, 70);
+
+    regTool(reg, "viewIsometric", "Isometric View", "Num0", "", "", "View",
+            {}, tr("Isometric View"),
+            [this]() { m_viewport->setStandardView(StandardView::Isometric); }, 80);
+
+    regTool(reg, "toggleGrid", "Toggle Grid", "G", "", "", "View",
+            {}, tr("Toggle Grid"),
+            [this]() { m_viewport->setShowGrid(!m_viewport->showGrid()); }, 90);
+
+    regTool(reg, "toggleOrigin", "Toggle Origin", "O", "", "", "View",
+            {}, tr("Toggle Origin"),
+            [this]() { m_viewport->setShowOrigin(!m_viewport->showOrigin()); }, 100);
+
+    regTool(reg, "sectionX", "Section X", "", "", "", "View",
+            {}, tr("Section X"),
+            [this]() { onSectionX(); }, 110);
+
+    regTool(reg, "sectionY", "Section Y", "", "", "", "View",
+            {}, tr("Section Y"),
+            [this]() { onSectionY(); }, 120);
+
+    regTool(reg, "sectionZ", "Section Z", "", "", "", "View",
+            {}, tr("Section Z"),
+            [this]() { onSectionZ(); }, 130);
+
+    regTool(reg, "clearSection", "Clear Section", "", "", "", "View",
+            {}, tr("Clear Section"),
+            [this]() { onClearSection(); }, 140);
+
+    // Context-menu only tools (not in ribbon)
+    regTool(reg, "createSketchOnFace", "Create Sketch on Face", "", "", "", "",
+            {}, tr("Create Sketch on Face"),
+            [this]() { m_commandController->onCreateSketch(); }, 20,
+            false, true, "face");
+
+    regTool(reg, "measureEdge", "Measure", "M", "", "", "",
+            {}, tr("Measure"),
+            [this]() { m_commandController->onMeasure(); }, 50,
+            false, true, "edge");
+
+    regTool(reg, "deleteEdge", "Delete", "", "", "", "",
+            {}, tr("Delete"),
+            [this]() { m_commandController->onDeleteSelectedFeature(); }, 60,
+            false, true, "edge");
+
+    regTool(reg, "measureBody", "Measure", "", "", "", "",
+            {}, tr("Measure"),
+            [this]() { m_commandController->onMeasure(); }, 50,
+            false, true, "body");
+
+    regTool(reg, "shellBody", "Shell", "", "", "", "",
+            {}, tr("Shell"),
+            [this]() { m_commandController->onShell(); }, 40,
+            false, true, "body");
+
+    regTool(reg, "holeBody", "Hole", "", "", "", "",
+            {}, tr("Hole"),
+            [this]() { m_commandController->onAddHole(); }, 45,
+            false, true, "body");
+
+    regTool(reg, "deleteBody", "Delete", "", "", "", "",
+            {}, tr("Delete"),
+            [this]() { m_commandController->onDeleteSelectedFeature(); }, 60,
+            false, true, "body");
+}
+
 // ─── Main ribbon setup ─────────────────────────────────────────────────────
 
 void MainWindow::setupToolBar()
 {
+    auto& reg = ToolRegistry::instance();
+
     // ── Overall container: quick-access bar on top, ribbon tabs below ────
     m_ribbonContainer = new QWidget(this);
     m_ribbonContainer->setObjectName("RibbonContainer");
@@ -463,267 +1057,49 @@ void MainWindow::setupToolBar()
     m_ribbon->setTabPosition(QTabWidget::North);
     m_ribbon->setFixedHeight(88);
 
-    // ════════════════════════════════════════════════════════════════════
-    // Tab 1: SOLID
-    // ════════════════════════════════════════════════════════════════════
-    {
+    // Build tabs from registry
+    for (const auto& tabName : reg.tabs()) {
+        // Skip non-ribbon tools (empty tab name = File/Edit/View palette-only entries)
+        if (tabName.isEmpty())
+            continue;
+
         auto* tab = new QWidget;
         auto* layout = new QHBoxLayout(tab);
         layout->setContentsMargins(4, 4, 4, 2);
         layout->setSpacing(2);
 
-        // Group: Create (sketch + primitives)
-        addToolGroup(layout, "Create", {
-            {"Sketch",   IconFactory::createIcon("sketch"),   tr("Sketch (S) \u2014 Create a 2D sketch"),
-             [this]() { m_commandController->onCreateSketch(); }},
-            {"Box",      IconFactory::createIcon("box"),      tr("Box \u2014 Create a parametric box"),
-             [this]() { m_commandController->onCreateBox(); }},
-            {"Cylinder", IconFactory::createIcon("cylinder"), tr("Cylinder \u2014 Create a parametric cylinder"),
-             [this]() { m_commandController->onCreateCylinder(); }},
-            {"Sphere",   IconFactory::createIcon("sphere"),   tr("Sphere \u2014 Create a parametric sphere"),
-             [this]() { m_commandController->onCreateSphere(); }},
-        }, {
-            {"Torus",  {}, tr("Torus \u2014 Create a parametric torus"),  [this]() { m_commandController->onCreateTorus(); }},
-            {"Coil",   {}, tr("Coil"),   [this]() { statusBar()->showMessage(tr("Coil — not yet implemented")); }},
-            {"Pipe",   {}, tr("Pipe \u2014 Create a hollow cylinder"),   [this]() { m_commandController->onCreatePipe(); }},
-        });
-        addGroupSeparator(layout);
+        auto groups = reg.groupsForTab(tabName);
+        for (int gi = 0; gi < groups.size(); ++gi) {
+            const auto& groupName = groups[gi];
+            auto allGroupTools = reg.toolsForGroup(tabName, groupName);
 
-        // Group: Form (extrude / revolve / sweep / loft)
-        addToolGroup(layout, "Form", {
-            {"Extrude", IconFactory::createIcon("extrude"), tr("Extrude (E) \u2014 Extrude a sketch or face"),
-             [this]() { m_commandController->onExtrudeSketch(); }},
-            {"Revolve", IconFactory::createIcon("revolve"), tr("Revolve \u2014 Revolve around an axis"),
-             [this]() { m_commandController->onRevolveSketch(); }},
-            {"Sweep",   IconFactory::createIcon("sweep"),   tr("Sweep \u2014 Sweep a profile along a path"),
-             [this]() { m_commandController->onSweepSketch(); }},
-            {"Loft",    IconFactory::createIcon("loft"),    tr("Loft \u2014 Solid between profiles"),
-             [this]() { m_commandController->onLoftTest(); }},
-        }, {
-            {"Extrude from Face",    {}, tr("Extrude from Face"),    [this]() { m_commandController->onExtrudeSketch(); }},
-            {"Revolve from Sketch",  {}, tr("Revolve from Sketch"),  [this]() { m_commandController->onRevolveSketch(); }},
-        });
-        addGroupSeparator(layout);
+            // Split into primary (ribbon row) and dropdown extras
+            std::vector<ToolEntry> primary;
+            std::vector<ToolEntry> extras;
+            for (const auto* t : allGroupTools) {
+                ToolEntry entry{t->name, t->icon, t->tooltip, t->action};
+                if (t->isDropdownExtra)
+                    extras.push_back(std::move(entry));
+                else
+                    primary.push_back(std::move(entry));
+            }
 
-        // Group: Modify
-        addToolGroup(layout, "Modify", {
-            {"Fillet",  IconFactory::createIcon("fillet"),  tr("Fillet (F) \u2014 Round selected edges"),
-             [this]() { m_commandController->onFillet(); }},
-            {"Chamfer", IconFactory::createIcon("chamfer"), tr("Chamfer \u2014 Bevel selected edges"),
-             [this]() { m_commandController->onChamfer(); }},
-            {"Shell",   IconFactory::createIcon("shell"),   tr("Shell \u2014 Hollow a body"),
-             [this]() { m_commandController->onShell(); }},
-            {"Draft",   IconFactory::createIcon("draft"),   tr("Draft (D) \u2014 Apply draft angle to faces"),
-             [this]() { m_commandController->onDraft(); }},
-            {"Hole",    IconFactory::createIcon("hole"),    tr("Hole (H) \u2014 Create a hole on a face"),
-             [this]() { m_commandController->onAddHole(); }},
-        }, {
-            {"Press/Pull",    {}, tr("Press/Pull (Q) — Push/pull faces"),    [this]() { m_commandController->onPressPull(); }},
-            {"Scale",         {}, tr("Scale"),         [this]() { statusBar()->showMessage(tr("Scale — not yet implemented")); }},
-            {"Combine",       {}, tr("Combine"),       [this]() { statusBar()->showMessage(tr("Combine — not yet implemented")); }},
-            {"Replace Face",  {}, tr("Replace Face"),  [this]() { statusBar()->showMessage(tr("Replace Face — not yet implemented")); }},
-            {"Split Face",    {}, tr("Split Face"),    [this]() { statusBar()->showMessage(tr("Split Face — not yet implemented")); }},
-            {"Split Body",    {}, tr("Split Body"),    [this]() { statusBar()->showMessage(tr("Split Body — not yet implemented")); }},
-            {"Offset Faces",  {}, tr("Offset Faces"),  [this]() { statusBar()->showMessage(tr("Offset Faces — not yet implemented")); }},
-            {"Delete Face",   {}, tr("Delete Face"),   [this]() { statusBar()->showMessage(tr("Delete Face — not yet implemented")); }},
-            {"Thread",        {}, tr("Thread"),        [this]() { statusBar()->showMessage(tr("Thread — not yet implemented")); }},
-            {"Thicken",       {}, tr("Thicken"),       [this]() { statusBar()->showMessage(tr("Thicken — not yet implemented")); }},
-            {"Move/Copy",     {}, tr("Move/Copy"),     [this]() { statusBar()->showMessage(tr("Move/Copy — not yet implemented")); }},
-            {"Appearance",    {}, tr("Appearance"),    [this]() { statusBar()->showMessage(tr("Appearance — not yet implemented")); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Pattern
-        addToolGroup(layout, "Pattern", {
-            {"Mirror",       IconFactory::createIcon("mirror"),       tr("Mirror \u2014 Mirror across a plane"),
-             [this]() { m_commandController->onMirrorLastBody(); }},
-            {"Rect Pattern", IconFactory::createIcon("rect_pattern"), tr("Rect Pattern \u2014 Rectangular array"),
-             [this]() { m_commandController->onRectangularPattern(); }},
-            {"Circ Pattern", IconFactory::createIcon("circ_pattern"), tr("Circ Pattern \u2014 Circular array"),
-             [this]() { m_commandController->onCircularPattern(); }},
-        }, {
-            {"Path Pattern", {}, tr("Path Pattern"), [this]() { statusBar()->showMessage(tr("Path Pattern — not yet implemented")); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Construct (construction geometry)
-        addToolGroup(layout, "Construct", {
-            {"Plane", IconFactory::createIcon("plane"), tr("Construct Plane \u2014 Create a construction plane"),
-             [this]() { m_commandController->onConstructPlane(); }},
-            {"Axis",  IconFactory::createIcon("axis"),  tr("Construct Axis \u2014 Create a construction axis"),
-             [this]() { m_commandController->onConstructAxis(); }},
-            {"Point", IconFactory::createIcon("point"), tr("Construct Point \u2014 Create a construction point"),
-             [this]() { m_commandController->onConstructPoint(); }},
-        }, {
-            {"Offset Plane",             {}, tr("Offset Plane"),             [this]() { m_commandController->onConstructPlane(); }},
-            {"Plane at Angle",           {}, tr("Plane at Angle"),           [this]() { statusBar()->showMessage(tr("Plane at Angle — not yet implemented")); }},
-            {"Plane Through 3 Points",   {}, tr("Plane Through 3 Points"),  [this]() { statusBar()->showMessage(tr("Plane Through 3 Points — not yet implemented")); }},
-            {"Axis Through 2 Points",    {}, tr("Axis Through 2 Points"),   [this]() { m_commandController->onConstructAxis(); }},
-            {"Point at Vertex",          {}, tr("Point at Vertex"),          [this]() { m_commandController->onConstructPoint(); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Inspect
-        addToolGroup(layout, "Inspect", {
-            {"Measure", IconFactory::createIcon("measure"), tr("Measure (M) \u2014 Measure distances"),
-             [this]() { m_commandController->onMeasure(); }},
-        }, {
-            {"Physical Properties", {}, tr("Physical Properties"), [this]() { statusBar()->showMessage(tr("Physical Properties — not yet implemented")); }},
-            {"Face Count",          {}, tr("Face Count"),          [this]() {
-                auto& brep = m_document->brepModel();
-                auto ids = brep.bodyIds();
-                int totalFaces = 0;
-                for (const auto& id : ids) {
-                    auto bq = brep.query(id);
-                    totalFaces += bq.faceCount();
-                }
-                statusBar()->showMessage(tr("Total faces: %1").arg(totalFaces));
-            }},
-            {"Edge Count",          {}, tr("Edge Count"),          [this]() {
-                auto& brep = m_document->brepModel();
-                auto ids = brep.bodyIds();
-                int totalEdges = 0;
-                for (const auto& id : ids) {
-                    auto bq = brep.query(id);
-                    totalEdges += bq.edgeCount();
-                }
-                statusBar()->showMessage(tr("Total edges: %1").arg(totalEdges));
-            }},
-        });
+            addToolGroup(layout, groupName, primary, extras);
+            if (gi + 1 < groups.size())
+                addGroupSeparator(layout);
+        }
 
         layout->addStretch();
-        m_solidTabIndex = m_ribbon->addTab(tab, tr("SOLID"));
-    }
+        int tabIndex = m_ribbon->addTab(tab, tabName);
 
-    // ════════════════════════════════════════════════════════════════════
-    // Tab 2: SKETCH (shown/auto-selected during sketch editing)
-    // ════════════════════════════════════════════════════════════════════
-    {
-        auto* tab = new QWidget;
-        auto* layout = new QHBoxLayout(tab);
-        layout->setContentsMargins(4, 4, 4, 2);
-        layout->setSpacing(2);
+        // Store tab indices for programmatic access
+        if (tabName == "SOLID")    m_solidTabIndex = tabIndex;
+        if (tabName == "SKETCH")   m_sketchTabIndex = tabIndex;
+        if (tabName == "ASSEMBLY") m_assemblyTabIndex = tabIndex;
 
-        // Group: Draw
-        addToolGroup(layout, "Draw", {
-            {"Line",      IconFactory::createIcon("line"),      tr("Line (L)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawLine); }},
-            {"Rectangle", IconFactory::createIcon("rectangle"), tr("Rectangle (R)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangle); }},
-            {"Circle",    IconFactory::createIcon("circle"),    tr("Circle (C)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle); }},
-            {"Arc",       IconFactory::createIcon("arc"),       tr("Arc (A)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc); }},
-            {"Spline",    IconFactory::createIcon("spline"),    tr("Spline (S)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSpline); }},
-            {"Ellipse",   IconFactory::createIcon("ellipse"),   tr("Ellipse"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawEllipse); }},
-            {"Polygon",   IconFactory::createIcon("polygon"),   tr("Polygon"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawPolygon); }},
-            {"Slot",      IconFactory::createIcon("slot"),      tr("Slot"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawSlot); }},
-        }, {
-            // Dropdown extras (less common draw tools)
-            {"Center Rect", IconFactory::createIcon("center_rectangle"), tr("Center Rectangle"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawRectangleCenter); }},
-            {"3pt Circle",  IconFactory::createIcon("circle_3point"),    tr("3-Point Circle"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawCircle3Point); }},
-            {"3pt Arc",     IconFactory::createIcon("arc_3point"),       tr("3-Point Arc"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::DrawArc3Point); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Constrain
-        addToolGroup(layout, "Constrain", {
-            {"Coincident",    IconFactory::createIcon("coincident"),    tr("Coincident \u2014 Merge two points"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainCoincident); }},
-            {"Parallel",      IconFactory::createIcon("parallel_c"),    tr("Parallel \u2014 Make lines parallel"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainParallel); }},
-            {"Perpendicular", IconFactory::createIcon("perpendicular"), tr("Perpendicular \u2014 Make lines perpendicular"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainPerpendicular); }},
-            {"Tangent",       IconFactory::createIcon("tangent_c"),     tr("Tangent \u2014 Make curves tangent"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainTangent); }},
-            {"Equal",         IconFactory::createIcon("equal_c"),       tr("Equal \u2014 Equal length or radius"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainEqual); }},
-            {"Symmetric",     IconFactory::createIcon("symmetric_c"),   tr("Symmetric \u2014 Mirror about a line"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ConstrainSymmetric); }},
-            {"Fix",           IconFactory::createIcon("fix"),           tr("Fix \u2014 Lock a point in place"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
-            {"Dimension",     IconFactory::createIcon("dimension"),     tr("Dimension (D) \u2014 Set a parametric dimension"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Dimension); }},
-            {"Auto",          IconFactory::createIcon("constraint"),    tr("Auto Constraint (K) \u2014 Infer constraint type"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::AddConstraint); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Modify
-        addToolGroup(layout, "Modify", {
-            {"Trim",    IconFactory::createIcon("trim"),    tr("Trim (T)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Trim); }},
-            {"Extend",  IconFactory::createIcon("extend"),  tr("Extend (E)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Extend); }},
-            {"Offset",  IconFactory::createIcon("offset"),  tr("Offset (O)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::Offset); }},
-            {"Fillet",  IconFactory::createIcon("fillet"),   tr("Sketch Fillet (F)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchFillet); }},
-            {"Chamfer", IconFactory::createIcon("chamfer"),  tr("Sketch Chamfer (G)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::SketchChamfer); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Reference
-        addToolGroup(layout, "Reference", {
-            {"Project",      IconFactory::createIcon("project"),      tr("Project Edge (P)"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::ProjectEdge); }},
-            {"Construction", IconFactory::createIcon("construction"), tr("Construction Mode (X)"),
-             [this]() { /* toggled via keyboard X in sketch editor */ }},
-            {"Import DXF",   IconFactory::createIcon("import_dxf"),   tr("Import DXF into sketch"),
-             [this]() { onImportDxfToSketch(); }},
-            {"Import SVG",   IconFactory::createIcon("import_svg"),   tr("Import SVG into sketch"),
-             [this]() { onImportSvgToSketch(); }},
-        });
-        addGroupSeparator(layout);
-
-        // Group: Control
-        addToolGroup(layout, "Control", {
-            {"Select", IconFactory::createIcon("select"), tr("Select"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->setTool(SketchTool::None); }},
-            {"Finish", IconFactory::createIcon("finish"), tr("Finish Sketch"),
-             [this]() { if (m_sketchEditor) m_sketchEditor->finishEditing(); }},
-        });
-
-        layout->addStretch();
-        m_sketchTabIndex = m_ribbon->addTab(tab, tr("SKETCH"));
-        // Hide SKETCH tab by default — only shown during sketch editing (like Fusion 360)
-        m_ribbon->setTabVisible(m_sketchTabIndex, false);
-    }
-
-    // ════════════════════════════════════════════════════════════════════
-    // Tab 3: ASSEMBLY
-    // ════════════════════════════════════════════════════════════════════
-    {
-        auto* tab = new QWidget;
-        auto* layout = new QHBoxLayout(tab);
-        layout->setContentsMargins(4, 4, 4, 2);
-        layout->setSpacing(2);
-
-        addToolGroup(layout, "Assemble", {
-            {"Joint",         IconFactory::createIcon("joint"),     tr("Joint (J) \u2014 Click two faces to create a joint"),
-             [this]() { m_commandController->onAddJoint(); }},
-            {"New Component", IconFactory::createIcon("component"), tr("New Component \u2014 Add a new component"),
-             [this]() { m_commandController->onNewComponent(); }},
-            {"Insert .kcd",   IconFactory::createIcon("insert"),    tr("Insert Component \u2014 Import a .kcd file"),
-             [this]() { m_commandController->onInsertComponent(); }},
-        });
-        addGroupSeparator(layout);
-
-        addToolGroup(layout, "Inspect", {
-            {"Interference", IconFactory::createIcon("interference"), tr("Check Interference"),
-             [this]() { onCheckInterference(); }},
-        });
-
-        layout->addStretch();
-        m_assemblyTabIndex = m_ribbon->addTab(tab, tr("ASSEMBLY"));
+        // Hide SKETCH tab by default
+        if (tabName == "SKETCH")
+            m_ribbon->setTabVisible(tabIndex, false);
     }
 
     containerLayout->addWidget(m_ribbon);
@@ -2919,8 +3295,11 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
         });
 
         menu.addSeparator();
-        menu.addAction(tr("Create Sketch"), m_commandController, &CommandController::onCreateSketch);
-        menu.addAction(tr("Create Box"),    m_commandController, &CommandController::onCreateBox);
+
+        // Add creation tools from registry for empty-space context
+        auto emptyTools = ToolRegistry::instance().contextMenuTools("empty");
+        for (const auto* t : emptyTools)
+            menu.addAction(t->icon, t->name, t->action);
 
         menu.exec(globalPos);
         return;
@@ -2930,44 +3309,13 @@ void MainWindow::showViewportContextMenu(const QPoint& globalPos)
     bool hasFace = (hit.faceIndex >= 0);
     bool hasEdge = (hit.edgeIndex >= 0);
 
-    if (hasFace) {
-        // ── Right-click on face ─────────────────────────────────────────
-        menu.addAction(tr("Press/Pull"), m_commandController, &CommandController::onPressPull);
-        menu.addAction(tr("Create Sketch on Face"), m_commandController, &CommandController::onCreateSketch);
-        menu.addAction(tr("Extrude"),               m_commandController, &CommandController::onExtrudeSketch);
-        menu.addSeparator();
-        menu.addAction(tr("Fillet"),                m_commandController, &CommandController::onFillet);
-        menu.addAction(tr("Chamfer"),               m_commandController, &CommandController::onChamfer);
-        menu.addAction(tr("Shell (remove this face)"), m_commandController, &CommandController::onShell);
-        menu.addAction(tr("Draft"),                 m_commandController, &CommandController::onDraft);
-        menu.addAction(tr("Hole"),                  m_commandController, &CommandController::onAddHole);
-        menu.addSeparator();
-        menu.addAction(tr("Appearance"), this, [this]() {
-            statusBar()->showMessage(tr("Appearance \u2014 not yet implemented"));
-        });
-        menu.addAction(tr("Measure"), m_commandController, &CommandController::onMeasure);
-        menu.addSeparator();
-        menu.addAction(tr("Delete"), m_commandController, &CommandController::onDeleteSelectedFeature);
-    } else if (hasEdge) {
-        // ── Right-click on edge ─────────────────────────────────────────
-        menu.addAction(tr("Fillet this Edge"),  m_commandController, &CommandController::onFillet);
-        menu.addAction(tr("Chamfer this Edge"), m_commandController, &CommandController::onChamfer);
-        menu.addSeparator();
-        menu.addAction(tr("Measure"), m_commandController, &CommandController::onMeasure);
-        menu.addSeparator();
-        menu.addAction(tr("Delete"), m_commandController, &CommandController::onDeleteSelectedFeature);
-    } else {
-        // Body selected (no specific sub-entity) — fallback
-        menu.addAction(tr("Mirror"),       m_commandController, &CommandController::onMirrorLastBody);
-        menu.addAction(tr("Rect Pattern"), m_commandController, &CommandController::onRectangularPattern);
-        menu.addAction(tr("Circ Pattern"), m_commandController, &CommandController::onCircularPattern);
-        menu.addAction(tr("Shell"),        m_commandController, &CommandController::onShell);
-        menu.addAction(tr("Hole"),         m_commandController, &CommandController::onAddHole);
-        menu.addSeparator();
-        menu.addAction(tr("Measure"), m_commandController, &CommandController::onMeasure);
-        menu.addSeparator();
-        menu.addAction(tr("Delete"), m_commandController, &CommandController::onDeleteSelectedFeature);
-    }
+    QString contextType = "body";
+    if (hasFace)      contextType = "face";
+    else if (hasEdge) contextType = "edge";
+
+    auto tools = ToolRegistry::instance().contextMenuTools(contextType);
+    for (const auto* t : tools)
+        menu.addAction(t->icon, t->name, t->action);
 
     menu.exec(globalPos);
 }
@@ -3375,76 +3723,19 @@ void MainWindow::setupCommandPalette()
         m_commandPalette->activate();
     });
 
-    // Register all available commands
-    std::vector<CommandPalette::CommandEntry> cmds = {
-        // ── File ────────────────────────────────────────────────────────
-        {"New Document",     "Ctrl+N",       "File",   [this]() { onNewDocument(); }},
-        {"Open...",          "Ctrl+O",       "File",   [this]() { onOpenDocument(); }},
-        {"Save",             "Ctrl+S",       "File",   [this]() { onSaveDocument(); }},
-        {"Import File...",   "Ctrl+I",       "File",   [this]() { onImportFile(); }},
-        {"Import STL as Body...", "",       "File",   [this]() { onImportSTL(); }},
-        {"Export STEP...",   "",             "File",   [this]() { onExportSTEP(); }},
-        {"Export STL...",    "",             "File",   [this]() { onExportSTL(); }},
-
-        // ── Edit ────────────────────────────────────────────────────────
-        {"Undo",             "Ctrl+Z",       "Edit",   [this]() { onUndo(); }},
-        {"Redo",             "Ctrl+Y",       "Edit",   [this]() { onRedo(); }},
-        {"Delete",           "Del",          "Edit",   [this]() { m_commandController->onDeleteSelectedFeature(); }},
-
-        // ── Model (Create) ──────────────────────────────────────────────
-        {"Create Box",       "B",            "Model",  [this]() { m_commandController->onCreateBox(); }},
-        {"Create Cylinder",  "",             "Model",  [this]() { m_commandController->onCreateCylinder(); }},
-        {"Create Sphere",    "",             "Model",  [this]() { m_commandController->onCreateSphere(); }},
-        {"Create Torus",     "",             "Model",  [this]() { m_commandController->onCreateTorus(); }},
-        {"Create Pipe",      "",             "Model",  [this]() { m_commandController->onCreatePipe(); }},
-
-        // ── Model (Modify) ──────────────────────────────────────────────
-        {"Extrude",          "E",            "Model",  [this]() { m_commandController->onExtrudeSketch(); }},
-        {"Revolve",          "",             "Model",  [this]() { m_commandController->onRevolveSketch(); }},
-        {"Fillet",           "F",            "Model",  [this]() { m_commandController->onFillet(); }},
-        {"Chamfer",          "",             "Model",  [this]() { m_commandController->onChamfer(); }},
-        {"Shell",            "",             "Model",  [this]() { m_commandController->onShell(); }},
-        {"Draft",            "",             "Model",  [this]() { m_commandController->onDraft(); }},
-        {"Hole",             "H",            "Model",  [this]() { m_commandController->onAddHole(); }},
-        {"Mirror",           "",             "Model",  [this]() { m_commandController->onMirrorLastBody(); }},
-        {"Rectangular Pattern", "",          "Model",  [this]() { m_commandController->onRectangularPattern(); }},
-        {"Circular Pattern", "",             "Model",  [this]() { m_commandController->onCircularPattern(); }},
-        {"Sweep",            "",             "Model",  [this]() { m_commandController->onSweepSketch(); }},
-        {"Loft",             "",             "Model",  [this]() { m_commandController->onLoftTest(); }},
-
-        // ── Sketch ──────────────────────────────────────────────────────
-        {"Create Sketch",    "",             "Sketch", [this]() { m_commandController->onCreateSketch(); }},
-        {"Edit Sketch",      "",             "Sketch", [this]() { m_commandController->onEditSketch(); }},
-        {"Import DXF to Sketch...", "",      "Sketch", [this]() { onImportDxfToSketch(); }},
-        {"Import SVG to Sketch...", "",      "Sketch", [this]() { onImportSvgToSketch(); }},
-
-        // ── Assembly ────────────────────────────────────────────────────
-        {"New Component",    "",             "Assembly",[this]() { m_commandController->onNewComponent(); }},
-        {"Insert Component...", "",          "Assembly",[this]() { m_commandController->onInsertComponent(); }},
-        {"Add Joint",        "J",            "Assembly",[this]() { m_commandController->onAddJoint(); }},
-        {"Check Interference","",            "Assembly",[this]() { onCheckInterference(); }},
-
-        // ── View ────────────────────────────────────────────────────────
-        {"Fit All",          "Home",         "View",   [this]() { m_viewport->fitAll(); }},
-        {"Front View",       "Num1",         "View",   [this]() { m_viewport->setStandardView(StandardView::Front); }},
-        {"Back View",        "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Back); }},
-        {"Left View",        "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Left); }},
-        {"Right View",       "Num3",         "View",   [this]() { m_viewport->setStandardView(StandardView::Right); }},
-        {"Top View",         "Num7",         "View",   [this]() { m_viewport->setStandardView(StandardView::Top); }},
-        {"Bottom View",      "",             "View",   [this]() { m_viewport->setStandardView(StandardView::Bottom); }},
-        {"Isometric View",   "Num0",         "View",   [this]() { m_viewport->setStandardView(StandardView::Isometric); }},
-        {"Toggle Grid",      "G",            "View",   [this]() { m_viewport->setShowGrid(!m_viewport->showGrid()); }},
-        {"Toggle Origin",    "O",            "View",   [this]() { m_viewport->setShowOrigin(!m_viewport->showOrigin()); }},
-
-        // ── Tools ───────────────────────────────────────────────────────
-        {"Measure",          "M",            "Tools",  [this]() { m_commandController->onMeasure(); }},
-
-        // ── Section planes ──────────────────────────────────────────────
-        {"Section X",        "",             "View",   [this]() { onSectionX(); }},
-        {"Section Y",        "",             "View",   [this]() { onSectionY(); }},
-        {"Section Z",        "",             "View",   [this]() { onSectionZ(); }},
-        {"Clear Section",    "",             "View",   [this]() { onClearSection(); }},
-    };
+    // Build command palette entries from the ToolRegistry
+    auto& reg = ToolRegistry::instance();
+    std::vector<CommandPalette::CommandEntry> cmds;
+    for (const auto& t : reg.allTools()) {
+        // Skip context-menu-only tools with empty tab and empty menuPath (duplicates)
+        if (t.tab.isEmpty() && t.menuPath.isEmpty())
+            continue;
+        // Determine category for the palette
+        QString category = t.menuPath;
+        if (category.isEmpty())
+            category = t.tab;
+        cmds.push_back({t.name, t.shortcut, category, t.action});
+    }
 
     m_commandPalette->setCommands(cmds);
 }
