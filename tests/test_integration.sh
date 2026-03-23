@@ -405,6 +405,161 @@ run_test "Unstitch missing body fails" \
 {"cmd":"unstitch","id":2,"targetBodyId":"nonexistent"}' \
     '"ok":false'
 
+# ── Previously Untested Commands ────────────────────────────────────
+echo ""
+echo "--- Primitives ---"
+
+run_test "Create torus" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createTorus","id":2,"majorRadius":20,"minorRadius":5}' \
+    '"bodyId"'
+
+run_test "Create pipe" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createPipe","id":2,"outerRadius":15,"innerRadius":10,"height":30}' \
+    '"bodyId"'
+
+echo ""
+echo "--- Sketch Entities ---"
+
+run_test "Add arc to sketch" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createSketch","id":2,"plane":"XY"}
+{"cmd":"sketchAddPoint","id":3,"sketchId":"sketch_1","x":0,"y":0}
+{"cmd":"sketchAddPoint","id":4,"sketchId":"sketch_1","x":10,"y":0}
+{"cmd":"sketchAddPoint","id":5,"sketchId":"sketch_1","x":0,"y":10}
+{"cmd":"sketchAddArc","id":6,"sketchId":"sketch_1","centerPointId":"pt_1","startPointId":"pt_2","endPointId":"pt_3"}' \
+    '"arcId"'
+
+echo ""
+echo "--- Features ---"
+
+run_test "Revolve" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createSketch","id":2,"plane":"XY"}
+{"cmd":"sketchAddRectangle","id":3,"sketchId":"sketch_1","x1":5,"y1":0,"x2":15,"y2":20}
+{"cmd":"sketchSolve","id":4,"sketchId":"sketch_1"}
+{"cmd":"revolve","id":5,"sketchId":"sketch_1","angle":360}' \
+    '"bodyId"'
+
+run_test "Rectangular pattern" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":10,"dy":10,"dz":10}
+{"cmd":"rectangularPattern","id":3,"bodyId":"body_1","countX":3,"spacingX":20,"countY":2,"spacingY":20}' \
+    '"featureId"'
+
+run_test "Rib" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"rib","id":3,"bodyId":"body_1","thickness":2,"depth":15}' \
+    '"ok"'
+
+run_test "Web" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"web","id":3,"bodyId":"body_1","thickness":2,"depth":15,"count":3,"spacing":10}' \
+    '"ok"'
+
+run_test "Patch" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createSketch","id":2,"plane":"XY"}
+{"cmd":"sketchAddRectangle","id":3,"sketchId":"sketch_1","x1":0,"y1":0,"x2":30,"y2":20}
+{"cmd":"sketchSolve","id":4,"sketchId":"sketch_1"}
+{"cmd":"patch","id":5,"sketchId":"sketch_1"}' \
+    '"ok"'
+
+run_test "Split face" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"splitFace","id":3,"bodyId":"body_1","faceIndex":0}' \
+    '"ok"'
+
+run_test "Stitch" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":20,"dy":20,"dz":20}
+{"cmd":"stitch","id":3}' \
+    '"ok"'
+
+echo ""
+echo "--- Meta Commands ---"
+
+run_test "Help command" \
+    '{"cmd":"help","id":1}' \
+    '"commands"'
+
+run_test "Help for specific command" \
+    '{"cmd":"help","id":1,"about":"extrude"}' \
+    '"hint"'
+
+run_test "State command (empty)" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"state","id":2}' \
+    '"bodyCount"'
+
+run_test "State command (with body)" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"state","id":3}' \
+    '"bodies"'
+
+run_test "GetMesh" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"getMesh","id":3,"bodyId":"body_1"}' \
+    '"vertexCount"'
+
+run_test "Screenshot/export" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"screenshot","id":3,"path":"/tmp/test_ss.stl"}' \
+    '"stlPath"'
+
+run_test "GetFeatureParams" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"getFeatureParams","id":3,"featureId":"extrude_1"}' \
+    '"ok"'
+
+echo ""
+echo "--- Timeline ---"
+
+run_test "Undo/Redo cycle" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":3}
+{"cmd":"undo","id":4}
+{"cmd":"listFeatures","id":5}' \
+    '"Extrude"'
+
+run_test "Redo after undo" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":3}
+{"cmd":"undo","id":4}
+{"cmd":"redo","id":5}
+{"cmd":"listFeatures","id":6}' \
+    '"Fillet"'
+
+run_test "Set timeline marker" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"fillet","id":3,"bodyId":"body_1","radius":3}
+{"cmd":"setMarker","id":4,"position":1}
+{"cmd":"listBodies","id":5}' \
+    '"body_1"'
+
+echo ""
+echo "--- File Operations ---"
+
+run_test "Save and load" \
+    '{"cmd":"newDocument","id":1}
+{"cmd":"createBox","id":2,"dx":50,"dy":30,"dz":20}
+{"cmd":"save","id":3,"path":"/tmp/test_save_full.kcd"}
+{"cmd":"newDocument","id":4}
+{"cmd":"load","id":5,"path":"/tmp/test_save_full.kcd"}
+{"cmd":"listFeatures","id":6}' \
+    '"Extrude"'
+
 # ── Summary ─────────────────────────────────────────────────────────
 echo ""
 echo "==========================================="
