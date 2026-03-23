@@ -1702,3 +1702,115 @@ QPixmap IconDraw::importSvg(int size) {
 
     return px;
 }
+
+// =============================================================================
+// Navigation bar icons
+// =============================================================================
+
+QPixmap IconDraw::orbit(int size)
+{
+    QPixmap px(size, size); px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    float m = size * 0.15f, s = size * 0.7f;
+    // Circular arrow (orbit)
+    p.setPen(QPen(QColor(180, 180, 180), 1.5, Qt::SolidLine, Qt::RoundCap));
+    p.drawArc(QRectF(m, m, s, s), 30*16, 280*16);
+    // Arrow head
+    float cx = m + s*0.5f, cy = m;
+    float r = s*0.5f;
+    float ax = cx + r * std::cos(30.0 * M_PI / 180.0);
+    float ay = cy + s*0.5f - r * std::sin(30.0 * M_PI / 180.0);
+    p.drawLine(QPointF(ax, ay), QPointF(ax + 3, ay - 4));
+    p.drawLine(QPointF(ax, ay), QPointF(ax - 4, ay - 2));
+    return px;
+}
+
+QPixmap IconDraw::pan(int size)
+{
+    QPixmap px(size, size); px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    float c = size * 0.5f;
+    float arm = size * 0.28f;
+    p.setPen(QPen(QColor(180, 180, 180), 1.5, Qt::SolidLine, Qt::RoundCap));
+    // Cross arrows
+    p.drawLine(QPointF(c, c - arm), QPointF(c, c + arm));
+    p.drawLine(QPointF(c - arm, c), QPointF(c + arm, c));
+    // Arrow heads
+    float ah = 3;
+    p.drawLine(QPointF(c, c - arm), QPointF(c - ah, c - arm + ah));
+    p.drawLine(QPointF(c, c - arm), QPointF(c + ah, c - arm + ah));
+    p.drawLine(QPointF(c, c + arm), QPointF(c - ah, c + arm - ah));
+    p.drawLine(QPointF(c, c + arm), QPointF(c + ah, c + arm - ah));
+    p.drawLine(QPointF(c - arm, c), QPointF(c - arm + ah, c - ah));
+    p.drawLine(QPointF(c - arm, c), QPointF(c - arm + ah, c + ah));
+    p.drawLine(QPointF(c + arm, c), QPointF(c + arm - ah, c - ah));
+    p.drawLine(QPointF(c + arm, c), QPointF(c + arm - ah, c + ah));
+    return px;
+}
+
+QPixmap IconDraw::zoom(int size)
+{
+    QPixmap px(size, size); px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    float m = size * 0.15f, s = size * 0.45f;
+    // Magnifying glass circle
+    p.setPen(QPen(QColor(180, 180, 180), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QRectF(m, m, s, s));
+    // Handle
+    float cx = m + s, cy = m + s;
+    p.drawLine(QPointF(cx - 1, cy - 1), QPointF(size * 0.82f, size * 0.82f));
+    // + inside
+    float gc = m + s * 0.5f;
+    float gl = s * 0.25f;
+    p.drawLine(QPointF(gc - gl, gc), QPointF(gc + gl, gc));
+    p.drawLine(QPointF(gc, gc - gl), QPointF(gc, gc + gl));
+    return px;
+}
+
+QPixmap IconDraw::fitAll(int size)
+{
+    QPixmap px(size, size); px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    float m = size * 0.18f, s = size * 0.64f;
+    p.setPen(QPen(QColor(180, 180, 180), 1.5, Qt::SolidLine, Qt::RoundCap));
+    // Corner brackets (fit-to-view)
+    float bl = s * 0.3f;
+    // Top-left
+    p.drawLine(QPointF(m, m + bl), QPointF(m, m));
+    p.drawLine(QPointF(m, m), QPointF(m + bl, m));
+    // Top-right
+    p.drawLine(QPointF(m + s - bl, m), QPointF(m + s, m));
+    p.drawLine(QPointF(m + s, m), QPointF(m + s, m + bl));
+    // Bottom-left
+    p.drawLine(QPointF(m, m + s - bl), QPointF(m, m + s));
+    p.drawLine(QPointF(m, m + s), QPointF(m + bl, m + s));
+    // Bottom-right
+    p.drawLine(QPointF(m + s - bl, m + s), QPointF(m + s, m + s));
+    p.drawLine(QPointF(m + s, m + s - bl), QPointF(m + s, m + s));
+    // Small box in center
+    float inner = s * 0.25f;
+    float ic = m + s * 0.5f;
+    p.drawRect(QRectF(ic - inner, ic - inner, inner*2, inner*2));
+    return px;
+}
+
+QPixmap IconDraw::grid(int size)
+{
+    QPixmap px(size, size); px.fill(Qt::transparent);
+    QPainter p(&px);
+    p.setRenderHint(QPainter::Antialiasing);
+    float m = size * 0.2f, s = size * 0.6f;
+    p.setPen(QPen(QColor(150, 150, 150), 1.0));
+    // 3x3 grid lines
+    for (int i = 0; i <= 3; ++i) {
+        float t = m + s * i / 3.0f;
+        p.drawLine(QPointF(m, t), QPointF(m + s, t));
+        p.drawLine(QPointF(t, m), QPointF(t, m + s));
+    }
+    return px;
+}

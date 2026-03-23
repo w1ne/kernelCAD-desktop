@@ -361,6 +361,8 @@ void MainWindow::setupUI()
 
     // Create floating sketch palette (parented to viewport so it floats over it)
     m_sketchPalette = new SketchPalette(m_viewport);
+
+    setupNavBar();
 }
 
 // ─── Ribbon helpers ─────────────────────────────────────────────────────────
@@ -396,14 +398,38 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     }
     groupLayout->addLayout(buttonRow);
 
-    // Group label — uppercase, tiny, centered below icons
-    auto* groupLabel = new QLabel(groupName);
-    groupLabel->setAlignment(Qt::AlignCenter);
+    // Group label — clickable dropdown showing all tools in this group
+    bool hasDropdown = !dropdownExtras.empty();
+    QString labelText = hasDropdown ? (groupName + QStringLiteral(" \u25BE"))
+                                    : groupName;
+    auto* groupLabel = new QPushButton(labelText);
+    groupLabel->setObjectName("RibbonGroupLabel");
+    groupLabel->setFlat(true);
+    groupLabel->setCursor(hasDropdown ? Qt::PointingHandCursor : Qt::ArrowCursor);
     groupLabel->setFont(QFont(groupLabel->font().family(), 8));
     groupLabel->setFixedHeight(14);
-    groupLabel->setStyleSheet("color: #777; font-weight: 500; "
-                              "letter-spacing: 0.5px; background: transparent; border: none; "
-                              "padding: 0; margin: 0;");
+
+    if (hasDropdown) {
+        // Build a QMenu with primary tools + separator + extras
+        auto* menu = new QMenu(groupLabel);
+        for (const auto& tool : tools) {
+            auto* action = menu->addAction(tool.icon, tool.name);
+            action->setToolTip(tool.tooltip);
+            if (tool.action)
+                connect(action, &QAction::triggered, this, tool.action);
+        }
+        menu->addSeparator();
+        for (const auto& tool : dropdownExtras) {
+            auto* action = menu->addAction(tool.icon, tool.name);
+            action->setToolTip(tool.tooltip);
+            if (tool.action)
+                connect(action, &QAction::triggered, this, tool.action);
+        }
+        connect(groupLabel, &QPushButton::clicked, this, [groupLabel, menu]() {
+            menu->popup(groupLabel->mapToGlobal(QPoint(0, groupLabel->height())));
+        });
+    }
+
     groupLayout->addWidget(groupLabel);
 
     parentLayout->addWidget(groupWidget);
@@ -3453,6 +3479,53 @@ void MainWindow::hideConfirmBar()
 }
 
 // =============================================================================
+// Navigation bar (bottom-center of viewport, orbit/pan/zoom/fit)
+// =============================================================================
+
+void MainWindow::setupNavBar()
+{
+    m_navBar = new QWidget(m_viewport);
+    m_navBar->setObjectName("NavBar");
+    m_navBar->setStyleSheet(
+        "QWidget#NavBar { background: rgba(30, 30, 30, 200); border-radius: 10px;"
+        "  border: 1px solid rgba(255,255,255,0.06); }"
+        "QToolButton { background: transparent; border: none; border-radius: 4px;"
+        "  padding: 4px; }"
+        "QToolButton:hover { background: rgba(255,255,255,0.12); }");
+
+    auto* layout = new QHBoxLayout(m_navBar);
+    layout->setContentsMargins(6, 3, 6, 3);
+    layout->setSpacing(2);
+
+    struct NavEntry { QString icon; QString tip; std::function<void()> action; };
+    NavEntry entries[] = {
+        {"orbit",   tr("Orbit (Middle-drag)"),     nullptr},
+        {"pan",     tr("Pan (Shift+Middle-drag)"), nullptr},
+        {"zoom",    tr("Zoom (Scroll wheel)"),     nullptr},
+        {"fitAll",  tr("Fit All (Home)"),           [this]() { m_viewport->fitAll(); }},
+        {"grid",    tr("Toggle Grid (G)"),          [this]() { m_viewport->setShowGrid(!m_viewport->showGrid()); updateStatusBarInfo(); }},
+    };
+
+    for (const auto& e : entries) {
+        auto* btn = new QToolButton(m_navBar);
+        btn->setIcon(IconFactory::createIcon(e.icon, 16));
+        btn->setIconSize(QSize(16, 16));
+        btn->setFixedSize(26, 26);
+        btn->setToolTip(e.tip);
+        if (e.action)
+            connect(btn, &QToolButton::clicked, this, e.action);
+        layout->addWidget(btn);
+    }
+
+    m_navBar->adjustSize();
+    // Position at bottom-center of viewport (updated on resize via eventFilter)
+    int vpW = m_viewport->width();
+    int barW = m_navBar->width();
+    m_navBar->move((vpW - barW) / 2, m_viewport->height() - m_navBar->height() - 8);
+    m_navBar->show();
+}
+
+// =============================================================================
 // Rich status bar (body count, mode, units)
 // =============================================================================
 
@@ -3669,14 +3742,21 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
     if (obj == m_viewport) {
         if (event->type() == QEvent::Resize) {
+            int vpW = m_viewport->width();
+            int vpH = m_viewport->height();
             // Reposition floating confirm bar on viewport resize
             if (m_confirmBar && m_confirmBar->isVisible()) {
                 m_confirmBar->adjustSize();
                 int barW = m_confirmBar->width();
                 int barH = m_confirmBar->height();
-                int vpW  = m_viewport->width();
-                int vpH  = m_viewport->height();
                 m_confirmBar->move((vpW - barW) / 2, vpH - barH - 20);
+            }
+            // Reposition navigation bar
+            if (m_navBar) {
+                m_navBar->adjustSize();
+                int nW = m_navBar->width();
+                int nH = m_navBar->height();
+                m_navBar->move((vpW - nW) / 2, vpH - nH - 8);
             }
         } else if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);

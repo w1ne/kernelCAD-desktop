@@ -284,6 +284,10 @@ private:
     QPushButton* m_confirmCancelBtn = nullptr;
     void setupConfirmBar();
 
+    // ── Navigation bar (bottom-center viewport overlay) ────────────────────
+    QWidget* m_navBar = nullptr;
+    void setupNavBar();
+
     // ── Rich status bar segments ──────────────────────────────────────────
     QLabel* m_statusLeft   = nullptr;
     QLabel* m_statusCenter = nullptr;

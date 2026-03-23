@@ -85,6 +85,11 @@ QIcon IconFactory::createIcon(const QString& name, int size) {
         {"constraint",    &IconDraw::constraintIcon},
         {"import_dxf",    &IconDraw::importDxf},
         {"import_svg",    &IconDraw::importSvg},
+        {"orbit",         &IconDraw::orbit},
+        {"pan",           &IconDraw::pan},
+        {"zoom",          &IconDraw::zoom},
+        {"fitall",        &IconDraw::fitAll},
+        {"grid",          &IconDraw::grid},
     };
 
     auto it = map.find(name.toLower());

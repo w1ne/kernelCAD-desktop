@@ -86,4 +86,11 @@ QPixmap symmetric(int size);
 QPixmap fix(int size);
 QPixmap dimension(int size);
 
+// Navigation bar icons
+QPixmap orbit(int size);
+QPixmap pan(int size);
+QPixmap zoom(int size);
+QPixmap fitAll(int size);
+QPixmap grid(int size);
+
 } // namespace IconDraw
