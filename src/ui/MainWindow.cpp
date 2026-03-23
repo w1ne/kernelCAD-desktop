@@ -1631,39 +1631,59 @@ void MainWindow::setupDocks()
         }
     });
 
+    // All dock panels are movable, floatable, and closable — like Fusion 360.
+    // Users can drag panels to rearrange, stack them as tabs, or float as windows.
+    const auto dockFeatures = QDockWidget::DockWidgetMovable
+                            | QDockWidget::DockWidgetFloatable
+                            | QDockWidget::DockWidgetClosable;
+
     auto* leftDock = new QDockWidget(tr("Browser"), this);
     leftDock->setWidget(browserContainer);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    leftDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
-    leftDock->setMinimumWidth(240);
-    leftDock->setMaximumWidth(400);
+    leftDock->setFeatures(dockFeatures);
+    leftDock->setMinimumWidth(200);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // Properties -- right
     m_properties = new PropertiesPanel(this);
     auto* rightDock = new QDockWidget(tr("Properties"), this);
     rightDock->setWidget(m_properties);
-    rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    rightDock->setFeatures(dockFeatures);
+    rightDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     rightDock->setMinimumWidth(200);
-    rightDock->setMaximumWidth(300);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
     // Parameter Table -- tabbed alongside Properties on the right
     m_parameterTable = new ParameterTablePanel(this);
     auto* paramDock = new QDockWidget(tr("Parameters"), this);
     paramDock->setWidget(m_parameterTable);
-    paramDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    paramDock->setFeatures(dockFeatures);
+    paramDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::RightDockWidgetArea, paramDock);
     tabifyDockWidget(rightDock, paramDock);
     rightDock->raise();  // Properties tab is shown first by default
 
-    // Timeline -- bottom
+    // Timeline -- bottom (can also go to top)
     m_timeline = new TimelinePanel(this);
     auto* bottomDock = new QDockWidget(tr("Timeline"), this);
     bottomDock->setWidget(m_timeline);
-    bottomDock->setAllowedAreas(Qt::BottomDockWidgetArea);
-    bottomDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    bottomDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    bottomDock->setFeatures(dockFeatures);
     addDockWidget(Qt::BottomDockWidgetArea, bottomDock);
+
+    // Add View menu items to show/hide panels
+    auto* viewMenu = menuBar()->findChild<QMenu*>(QString(), Qt::FindDirectChildrenOnly);
+    // Find the View menu by iterating
+    for (auto* menu : menuBar()->findChildren<QMenu*>()) {
+        if (menu->title().contains("View")) {
+            menu->addSeparator();
+            menu->addAction(leftDock->toggleViewAction());
+            menu->addAction(rightDock->toggleViewAction());
+            menu->addAction(paramDock->toggleViewAction());
+            menu->addAction(bottomDock->toggleViewAction());
+            break;
+        }
+    }
 }
 
 void MainWindow::connectSignals()
