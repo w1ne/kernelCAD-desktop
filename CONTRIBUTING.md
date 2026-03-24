@@ -1,15 +1,14 @@
 # Contributing to kernelCAD
 
-## Branch Workflow
+## Branch Workflow (Trunk-Based)
 
-- `main` — protected, releases only (via PR)
-- `develop` — integration branch, PRs merge here
-- `feature/*` — feature branches, PR into develop
-- `release/v*` — release candidates, PR into main
+- `main` — single branch, always deployable
+- Feature branches → PR → `main`
+- No develop branch, no release branches
 
 ## Making Changes
 
-1. Branch from `develop`: `git checkout -b feature/my-feature develop`
+1. Branch from `main`: `git checkout -b feature/my-feature`
 2. Make changes
 3. Run all tests:
    ```bash
@@ -18,15 +17,14 @@
    cd .. && ./tests/test_integration.sh
    ./tests/test_stress.sh
    ```
-4. Push and create PR into `develop`
+4. Push and create PR into `main`
+5. CI runs automatically — merge when green
 
 ## Release Process
 
-1. Create `release/vX.Y.Z` branch from `develop`
-2. Update version in `CMakeLists.txt` and `CHANGELOG.md`
-3. PR into `main`
-4. Tag: `git tag v0.1.0 && git push --tags`
-5. GitHub Actions builds and creates the release
+1. Update version in `CMakeLists.txt` and `CHANGELOG.md`
+2. Tag on main: `git tag v0.2.0 && git push --tags`
+3. GitHub Actions auto-builds and creates the GitHub Release
 
 ## Adding a New Tool
 
@@ -34,10 +32,10 @@
 2. Create feature class in `src/features/` (params struct + execute)
 3. Add `Document::addXxx()` method
 4. Add `AddXxxCommand` in `Commands.h/.cpp`
-5. Register tool in `src/ui/ToolRegistration.cpp`
+5. Register tool in `src/ui/ToolRegistration.cpp` — appears everywhere automatically
 6. Add CLI command in `ScriptEngine.cpp`
 7. Add integration test in `tests/test_integration.sh`
-8. All tests must pass
+8. All 119+ tests must pass
 
 ## Code Style
 
