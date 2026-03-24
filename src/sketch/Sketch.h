@@ -83,6 +83,12 @@ public:
     std::string addEllipse(double cx, double cy, double majorRadius,
                            double minorRadius, double rotationAngle = 0.0);
 
+    // ── Entity properties ─────────────────────────────────────────────────
+    /// Toggle construction mode on an entity (line, circle, arc, ellipse).
+    /// Construction entities are rendered as dashed orange and excluded from profiles.
+    void setConstruction(const std::string& entityId, bool isConstruction);
+    bool getConstruction(const std::string& entityId) const;
+
     // ── Constraint creation ──────────────────────────────────────────────
     std::string addConstraint(ConstraintType type,
                               const std::vector<std::string>& entityIds,

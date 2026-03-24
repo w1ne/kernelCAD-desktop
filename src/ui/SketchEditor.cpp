@@ -1459,23 +1459,28 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
     }
 
     case Qt::Key_X: {
-        // Toggle construction mode on the nearest line or arc
+        // Toggle construction mode on the nearest entity (line, circle, arc, ellipse)
         if (!m_sketch) return true;
         double sx = m_currentX, sy = m_currentY;
-        std::string lineId = findNearestLine(sx, sy, 10.0);
-        if (!lineId.empty()) {
-            auto& ln = m_sketch->line(lineId);
-            ln.isConstruction = !ln.isConstruction;
+
+        // Try each entity type
+        std::string entityId;
+        entityId = findNearestLine(sx, sy, 10.0);
+        if (entityId.empty()) entityId = findNearestCircle(sx, sy, 10.0);
+        if (entityId.empty()) entityId = findNearestArc(sx, sy, 10.0);
+        if (entityId.empty()) entityId = findNearestEllipse(sx, sy, 10.0);
+
+        if (!entityId.empty()) {
+            bool current = m_sketch->getConstruction(entityId);
+            m_sketch->setConstruction(entityId, !current);
+            emit statusHint(current ? tr("Normal geometry") : tr("Construction geometry"));
             if (m_viewport) m_viewport->update();
             emit sketchChanged();
         } else {
-            std::string arcId = findNearestArc(sx, sy, 10.0);
-            if (!arcId.empty()) {
-                auto& a = m_sketch->arc(arcId);
-                a.isConstruction = !a.isConstruction;
-                if (m_viewport) m_viewport->update();
-                emit sketchChanged();
-            }
+            // No entity nearby — toggle global construction mode for new entities
+            m_constructionMode = !m_constructionMode;
+            emit statusHint(m_constructionMode ? tr("Construction mode ON — new entities will be construction")
+                                                : tr("Construction mode OFF — new entities will be normal"));
         }
         return true;
     }

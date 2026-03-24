@@ -104,12 +104,12 @@ void Application::setupDarkTheme()
 
         /* ── Ribbon group label ─────────────────────────────────────── */
         QPushButton#RibbonGroupLabel {
-            font-size: 8px; font-weight: 500; color: #777;
+            font-size: 10px; font-weight: 500; color: #aaa;
             letter-spacing: 0.5px; padding: 0px 4px 2px 4px;
             border: none; background: transparent;
-            min-height: 10px; max-height: 12px;
+            min-height: 14px; max-height: 16px;
         }
-        QPushButton#RibbonGroupLabel:hover { color: #aaa; background: transparent; border: none; }
+        QPushButton#RibbonGroupLabel:hover { color: #ddd; background: transparent; border: none; }
 
         /* ── Ribbon separator ───────────────────────────────────────── */
         QFrame#RibbonSeparator { background: #3a3a3a; border: none; }

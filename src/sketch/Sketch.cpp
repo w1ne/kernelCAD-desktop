@@ -275,6 +275,31 @@ std::string Sketch::addConstraint(ConstraintType type,
     return id;
 }
 
+void Sketch::setConstruction(const std::string& entityId, bool construction)
+{
+    auto lit = m_lines.find(entityId);
+    if (lit != m_lines.end()) { lit->second.isConstruction = construction; return; }
+    auto cit = m_circles.find(entityId);
+    if (cit != m_circles.end()) { cit->second.isConstruction = construction; return; }
+    auto ait = m_arcs.find(entityId);
+    if (ait != m_arcs.end()) { ait->second.isConstruction = construction; return; }
+    auto eit = m_ellipses.find(entityId);
+    if (eit != m_ellipses.end()) { eit->second.isConstruction = construction; return; }
+}
+
+bool Sketch::getConstruction(const std::string& entityId) const
+{
+    auto lit = m_lines.find(entityId);
+    if (lit != m_lines.end()) return lit->second.isConstruction;
+    auto cit = m_circles.find(entityId);
+    if (cit != m_circles.end()) return cit->second.isConstruction;
+    auto ait = m_arcs.find(entityId);
+    if (ait != m_arcs.end()) return ait->second.isConstruction;
+    auto eit = m_ellipses.find(entityId);
+    if (eit != m_ellipses.end()) return eit->second.isConstruction;
+    return false;
+}
+
 void Sketch::removeConstraint(const std::string& id)
 {
     m_constraints.erase(id);

@@ -407,8 +407,8 @@ private:
     // (m_perspectiveProjection moved to CameraController)
 
     // ViewCube constants
-    static constexpr int kViewCubeSize   = 100; // cube area in pixels
-    static constexpr int kViewCubeMargin =  10; // margin from top-right corner
+    static constexpr int kViewCubeSize   = 130; // cube area in pixels
+    static constexpr int kViewCubeMargin =  12; // margin from top-right corner
 
     /// Index of the currently hovered ViewCube face (-1 = none).
     int m_viewCubeHoveredFace = -1;

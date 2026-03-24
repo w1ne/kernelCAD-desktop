@@ -378,18 +378,18 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     groupLayout->setContentsMargins(2, 2, 2, 2);
     groupLayout->setSpacing(4);
 
-    // Button row — icon-only, 28x28 icons in 34x34 buttons
+    // Button row — icon-only, 32x32 icons in 40x40 buttons
     auto* buttonRow = new QHBoxLayout;
     buttonRow->setSpacing(2);
     for (const auto& tool : tools) {
         auto* btn = new QToolButton;
         btn->setIcon(tool.icon);
-        btn->setIconSize(QSize(28, 28));
+        btn->setIconSize(QSize(32, 32));
         btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
         btn->setToolTip(tool.tooltip);
         btn->setAutoRaise(true);
         btn->setCheckable(true);
-        btn->setFixedSize(34, 34);
+        btn->setFixedSize(40, 40);
         btn->setObjectName("RibbonButton");
         btn->setProperty("_toolName", tool.name);
         if (tool.action)
@@ -406,8 +406,8 @@ void MainWindow::addToolGroup(QHBoxLayout* parentLayout, const QString& groupNam
     groupLabel->setObjectName("RibbonGroupLabel");
     groupLabel->setFlat(true);
     groupLabel->setCursor(hasDropdown ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    groupLabel->setFont(QFont(groupLabel->font().family(), 8));
-    groupLabel->setFixedHeight(14);
+    groupLabel->setFont(QFont(groupLabel->font().family(), 9));
+    groupLabel->setFixedHeight(16);
 
     if (hasDropdown) {
         // Build a QMenu with primary tools + separator + extras
@@ -441,7 +441,7 @@ void MainWindow::addGroupSeparator(QHBoxLayout* layout)
     sep->setFrameShape(QFrame::VLine);
     sep->setObjectName("RibbonSeparator");
     sep->setFixedWidth(1);
-    sep->setFixedHeight(34);
+    sep->setFixedHeight(40);
     sep->setStyleSheet("background: #3a3a3a; border: none;");
     layout->addWidget(sep);
 }
@@ -491,7 +491,7 @@ void MainWindow::setupToolBar()
     m_ribbon = new QTabWidget;
     m_ribbon->setObjectName("Ribbon");
     m_ribbon->setTabPosition(QTabWidget::North);
-    m_ribbon->setFixedHeight(88);
+    m_ribbon->setFixedHeight(100);
 
     // Build tabs from registry
     for (const auto& tabName : reg.tabs()) {

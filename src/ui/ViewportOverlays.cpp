@@ -275,7 +275,7 @@ bool isInViewCubeArea(const QPoint& pos,
     const float cy = margin + cubeSize * 0.5f;
     const float ddx = pos.x() - cx;
     const float ddy = pos.y() - cy;
-    const float radius = cubeSize * 0.55f;
+    const float radius = cubeSize * 0.65f;
     return (ddx * ddx + ddy * ddy) <= (radius * radius);
 }
 
