@@ -5,12 +5,12 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
-![Lines of Code](https://img.shields.io/badge/lines-46K+-green)
+![Lines of Code](https://img.shields.io/badge/lines-52K+-green)
 
 ## Features
 
 ### Modeling
-- **29 feature types**: Extrude, Revolve, Fillet, Chamfer, Sweep, Loft, Shell, Mirror, Rectangular/Circular/Path Pattern, Coil, Hole, Thread, Draft, Scale, Thicken, Combine, SplitBody, OffsetFaces, DeleteFace, ReplaceFace, ReverseNormal, Move
+- **36 feature types**: Extrude, Revolve, Fillet, Chamfer, Sweep, Loft, Shell, Mirror, Rectangular/Circular/Path Pattern, Coil, Hole, Thread, Draft, Scale, Thicken, Combine, SplitBody, OffsetFaces, DeleteFace, ReplaceFace, ReverseNormal, Move
 - **Primitives**: Box, Cylinder, Sphere
 - **Boolean operations**: Union, Cut, Intersect
 - **Physical properties**: Volume, surface area, mass, center of gravity, inertia tensor (via BRepGProp)
@@ -91,7 +91,7 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 - **Command palette**: Ctrl+K fuzzy search across 40+ commands with shortcut display
 - **Feature Tree**: Hierarchical browser with component tree, body visibility checkboxes, per-type colored icons, health indicator dots (green/orange/red), in-place rename, context menu (Delete, Suppress, Rename, Set Material)
 - **Timeline Panel**: Compact 34x34 feature-type icons, bright blue rollback marker, group brackets, drag insertion indicator, rich HTML tooltips
-- **Properties Panel**: Editable forms for all 20 feature types with expression text fields (`width/2`) and live preview
+- **Properties Panel**: Editable forms for all 36 feature types with expression text fields (`width/2`) and live preview
 - **Parameter Table**: Dockable panel for named parameters (Name/Expression/Value/Unit/Comment)
 - **Right-click context menus**: Face/edge/body-specific actions in viewport
 - **Keyboard shortcuts**: E(xtrude), F(illet), H(ole), J(oint), D(imension), K(constraint), M(easure), I(measure), X(construction toggle), Delete, Numpad views
@@ -100,7 +100,7 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 - **Auto-save**: 5-minute periodic auto-save with crash recovery
 
 ### File I/O
-- **Native format**: `.kcd` (JSON) with full parametric history — all 29 feature types, sketches, joints, materials, timeline groups, parameters
+- **Native format**: `.kcd` (JSON) with full parametric history — all 36 feature types, sketches, joints, materials, timeline groups, parameters
 - **Import**: STEP (`.step`, `.stp`), IGES (`.igs`, `.iges`)
 - **Export**: STEP, STL, **3MF** (modern 3D printing format with units + ZIP packaging)
 - **2D Drawings**: HLR-projected Front/Top/Right/Isometric views with title block — export to **PDF** and **SVG**
@@ -109,8 +109,51 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 
 ### Undo/Redo
 - Full **command pattern** with undo/redo stacks
-- **38+ undoable commands** covering every feature type, deletion, suppression, joints, and timeline navigation
+- **40+ undoable commands** covering every feature type, deletion, suppression, joints, and timeline navigation
 - Dynamic menu text: *"Undo Add Extrude"*, *"Redo Delete Feature"*
+
+### Plugin System
+- **Python plugins** in `~/.kernelcad/plugins/` or `./plugins/`
+- Sandboxed execution (subprocess, 30s timeout)
+- Parameter dialog auto-generated from plugin metadata
+- **5 bundled plugins**: Spur Gear Generator, Enclosure Generator, Thread Insert Pattern, Git Sync, (custom)
+- Plugin format: Python file with `# kernelcad-plugin` header + `run(params)` function
+
+### Python API (CadQuery-style)
+```python
+from kernelcad import Workplane
+part = Workplane("XY").rect(80, 60).extrude(20).fillet(3).shell(2)
+print(f"Volume: {part.properties()['volume']:.0f} mm³")
+part.exportStep("bracket.step")
+```
+- Fluent API: `rect/circle/polygon` → `extrude/revolve` → `fillet/chamfer/shell` → `exportStep`
+- Engine: JSON-RPC over stdin/stdout to `kernelcad-cli`
+- Works standalone — no GUI needed
+
+### Agentic CAD (LLM Interface)
+```bash
+kernelcad-cli --schema        # JSON API spec for LLM discovery
+echo '{"cmd":"help"}' | kernelcad-cli  # per-command params + hints
+echo '{"cmd":"state"}' | kernelcad-cli # document introspection
+```
+- **50+ JSON commands** with descriptive error messages
+- `help` command: lists all params, return values, and next-step hints
+- `state` command: dumps bodies (volume/faces/edges), features, marker position
+- `getMesh`: vertex data for spatial reasoning
+- Self-discoverable — LLM needs no external documentation
+
+### Git Sync (Plugin)
+- Version control CAD designs with Git
+- Auto-commit with descriptive messages from feature timeline
+- Auto-generated README.md with design stats
+- STEP auto-export on commit
+- Push/pull to GitHub
+
+### Testing
+- **119 tests** across 3 suites:
+  - 9 unit tests (SketchSolver, Timeline, DependencyGraph, ParameterStore, OCCTKernel, PluginManager, Workflows, DrawingView, SketchButtons)
+  - 75 integration tests (every CLI command, all feature types, file I/O, error handling)
+  - 35 stress tests (extreme dimensions, combined workflows, error recovery)
 
 ## Building
 
@@ -154,7 +197,7 @@ cd build && ctest --output-on-failure
 ## Architecture
 
 ```
-src/                           160 files, 46K lines
+src/                           193 files, 52K lines
 ├── app/             (2)       Application entry point, dark theme setup
 ├── kernel/         (12)       OCCT wrapper, BRepModel, BRepQuery, EntityAttribute,
 │                              StableReference, Appearance, IconFactory
@@ -162,7 +205,7 @@ src/                           160 files, 46K lines
 │                              ParameterStore (expression engine), CommandHistory (38+ commands),
 │                              Serializer (1900 lines), Component/Occurrence, JointSolver,
 │                              PreviewEngine, AutoSave, CommandInput, InteractiveCommands
-├── features/       (60)       29 feature types + Joint + 3 construction types
+├── features/       (60)       36 feature types + Joint + 3 construction types
 ├── sketch/          (8)       6 entity types, 18 constraints, Newton-Raphson solver,
 │                              SketchToShape, profile detection
 └── ui/             (30)       Viewport3D (3000+ lines), FeatureTree, TimelinePanel,
