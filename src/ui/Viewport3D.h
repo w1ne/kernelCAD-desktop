@@ -1,4 +1,5 @@
 #pragma once
+#include "ViewportOverlays.h"
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -411,6 +412,12 @@ private:
 
     /// Index of the currently hovered ViewCube face (-1 = none).
     int m_viewCubeHoveredFace = -1;
+
+    /// True when the user is dragging the ViewCube to orbit.
+    bool m_viewCubeDragging = false;
+
+    /// Returns true if pos is inside the ViewCube circular area.
+    bool isInViewCubeArea(const QPoint& pos) const;
 
     /// Hit-test which ViewCube face the mouse is over. Returns face index or -1.
     int hitTestViewCubeFace(const QPoint& pos) const;

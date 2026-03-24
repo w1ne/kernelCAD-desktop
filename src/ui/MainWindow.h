@@ -5,6 +5,7 @@
 #include <string>
 #include "SelectionManager.h"  // SelectionFilter enum
 #include "CommandController.h" // PendingCommand enum
+#include "ToolRegistration.h"  // registerAllTools free function (friend)
 
 class QAction;
 class QActionGroup;
@@ -223,7 +224,7 @@ private:
     int         m_solidTabIndex   = 0;
     int         m_sketchTabIndex  = 0;
     int         m_assemblyTabIndex = 0;
-    void registerAllTools();
+    friend void ::registerAllTools(MainWindow* mw, CommandController* cmd);
     void setupToolBar();
 
     /// Ribbon helper: describes a single tool button in a ribbon group.

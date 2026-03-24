@@ -1,25 +1,11 @@
 #pragma once
 #include <string>
+#include "FeatureType.h"
 
 // Forward declare to avoid pulling OCCT into every header
 class TopoDS_Shape;
 
 namespace features {
-
-enum class FeatureType {
-    Extrude, Revolve, Fillet, Chamfer, Shell,
-    Loft, Sweep, Hole, Thread,
-    RectangularPattern, CircularPattern, Mirror,
-    Draft, Scale, SplitBody, Combine, OffsetFaces, Move, Thicken,
-    Sketch, ConstructionPlane, ConstructionAxis, ConstructionPoint,
-    PathPattern, Coil,
-    DeleteFace, ReplaceFace, ReverseNormal,
-    Joint,
-    Stitch, Unstitch, SplitFace, Patch, Rib, Web, PressPull,
-    BaseFeature
-};
-
-enum class HealthState { Healthy, Warning, Error, Suppressed, RolledBack, Unknown };
 
 class Feature
 {

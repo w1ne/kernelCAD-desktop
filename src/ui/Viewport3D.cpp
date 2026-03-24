@@ -1581,8 +1581,14 @@ void Viewport3D::mousePressEvent(QMouseEvent* event)
         }
     }
 
-    // Check ViewCube click (top-right corner)
-    if (event->button() == Qt::LeftButton && handleViewCubeClick(event->pos())) {
+    // Check ViewCube area — start drag-to-orbit or click-to-snap
+    if (event->button() == Qt::LeftButton && isInViewCubeArea(event->pos())) {
+        m_viewCubeDragging = true;
+        m_lastMousePos = event->pos();
+        m_mousePressPos = event->pos();
+        m_activeButton = Qt::LeftButton;
+        m_isDragging = false;
+        setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
     }
@@ -1621,6 +1627,21 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         m_activeButton = Qt::NoButton;
         m_isDragging = false;
         event->accept();
+        return;
+    }
+
+    // ViewCube release: snap to face if click, stop orbit if drag
+    if (m_viewCubeDragging && event->button() == Qt::LeftButton) {
+        if (!m_isDragging) {
+            // It was a click, not a drag — snap to the clicked face
+            handleViewCubeClick(event->pos());
+        }
+        m_viewCubeDragging = false;
+        m_activeButton = Qt::NoButton;
+        m_isDragging = false;
+        unsetCursor();
+        event->accept();
+        update();
         return;
     }
 
@@ -1707,6 +1728,24 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* event)
                 unsetCursor();
             update();
         }
+    }
+
+    // ViewCube drag-to-orbit
+    if (m_viewCubeDragging) {
+        const QPoint pos = event->pos();
+        int dx = pos.x() - m_mousePressPos.x();
+        int dy = pos.y() - m_mousePressPos.y();
+        if (!m_isDragging && (dx * dx + dy * dy > kDragThreshold * kDragThreshold))
+            m_isDragging = true;
+        if (m_isDragging) {
+            QVector3D va = arcballVector(m_lastMousePos);
+            QVector3D vb = arcballVector(pos);
+            m_camera->orbit(va, vb);
+        }
+        m_lastMousePos = pos;
+        update();
+        event->accept();
+        return;
     }
 
     const QPoint pos = event->pos();
@@ -3754,139 +3793,26 @@ void Viewport3D::drawWelcomeOverlay()
 // ViewCube overlay
 // =============================================================================
 
-void Viewport3D::drawViewCubeOverlay()
+/// Helper: extract the 3x3 camera rotation as a QMatrix4x4.
+static QMatrix4x4 cameraViewRotation(CameraController* cam)
 {
-    // Use QPainter on top of the OpenGL context to draw a 2D overlay.
-    // Qt requires endNativePainting() before using QPainter on an OpenGL widget.
-
-    // Build the view rotation matrix (rotation only -- no translation)
     QMatrix4x4 viewMat;
-    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
-    // Extract the 3x3 rotation (upper-left) as a QMatrix4x4
+    viewMat.lookAt(cam->eye(), cam->center(), cam->up());
     QMatrix4x4 viewRot;
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c)
             viewRot(r, c) = viewMat(r, c);
+    return viewRot;
+}
 
-    // Cube half-size in screen pixels
-    const float hs = kViewCubeSize * 0.35f;
-
-    // 8 cube corners in world-aligned space
-    const QVector3D corners[8] = {
-        {-hs, -hs, -hs}, { hs, -hs, -hs}, { hs,  hs, -hs}, {-hs,  hs, -hs},
-        {-hs, -hs,  hs}, { hs, -hs,  hs}, { hs,  hs,  hs}, {-hs,  hs,  hs}
-    };
-
-    // Project corners: rotate by camera, then map to 2D with simple ortho
-    // Center of the ViewCube area in widget coords
-    const float cx = width() - kViewCubeMargin - kViewCubeSize * 0.5f;
-    const float cy = kViewCubeMargin + kViewCubeSize * 0.5f;
-
-    QPointF p[8];
-    float   pz[8];
-    for (int i = 0; i < 8; ++i) {
-        QVector3D r = viewRot.map(corners[i]);
-        p[i]  = QPointF(cx + r.x(), cy - r.y());
-        pz[i] = r.z();
-    }
-
-    // 6 faces: indices, labels, direction vectors for click-to-snap
-    struct CubeFace {
-        int v[4];
-        const char* label;
-        QVector3D direction;
-        QVector3D up;
-    };
-    const CubeFace faces[6] = {
-        // Front face: -Y direction  (camera looks along -Y to see front)
-        {{4, 5, 6, 7}, "Front",  { 0,  1, 0}, {0, 0, 1}},
-        // Back face: +Y direction
-        {{1, 0, 3, 2}, "Back",   { 0, -1, 0}, {0, 0, 1}},
-        // Right face: -X direction
-        {{5, 1, 2, 6}, "Right",  {-1,  0, 0}, {0, 0, 1}},
-        // Left face: +X direction
-        {{0, 4, 7, 3}, "Left",   { 1,  0, 0}, {0, 0, 1}},
-        // Top face: -Z direction (camera looks down)
-        {{7, 6, 2, 3}, "Top",    { 0,  0, 1}, {0, 1, 0}},
-        // Bottom face: +Z direction
-        {{0, 1, 5, 4}, "Bottom", { 0,  0,-1}, {0,-1, 0}},
-    };
-
-    // Compute average Z for each face (for painter's algorithm)
-    struct FaceOrder { int idx; float avgZ; };
-    FaceOrder order[6];
-    for (int i = 0; i < 6; ++i) {
-        float z = 0;
-        for (int j = 0; j < 4; ++j)
-            z += pz[faces[i].v[j]];
-        order[i] = {i, z * 0.25f};
-    }
-    // Sort back-to-front (most negative Z first = farthest)
-    std::sort(std::begin(order), std::end(order),
-              [](const FaceOrder& a, const FaceOrder& b) { return a.avgZ < b.avgZ; });
-
-    // Begin QPainter overlay
+void Viewport3D::drawViewCubeOverlay()
+{
+    QMatrix4x4 viewRot = cameraViewRotation(m_camera);
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-
-    // Drop shadow behind the cube
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 40));
-    painter.drawEllipse(QPointF(cx + 2, cy + 2), kViewCubeSize * 0.54, kViewCubeSize * 0.54);
-
-    // Semi-transparent background circle behind the cube
-    painter.setBrush(QColor(40, 40, 40, 120));
-    painter.drawEllipse(QPointF(cx, cy), kViewCubeSize * 0.52, kViewCubeSize * 0.52);
-
-    // Draw faces back-to-front
-    for (int fi = 0; fi < 6; ++fi) {
-        const CubeFace& face = faces[order[fi].idx];
-
-        QPolygonF poly;
-        for (int j = 0; j < 4; ++j)
-            poly << p[face.v[j]];
-
-        // Face fill: slightly transparent gray, brighter for front-facing
-        bool isHovered = (order[fi].idx == m_viewCubeHoveredFace && order[fi].avgZ > 0);
-        int alpha = (order[fi].avgZ > 0) ? 180 : 100;
-        if (isHovered) {
-            painter.setBrush(QColor(0, 120, 212, 200));
-            painter.setPen(QPen(QColor(220, 220, 220, 230), 1.0));
-        } else {
-            painter.setBrush(QColor(70, 75, 80, alpha));
-            painter.setPen(QPen(QColor(180, 180, 180, 200), 1.0));
-        }
-        painter.drawPolygon(poly);
-
-        // Draw label only on front-facing faces (positive average Z = closer)
-        if (order[fi].avgZ > 0) {
-            QPointF center(0, 0);
-            for (int j = 0; j < 4; ++j)
-                center += p[face.v[j]];
-            center /= 4.0;
-
-            painter.setPen(isHovered ? QColor(255, 255, 255) : QColor(220, 220, 220));
-            QFont f = painter.font();
-            f.setPixelSize(isHovered ? 11 : 10);
-            f.setBold(true);
-            painter.setFont(f);
-            painter.drawText(QRectF(center.x() - 30, center.y() - 8, 60, 16),
-                             Qt::AlignCenter, face.label);
-        }
-    }
-
-    // Draw projection mode indicator
-    {
-        painter.setPen(QColor(140, 140, 140));
-        QFont f = painter.font();
-        f.setPixelSize(9);
-        f.setBold(false);
-        painter.setFont(f);
-        const char* projLabel = m_camera->isPerspective() ? "Persp" : "Ortho";
-        painter.drawText(QRectF(cx - 25, cy + kViewCubeSize * 0.5f + 2, 50, 14),
-                         Qt::AlignCenter, projLabel);
-    }
-
+    ViewportOverlays::drawViewCube(painter, viewRot, width(), height(),
+                                   kViewCubeSize, kViewCubeMargin,
+                                   m_viewCubeHoveredFace,
+                                   m_camera->isPerspective());
     painter.end();
 }
 
@@ -3909,139 +3835,31 @@ void Viewport3D::drawManipulatorOverlay()
     painter.end();
 }
 
+bool Viewport3D::isInViewCubeArea(const QPoint& pos) const
+{
+    return ViewportOverlays::isInViewCubeArea(pos, width(), height(),
+                                              kViewCubeSize, kViewCubeMargin);
+}
+
 bool Viewport3D::handleViewCubeClick(const QPoint& pos)
 {
-    // Check if click is in the ViewCube region (top-right corner)
-    const float cx = width() - kViewCubeMargin - kViewCubeSize * 0.5f;
-    const float cy = kViewCubeMargin + kViewCubeSize * 0.5f;
-    const float dx = pos.x() - cx;
-    const float dy = pos.y() - cy;
-    const float radius = kViewCubeSize * 0.55f;
-    if (dx * dx + dy * dy > radius * radius)
-        return false;
-
-    // Build view rotation for projection
-    QMatrix4x4 viewMat;
-    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
-    QMatrix4x4 viewRot;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            viewRot(r, c) = viewMat(r, c);
-
-    const float hs = kViewCubeSize * 0.35f;
-    const QVector3D corners[8] = {
-        {-hs, -hs, -hs}, { hs, -hs, -hs}, { hs,  hs, -hs}, {-hs,  hs, -hs},
-        {-hs, -hs,  hs}, { hs, -hs,  hs}, { hs,  hs,  hs}, {-hs,  hs,  hs}
-    };
-
-    QPointF p[8];
-    float   pz[8];
-    for (int i = 0; i < 8; ++i) {
-        QVector3D r = viewRot.map(corners[i]);
-        p[i]  = QPointF(cx + r.x(), cy - r.y());
-        pz[i] = r.z();
+    QMatrix4x4 viewRot = cameraViewRotation(m_camera);
+    QVector3D direction, up;
+    int face = ViewportOverlays::handleViewCubeClick(pos, viewRot, width(), height(),
+                                                      kViewCubeSize, kViewCubeMargin,
+                                                      direction, up);
+    if (face >= 0) {
+        m_camera->setStandardView(direction, up);
+        return true;
     }
-
-    struct CubeFace {
-        int v[4];
-        QVector3D direction;
-        QVector3D up;
-    };
-    const CubeFace faces[6] = {
-        {{4, 5, 6, 7}, { 0,  1, 0}, {0, 0, 1}},   // Front
-        {{1, 0, 3, 2}, { 0, -1, 0}, {0, 0, 1}},   // Back
-        {{5, 1, 2, 6}, {-1,  0, 0}, {0, 0, 1}},   // Right
-        {{0, 4, 7, 3}, { 1,  0, 0}, {0, 0, 1}},   // Left
-        {{7, 6, 2, 3}, { 0,  0, 1}, {0, 1, 0}},   // Top
-        {{0, 1, 5, 4}, { 0,  0,-1}, {0,-1, 0}},   // Bottom
-    };
-
-    // Find the front-most face that contains the click point
-    // Sort front-to-back (most positive Z first)
-    struct FaceOrder { int idx; float avgZ; };
-    FaceOrder order[6];
-    for (int i = 0; i < 6; ++i) {
-        float z = 0;
-        for (int j = 0; j < 4; ++j)
-            z += pz[faces[i].v[j]];
-        order[i] = {i, z * 0.25f};
-    }
-    std::sort(std::begin(order), std::end(order),
-              [](const FaceOrder& a, const FaceOrder& b) { return a.avgZ > b.avgZ; });
-
-    QPointF clickPt(pos);
-    for (int fi = 0; fi < 6; ++fi) {
-        if (order[fi].avgZ <= 0)
-            break;  // back-facing, not clickable
-
-        const CubeFace& face = faces[order[fi].idx];
-        QPolygonF poly;
-        for (int j = 0; j < 4; ++j)
-            poly << p[face.v[j]];
-
-        if (poly.containsPoint(clickPt, Qt::OddEvenFill)) {
-            m_camera->setStandardView(face.direction, face.up);
-            return true;
-        }
-    }
-
     return false;
 }
 
 int Viewport3D::hitTestViewCubeFace(const QPoint& pos) const
 {
-    const float cx = width() - kViewCubeMargin - kViewCubeSize * 0.5f;
-    const float cy = kViewCubeMargin + kViewCubeSize * 0.5f;
-    const float ddx = pos.x() - cx;
-    const float ddy = pos.y() - cy;
-    const float radius = kViewCubeSize * 0.55f;
-    if (ddx * ddx + ddy * ddy > radius * radius)
-        return -1;
-
-    QMatrix4x4 viewMat;
-    viewMat.lookAt(m_camera->eye(), m_camera->center(), m_camera->up());
-    QMatrix4x4 viewRot;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            viewRot(r, c) = viewMat(r, c);
-
-    const float hs = kViewCubeSize * 0.35f;
-    const QVector3D corners[8] = {
-        {-hs, -hs, -hs}, { hs, -hs, -hs}, { hs,  hs, -hs}, {-hs,  hs, -hs},
-        {-hs, -hs,  hs}, { hs, -hs,  hs}, { hs,  hs,  hs}, {-hs,  hs,  hs}
-    };
-    QPointF pt2d[8];
-    float ptz[8];
-    for (int i = 0; i < 8; ++i) {
-        QVector3D rr = viewRot.map(corners[i]);
-        pt2d[i] = QPointF(cx + rr.x(), cy - rr.y());
-        ptz[i] = rr.z();
-    }
-
-    const int faceVerts[6][4] = {
-        {4,5,6,7}, {1,0,3,2}, {5,1,2,6}, {0,4,7,3}, {7,6,2,3}, {0,1,5,4}
-    };
-
-    struct FO { int idx; float avgZ; };
-    FO order[6];
-    for (int i = 0; i < 6; ++i) {
-        float z = 0;
-        for (int j = 0; j < 4; ++j) z += ptz[faceVerts[i][j]];
-        order[i] = {i, z * 0.25f};
-    }
-    std::sort(std::begin(order), std::end(order),
-              [](const FO& a, const FO& b) { return a.avgZ > b.avgZ; });
-
-    QPointF clickPt(pos);
-    for (int fi = 0; fi < 6; ++fi) {
-        if (order[fi].avgZ <= 0) break;
-        QPolygonF poly;
-        for (int j = 0; j < 4; ++j)
-            poly << pt2d[faceVerts[order[fi].idx][j]];
-        if (poly.containsPoint(clickPt, Qt::OddEvenFill))
-            return order[fi].idx;
-    }
-    return -1;
+    QMatrix4x4 viewRot = cameraViewRotation(m_camera);
+    return ViewportOverlays::hitTestViewCubeFace(pos, viewRot, width(), height(),
+                                                  kViewCubeSize, kViewCubeMargin);
 }
 
 // =============================================================================

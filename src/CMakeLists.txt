@@ -88,6 +88,8 @@ add_executable(kernelCAD
   ui/CommandPalette.cpp
   ui/ViewportManipulator.cpp
   ui/ToolRegistry.cpp
+  ui/ToolRegistration.cpp
+  ui/ViewportOverlays.cpp
   ui/IconFactory.cpp
   ui/IconDrawFunctions.cpp
   ui/ParameterTablePanel.cpp
