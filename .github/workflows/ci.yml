@@ -32,13 +32,13 @@ jobs:
         run: cmake --build build -j$(nproc)
 
       - name: Unit Tests
-        run: cd build && ctest --output-on-failure
+        run: xvfb-run -a sh -c 'cd build && ctest --output-on-failure'
 
       - name: Integration Tests
-        run: ./tests/test_integration.sh
+        run: xvfb-run -a ./tests/test_integration.sh
 
       - name: Stress Tests
-        run: ./tests/test_stress.sh
+        run: xvfb-run -a ./tests/test_stress.sh
 
       - name: Python API Test
         run: |
