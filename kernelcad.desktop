@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=kernelCAD
+Exec=kernelCAD %F
+Icon=kernelcad
+Comment=kernelCAD Desktop
+Terminal=false
+Categories=Development;Engineering;X-Geometry;
