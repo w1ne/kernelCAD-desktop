@@ -1137,7 +1137,15 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
     }
 
     if (!m_drawingInProgress) {
-        // First click: record start position
+        // First click: snap to nearest existing point if close enough
+        double snapDist = std::max(static_cast<double>(m_snapTolerance * 3.0), 5.0);
+        std::string nearPt = findNearestPoint(sx, sy, snapDist);
+        if (!nearPt.empty()) {
+            const auto& pt = m_sketch->point(nearPt);
+            sx = pt.x;
+            sy = pt.y;
+        }
+
         m_startX = sx;
         m_startY = sy;
         m_currentX = sx;
@@ -1166,7 +1174,16 @@ bool SketchEditor::handleMousePress(QMouseEvent* event)
             break;
         }
     } else {
-        // Second click: finalize the operation
+        // Second click: snap to nearest existing point
+        {
+            double snapDist = std::max(static_cast<double>(m_snapTolerance * 3.0), 5.0);
+            std::string nearPt = findNearestPoint(sx, sy, snapDist);
+            if (!nearPt.empty()) {
+                const auto& pt = m_sketch->point(nearPt);
+                sx = pt.x;
+                sy = pt.y;
+            }
+        }
         m_currentX = sx;
         m_currentY = sy;
 
