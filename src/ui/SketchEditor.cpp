@@ -558,30 +558,70 @@ void SketchEditor::editSelectedConstraint()
                         con.type == sketch::ConstraintType::AngleBetween);
     if (!isDimension) return;
 
-    // Compute screen position for inline input near the constraint
-    double labelX = 0, labelY = 0;
-    if (!con.entityIds.empty()) {
+    auto skToScreen = [this](double ux, double uy) -> QPointF {
+        if (!m_viewport) return QPointF();
+        double wx, wy, wz;
+        m_sketch->sketchToWorld(ux, uy, wx, wy, wz);
+        return m_viewport->worldToScreen(QVector3D(
+            static_cast<float>(wx), static_cast<float>(wy), static_cast<float>(wz)));
+    };
+
+    QPointF labelScreen;
+
+    if (con.type == sketch::ConstraintType::Distance && con.entityIds.size() >= 2) {
         try {
-            const auto& pt = m_sketch->point(con.entityIds[0]);
-            labelX = pt.x; labelY = pt.y;
-        } catch (...) {
-            try {
-                const auto& ln = m_sketch->line(con.entityIds[0]);
-                const auto& p1 = m_sketch->point(ln.startPointId);
-                const auto& p2 = m_sketch->point(ln.endPointId);
-                labelX = (p1.x + p2.x) / 2.0;
-                labelY = (p1.y + p2.y) / 2.0;
-            } catch (...) {}
+            const auto& p1 = m_sketch->point(con.entityIds[0]);
+            const auto& p2 = m_sketch->point(con.entityIds[1]);
+            QPointF s1 = skToScreen(p1.x, p1.y);
+            QPointF s2 = skToScreen(p2.x, p2.y);
+            double dx = s2.x() - s1.x();
+            double dy = s2.y() - s1.y();
+            double len = std::sqrt(dx * dx + dy * dy);
+            double nx = 0, ny = 0;
+            if (len >= 1e-3) {
+                nx = -dy / len * 12.0;
+                ny =  dx / len * 12.0;
+            }
+            labelScreen = QPointF((s1.x() + s2.x()) / 2.0 + nx, (s1.y() + s2.y()) / 2.0 + ny);
+        } catch(...) {}
+    } else if (con.type == sketch::ConstraintType::Radius && !con.entityIds.empty()) {
+        try {
+            double px = 0, py = 0;
+            auto cIt = m_sketch->circles().find(con.entityIds[0]);
+            if (cIt != m_sketch->circles().end()) {
+                const auto& cp = m_sketch->point(cIt->second.centerPointId);
+                px = cp.x + con.value * 0.7; py = cp.y;
+            } else {
+                auto aIt = m_sketch->arcs().find(con.entityIds[0]);
+                if (aIt != m_sketch->arcs().end()) {
+                    const auto& cp = m_sketch->point(aIt->second.centerPointId);
+                    px = cp.x + con.value * 0.7; py = cp.y;
+                }
+            }
+            labelScreen = skToScreen(px, py);
+        } catch(...) {}
+    } else {
+        double lx = 0, ly = 0;
+        int count = 0;
+        for (const auto& eid : con.entityIds) {
+            auto pIt = m_sketch->points().find(eid);
+            if (pIt != m_sketch->points().end()) {
+                lx += pIt->second.x; ly += pIt->second.y; ++count;
+            }
+            auto lineIt = m_sketch->lines().find(eid);
+            if (lineIt != m_sketch->lines().end()) {
+                const auto& p1 = m_sketch->point(lineIt->second.startPointId);
+                const auto& p2 = m_sketch->point(lineIt->second.endPointId);
+                lx += (p1.x + p2.x) * 0.5; ly += (p1.y + p2.y) * 0.5; ++count;
+            }
         }
+        if (count > 0) labelScreen = skToScreen(lx / count, ly / count);
     }
 
-    double wx, wy, wz;
-    m_sketch->sketchToWorld(labelX, labelY, wx, wy, wz);
-    QPointF screenPt = m_viewport->worldToScreen(
-        QVector3D(static_cast<float>(wx), static_cast<float>(wy), static_cast<float>(wz)));
-
     m_inlineDimConstraintId = m_selectedConstraintId;
-    showInlineInput(screenPt.x(), screenPt.y() - 20, con.value, InlineInputMode::EditDimension);
+    if (!labelScreen.isNull()) {
+        showInlineInput(labelScreen.x(), labelScreen.y() - 10, con.value, InlineInputMode::EditDimension);
+    }
 }
 
 SketchPickResult SketchEditor::pickEntity(double sx, double sy, double threshold)

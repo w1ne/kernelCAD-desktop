@@ -1839,6 +1839,14 @@ void Viewport3D::wheelEvent(QWheelEvent* event)
 
 void Viewport3D::mouseDoubleClickEvent(QMouseEvent* event)
 {
+    // Delegate to sketch editor first (SketchEditor uses fast-click timestamps in handleMousePress to edit constraints)
+    if (m_sketchEditor && m_sketchEditor->isEditing()) {
+        if (m_sketchEditor->handleMousePress(event)) {
+            event->accept();
+            return;
+        }
+    }
+
     if (event->button() == Qt::MiddleButton) {
         // Double-click middle button: set orbit center to 3D hit point
         int faceId = pickAtScreenPos(event->pos());
