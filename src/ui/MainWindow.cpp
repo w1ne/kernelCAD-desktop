@@ -122,11 +122,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     setupUI();
     setupMenuBar();
-    ::registerAllTools(this, m_commandController);
-    setupToolBar();
-    installToolBarHoverFilters();
     setupDocks();
-    setupSketchToolBar();
+
     m_featureTree->setDocument(m_document.get());
     m_properties->setDocument(m_document.get());
     m_parameterTable->setDocument(m_document.get());
@@ -149,13 +146,19 @@ MainWindow::MainWindow(QWidget* parent)
     // Viewport right-click context menu and marking menu
     m_viewport->setContextMenuPolicy(Qt::PreventContextMenu);
     setupMarkingMenu();
-    // Create command controller (must be after m_featureDialog is created)
+
+    // Create command controller (must be after m_featureDialog and docks/properties are created)
     m_commandController = new CommandController(this, m_document.get(), m_selectionMgr.get(),
                                                  m_viewport, m_featureDialog, m_properties, this);
 
     m_selectionMgr->setOnSelectionChanged([this](const std::vector<SelectionHit>&) {
         m_commandController->onSelectionChanged();
     });
+
+    ::registerAllTools(this, m_commandController);
+    setupToolBar();
+    installToolBarHoverFilters();
+    setupSketchToolBar();
 
     // Create sketch editor
     m_sketchEditor = new SketchEditor(this);

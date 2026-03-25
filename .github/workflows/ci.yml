@@ -109,18 +109,42 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j$(nproc)
 
-      - name: Package
+      - name: Package DEB and RPM
         run: |
-          mkdir -p release
-          cp build/src/kernelCAD release/
-          cp build/src/kernelcad-cli release/
-          cp -r plugins/ release/plugins/
-          cp -r python/ release/python/
-          cp README.md CHANGELOG.md LICENSE release/
-          tar czf kernelcad-desktop-linux-x64.tar.gz -C release .
+          cd build
+          cpack -G DEB
+          cpack -G RPM
+          cpack -G TGZ
+          cd ..
+          mv build/*.deb .
+          mv build/*.rpm .
+          mv build/*.tar.gz ./kernelcad-desktop-linux-x64.tar.gz
+
+      - name: Build AppImage
+        env:
+          LINUXDEPLOY_OUTPUT_VERSION: "0.1.0"
+        run: |
+          wget -qnc https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -qnc https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QMAKE=/usr/bin/qmake6
+
+          mkdir -p AppDir/usr/bin
+          cp build/src/kernelCAD AppDir/usr/bin/
+          cp build/src/kernelcad-cli AppDir/usr/bin/
+          cp -r plugins/ AppDir/usr/bin/
+          cp -r python/ AppDir/usr/bin/
+
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --executable AppDir/usr/bin/kernelCAD --executable AppDir/usr/bin/kernelcad-cli --desktop-file kernelcad.desktop --icon-file kernelcad.svg --plugin qt --output appimage
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: kernelcad-desktop-linux-x64.tar.gz
+          files: |
+            kernelcad-desktop-linux-x64.tar.gz
+            *.deb
+            *.rpm
+            *.AppImage
           body_path: CHANGELOG.md

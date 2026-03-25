@@ -45,3 +45,29 @@ if(KERNELCAD_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# ── Installation and Packaging ────────────────────────────────────────────────
+if(UNIX AND NOT APPLE)
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+  
+  install(TARGETS kernelCAD kernelcad-cli DESTINATION opt/kernelcad)
+  install(DIRECTORY plugins python DESTINATION opt/kernelcad)
+  install(FILES README.md CHANGELOG.md LICENSE DESTINATION opt/kernelcad)
+  install(FILES kernelcad.desktop DESTINATION usr/share/applications)
+  install(FILES kernelcad.svg DESTINATION usr/share/icons/hicolor/scalable/apps)
+  
+  file(WRITE "${CMAKE_BINARY_DIR}/kernelcad.sh" "#!/bin/sh\nexec /opt/kernelcad/kernelCAD \"$@\"\n")
+  install(PROGRAMS "${CMAKE_BINARY_DIR}/kernelcad.sh" DESTINATION usr/bin RENAME kernelcad)
+
+  set(CPACK_PACKAGE_NAME "kernelcad-desktop")
+  set(CPACK_PACKAGE_VENDOR "w1ne")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "kernelCAD Desktop")
+  set(CPACK_PACKAGE_VERSION "0.1.0")
+  set(CPACK_GENERATOR "TGZ;DEB;RPM")
+  
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "w1ne")
+  set(CPACK_RPM_PACKAGE_AUTOREQPROV ON)
+
+  include(CPack)
+endif()
