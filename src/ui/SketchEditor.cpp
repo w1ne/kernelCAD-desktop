@@ -1516,9 +1516,26 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
         setTool(SketchTool::DrawSpline);
         return true;
 
-    case Qt::Key_D:
+    case Qt::Key_D: {
+        // Fusion-style: if near an entity in pointer mode, dimension it immediately
+        if (m_sketch && m_tool == SketchTool::None) {
+            SketchPickResult pick = pickEntity(m_currentX, m_currentY);
+            if (pick.kind == SketchPickResult::Line) {
+                // Add distance dimension on the line
+                handleDimensionPick(pick);
+                if (m_viewport) m_viewport->update();
+                return true;
+            }
+            if (pick.kind == SketchPickResult::Circle || pick.kind == SketchPickResult::Arc) {
+                // Add radius dimension
+                handleDimensionPick(pick);
+                if (m_viewport) m_viewport->update();
+                return true;
+            }
+        }
         setTool(SketchTool::Dimension);
         return true;
+    }
 
     case Qt::Key_K:
         setTool(SketchTool::AddConstraint);
