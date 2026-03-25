@@ -2089,9 +2089,12 @@ void SketchEditor::finalizeLine()
         return;
     }
 
-    // Reuse existing points when snapping, instead of always creating new ones
+    // Reuse existing points when snapping — generous threshold so user can
+    // easily connect to existing orphaned points
+    double snapDist = std::max(static_cast<double>(m_snapTolerance * 3.0), 5.0);
+
     std::string startPtId;
-    std::string nearStart = findNearestPoint(x1, y1, m_snapTolerance * 2.0);
+    std::string nearStart = findNearestPoint(x1, y1, snapDist);
     if (!nearStart.empty()) {
         startPtId = nearStart;
     } else {
@@ -2099,7 +2102,7 @@ void SketchEditor::finalizeLine()
     }
 
     std::string endPtId;
-    std::string nearEnd = findNearestPoint(x2, y2, m_snapTolerance * 2.0);
+    std::string nearEnd = findNearestPoint(x2, y2, snapDist);
     if (!nearEnd.empty()) {
         endPtId = nearEnd;
     } else {
