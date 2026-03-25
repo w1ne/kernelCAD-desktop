@@ -1741,12 +1741,27 @@ void SketchEditor::handleDimensionPick(const SketchPickResult& pick)
         }
 
         if (pick.kind == SketchPickResult::Line) {
-            m_firstPick = pick;
+            // Fusion-style: single click on a line instantly places its length dimension
+            const auto& ln = m_sketch->line(pick.entityId);
+            const auto& p1 = m_sketch->point(ln.startPointId);
+            const auto& p2 = m_sketch->point(ln.endPointId);
+            double len = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) +
+                                   (p2.y - p1.y) * (p2.y - p1.y));
+            if (len > 0.01) {
+                m_sketch->addConstraint(sketch::ConstraintType::Distance,
+                                        {ln.startPointId, ln.endPointId}, len);
+                m_sketch->solve();
+                emit sketchChanged();
+                emit statusHint(tr("Dimension: %.1f mm").arg(len));
+            }
+            m_firstPick = {};
             return;
         }
 
         if (pick.kind == SketchPickResult::Point) {
+            // First point picked — wait for second point to measure distance between them
             m_firstPick = pick;
+            emit statusHint(tr("Click second point for distance dimension"));
             return;
         }
         return;
@@ -2169,16 +2184,17 @@ void SketchEditor::finalizeRectangle()
     m_sketchUndoStack.push_back({SketchAction::AddEntity, lt, ""});
     m_sketchUndoStack.push_back({SketchAction::AddEntity, ll, ""});
 
+    // Rectangles are always H/V by definition — add explicit constraints
+    m_sketch->addConstraint(sketch::ConstraintType::Horizontal, {lb});
+    m_sketch->addConstraint(sketch::ConstraintType::Horizontal, {lt});
+    m_sketch->addConstraint(sketch::ConstraintType::Vertical, {lr});
+    m_sketch->addConstraint(sketch::ConstraintType::Vertical, {ll});
+
+    // Also constrain opposite sides to be equal length
+    m_sketch->addConstraint(sketch::ConstraintType::Equal, {lb, lt});
+    m_sketch->addConstraint(sketch::ConstraintType::Equal, {lr, ll});
+
     m_sketch->solve();
-
-    // Auto-apply H/V constraints to rectangle edges
-    autoConstrainLastEntity(lb);
-    autoConstrainLastEntity(lr);
-    autoConstrainLastEntity(lt);
-    autoConstrainLastEntity(ll);
-
-    if (m_autoConstrain)
-        m_sketch->autoConstrain();
 
     m_drawingInProgress = false;
     emit sketchChanged();
