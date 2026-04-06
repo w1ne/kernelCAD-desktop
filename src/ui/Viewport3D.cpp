@@ -4275,6 +4275,64 @@ void Viewport3D::drawSketchSnapAndDimensionOverlay()
         }
     }
 
+    // ── Contextual action hint near cursor (Fusion-style "Specify next point") ──
+    {
+        SketchTool tool = m_sketchEditor->currentTool();
+        QString hintText;
+        if (m_sketchEditor->isDrawingInProgress()) {
+            switch (tool) {
+                case SketchTool::DrawLine:        hintText = QStringLiteral("Specify next point"); break;
+                case SketchTool::DrawRectangle:
+                case SketchTool::DrawRectangleCenter: hintText = QStringLiteral("Specify opposite corner"); break;
+                case SketchTool::DrawCircle:      hintText = QStringLiteral("Specify radius"); break;
+                case SketchTool::DrawCircle3Point: hintText = QStringLiteral("Specify next point on circle"); break;
+                case SketchTool::DrawArc:         hintText = QStringLiteral("Specify next point on arc"); break;
+                case SketchTool::DrawArc3Point:   hintText = QStringLiteral("Specify next point on arc"); break;
+                case SketchTool::DrawSpline:      hintText = QStringLiteral("Specify next point (Esc to finish)"); break;
+                case SketchTool::DrawEllipse:     hintText = QStringLiteral("Specify ellipse axis"); break;
+                case SketchTool::DrawPolygon:     hintText = QStringLiteral("Specify polygon radius"); break;
+                case SketchTool::DrawSlot:        hintText = QStringLiteral("Specify slot end point"); break;
+                default: break;
+            }
+        } else {
+            switch (tool) {
+                case SketchTool::DrawLine:        hintText = QStringLiteral("Specify first point"); break;
+                case SketchTool::DrawRectangle:   hintText = QStringLiteral("Specify first corner"); break;
+                case SketchTool::DrawRectangleCenter: hintText = QStringLiteral("Specify center point"); break;
+                case SketchTool::DrawCircle:      hintText = QStringLiteral("Specify center point"); break;
+                case SketchTool::DrawArc:         hintText = QStringLiteral("Specify center point"); break;
+                default: break;
+            }
+        }
+
+        if (!hintText.isEmpty()) {
+            QPointF cursorScreen = skToScreen(cursorX, cursorY);
+
+            QFont hintFont("", 9);
+            painter.setFont(hintFont);
+            QFontMetricsF fm(hintFont);
+            QRectF br = fm.boundingRect(hintText);
+            double pad = 4.0;
+            double bw = br.width() + 2.0 * pad;
+            double bh = br.height() + 2.0 * pad;
+
+            // Position the hint just below-right of the cursor, clamped to viewport
+            double hintX = cursorScreen.x() + 18;
+            double hintY = cursorScreen.y() + 18;
+            if (hintX + bw > width() - 4)  hintX = cursorScreen.x() - 18 - bw;
+            if (hintY + bh > height() - 4) hintY = cursorScreen.y() - 18 - bh;
+            if (hintX < 4)  hintX = 4;
+            if (hintY < 4)  hintY = 4;
+
+            QRectF bgRect(hintX, hintY, bw, bh);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(40, 40, 40, 200));
+            painter.drawRoundedRect(bgRect, 3, 3);
+            painter.setPen(QColor(220, 220, 220));
+            painter.drawText(bgRect, Qt::AlignCenter, hintText);
+        }
+    }
+
     painter.end();
 }
 
