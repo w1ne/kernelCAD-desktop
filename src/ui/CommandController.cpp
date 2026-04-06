@@ -30,6 +30,17 @@
 #include "../features/SweepFeature.h"
 #include "../features/LoftFeature.h"
 #include "../features/OffsetFacesFeature.h"
+#include "../features/ScaleFeature.h"
+#include "../features/CombineFeature.h"
+#include "../features/SplitBodyFeature.h"
+#include "../features/MoveFeature.h"
+#include "../features/ThickenFeature.h"
+#include "../features/ThreadFeature.h"
+#include "../features/DeleteFaceFeature.h"
+#include "../features/ReplaceFaceFeature.h"
+#include "../features/SplitFaceFeature.h"
+#include "../features/PathPatternFeature.h"
+#include "../features/CoilFeature.h"
 #include "../features/ConstructionPlane.h"
 #include "../features/Joint.h"
 #include "../kernel/BRepModel.h"
@@ -1149,6 +1160,308 @@ std::vector<int> CommandController::collectSelectedFaces(std::string& bodyIdOut)
         bodyIdOut = sel.front().bodyId;
 
     return faces;
+}
+
+// =============================================================================
+// Modify commands (wired to existing feature implementations)
+// =============================================================================
+
+void CommandController::onScale()
+{
+    m_lastCommandName = tr("Scale");
+    m_lastCommandCallback = [this]() { onScale(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No bodies to scale."), 3000);
+        return;
+    }
+
+    // Use selected body or last body
+    std::string bodyId = ids.back();
+    if (m_selectionMgr->hasSelection())
+        bodyId = m_selectionMgr->selection().front().bodyId;
+
+    features::ScaleParams params;
+    params.targetBodyId = bodyId;
+    params.scaleType = features::ScaleType::Uniform;
+    params.factor = 2.0;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddScaleCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Scaled body: %1").arg(QString::fromStdString(bodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Scale Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onCombine()
+{
+    m_lastCommandName = tr("Combine");
+    m_lastCommandCallback = [this]() { onCombine(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.size() < 2) {
+        m_mainWindow->statusBar()->showMessage(tr("Need at least 2 bodies to combine."), 3000);
+        return;
+    }
+
+    features::CombineParams params;
+    params.targetBodyId = ids[0];
+    params.toolBodyId = ids[1];
+    params.operation = features::CombineOperation::Join;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddCombineCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Combined bodies"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Combine Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onSplitBody()
+{
+    m_lastCommandName = tr("Split Body");
+    m_lastCommandCallback = [this]() { onSplitBody(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No bodies to split."), 3000);
+        return;
+    }
+
+    std::string bodyId = ids.back();
+    if (m_selectionMgr->hasSelection())
+        bodyId = m_selectionMgr->selection().front().bodyId;
+
+    features::SplitBodyParams params;
+    params.targetBodyId = bodyId;
+    // Split at XY plane by default
+    params.usePlane = true;
+    params.planeOx = 0; params.planeOy = 0; params.planeOz = 0;
+    params.planeNx = 0; params.planeNy = 0; params.planeNz = 1;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddSplitBodyCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Split body at XY plane"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Split Body Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onMoveCopy()
+{
+    m_lastCommandName = tr("Move/Copy");
+    m_lastCommandCallback = [this]() { onMoveCopy(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No bodies to move."), 3000);
+        return;
+    }
+
+    std::string bodyId = ids.back();
+    if (m_selectionMgr->hasSelection())
+        bodyId = m_selectionMgr->selection().front().bodyId;
+
+    features::MoveParams params;
+    params.targetBodyId = bodyId;
+    params.mode = features::MoveMode::TranslateXYZ;
+    params.dx = 10.0; params.dy = 0.0; params.dz = 0.0;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddMoveCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Moved body: %1").arg(QString::fromStdString(bodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Move Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onThicken()
+{
+    m_lastCommandName = tr("Thicken");
+    m_lastCommandCallback = [this]() { onThicken(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("No bodies to thicken."), 3000);
+        return;
+    }
+
+    std::string bodyId = ids.back();
+    if (m_selectionMgr->hasSelection())
+        bodyId = m_selectionMgr->selection().front().bodyId;
+
+    features::ThickenParams params;
+    params.targetBodyId = bodyId;
+    params.thicknessExpr = "2 mm";
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddThickenCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Thickened body: %1").arg(QString::fromStdString(bodyId)));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Thicken Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onOffsetFaces()
+{
+    m_lastCommandName = tr("Offset Faces");
+    m_lastCommandCallback = [this]() { onOffsetFaces(); };
+
+    std::string bodyId;
+    std::vector<int> faces = collectSelectedFaces(bodyId);
+    if (bodyId.empty() || faces.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("Select face(s) to offset."), 3000);
+        return;
+    }
+
+    features::OffsetFacesParams params;
+    params.targetBodyId = bodyId;
+    params.faceIndices = faces;
+    params.distance = 2.0;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddOffsetFacesCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Offset %1 face(s)").arg(faces.size()));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Offset Faces Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onThread()
+{
+    m_lastCommandName = tr("Thread");
+    m_lastCommandCallback = [this]() { onThread(); };
+
+    std::string bodyId;
+    std::vector<int> faces = collectSelectedFaces(bodyId);
+    if (bodyId.empty() || faces.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("Select a cylindrical face for thread."), 3000);
+        return;
+    }
+
+    features::ThreadParams params;
+    params.targetBodyId = bodyId;
+    params.cylindricalFaceIndex = faces.front();
+    params.pitch = 1.5;
+    params.depth = 0.5;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddThreadCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Added thread to face"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Thread Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onDeleteFace()
+{
+    m_lastCommandName = tr("Delete Face");
+    m_lastCommandCallback = [this]() { onDeleteFace(); };
+
+    std::string bodyId;
+    std::vector<int> faces = collectSelectedFaces(bodyId);
+    if (bodyId.empty() || faces.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("Select face(s) to delete."), 3000);
+        return;
+    }
+
+    features::DeleteFaceParams params;
+    params.targetBodyId = bodyId;
+    params.faceIndices = faces;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddDeleteFaceCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Deleted %1 face(s)").arg(faces.size()));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Delete Face Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onReplaceFace()
+{
+    m_lastCommandName = tr("Replace Face");
+    m_lastCommandCallback = [this]() { onReplaceFace(); };
+    m_mainWindow->statusBar()->showMessage(
+        tr("Replace Face requires face + replacement surface selection (use properties panel to edit)."), 3000);
+}
+
+void CommandController::onSplitFace()
+{
+    m_lastCommandName = tr("Split Face");
+    m_lastCommandCallback = [this]() { onSplitFace(); };
+    m_mainWindow->statusBar()->showMessage(
+        tr("Split Face requires face + sketch selection (use properties panel to edit)."), 3000);
+}
+
+void CommandController::onPathPattern()
+{
+    m_lastCommandName = tr("Path Pattern");
+    m_lastCommandCallback = [this]() { onPathPattern(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.size() < 2) {
+        m_mainWindow->statusBar()->showMessage(tr("Need a body and a path body for Path Pattern."), 3000);
+        return;
+    }
+
+    features::PathPatternParams params;
+    params.targetBodyId = ids[0];
+    params.pathBodyId = ids[1];
+    params.count = 5;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddPathPatternCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Created path pattern"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Path Pattern Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
+}
+
+void CommandController::onCoil()
+{
+    m_lastCommandName = tr("Coil");
+    m_lastCommandCallback = [this]() { onCoil(); };
+    auto& brep = m_document->brepModel();
+    auto ids = brep.bodyIds();
+    if (ids.empty()) {
+        m_mainWindow->statusBar()->showMessage(tr("Create a profile body/sketch first for Coil."), 3000);
+        return;
+    }
+
+    features::CoilParams params;
+    params.profileBodyId = ids.back();
+    params.radius = 10.0;
+    params.pitch = 5.0;
+    params.turns = 5.0;
+
+    try {
+        m_document->executeCommand(
+            std::make_unique<document::AddCoilCommand>(std::move(params)));
+        m_mainWindow->statusBar()->showMessage(tr("Created coil"));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(m_mainWindow, tr("Coil Failed"), QString::fromUtf8(e.what()));
+    }
+    m_mainWindow->refreshAllPanels();
 }
 
 // =============================================================================

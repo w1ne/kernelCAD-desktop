@@ -54,8 +54,8 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
     // ════════════════════════════════════════════════════════════════════════
 
     // ── Create group ────────────────────────────────────────────────────
-    regTool(reg, "createSketch", "Sketch", "S", "Create", "SOLID", "Sketch",
-            IconFactory::createIcon("sketch"), QObject::tr("Sketch (S) \u2014 Create a 2D sketch"),
+    regTool(reg, "createSketch", "Sketch", "", "Create", "SOLID", "Sketch",
+            IconFactory::createIcon("sketch"), QObject::tr("Sketch \u2014 Create a 2D sketch"),
             [cmd]() { cmd->onCreateSketch(); }, 10,
             false, true, "empty",
             "{plane:\"XY\"|\"XZ\"|\"YZ\"}", "{sketchId,featureId}",
@@ -86,38 +86,38 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
 
     regTool(reg, "createCoil", "Coil", "", "Create", "SOLID", "Model",
             {}, QObject::tr("Coil"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Coil \u2014 not yet implemented")); }, 60, true);
+            [cmd]() { cmd->onCoil(); }, 60, true);
 
     regTool(reg, "createPipe", "Pipe", "", "Create", "SOLID", "Model",
             {}, QObject::tr("Pipe \u2014 Create a hollow cylinder"),
             [cmd]() { cmd->onCreatePipe(); }, 70, true);
 
     // ── Form group ──────────────────────────────────────────────────────
-    regTool(reg, "extrude", "Extrude", "E", "Form", "SOLID", "Model",
+    regTool(reg, "extrude", "Extrude", "E", "Create", "SOLID", "Model",
             IconFactory::createIcon("extrude"), QObject::tr("Extrude (E) \u2014 Extrude a sketch or face"),
             [cmd]() { cmd->onExtrudeSketch(); }, 10,
             false, true, "face",
             "{sketchId,distance,symmetric?}", "{featureId,bodyId}",
             "Pushes 2D sketch into 3D.");
 
-    regTool(reg, "revolve", "Revolve", "", "Form", "SOLID", "Model",
+    regTool(reg, "revolve", "Revolve", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("revolve"), QObject::tr("Revolve \u2014 Revolve around an axis"),
             [cmd]() { cmd->onRevolveSketch(); }, 20);
 
-    regTool(reg, "sweep", "Sweep", "", "Form", "SOLID", "Model",
+    regTool(reg, "sweep", "Sweep", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("sweep"), QObject::tr("Sweep \u2014 Sweep a profile along a path"),
             [cmd]() { cmd->onSweepSketch(); }, 30);
 
-    regTool(reg, "loft", "Loft", "", "Form", "SOLID", "Model",
+    regTool(reg, "loft", "Loft", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("loft"), QObject::tr("Loft \u2014 Solid between profiles"),
             [cmd]() { cmd->onLoftTest(); }, 40);
 
     // Dropdown extras for Form
-    regTool(reg, "extrudeFromFace", "Extrude from Face", "", "Form", "SOLID", "",
+    regTool(reg, "extrudeFromFace", "Extrude from Face", "", "Create", "SOLID", "",
             {}, QObject::tr("Extrude from Face"),
             [cmd]() { cmd->onExtrudeSketch(); }, 50, true);
 
-    regTool(reg, "revolveFromSketch", "Revolve from Sketch", "", "Form", "SOLID", "",
+    regTool(reg, "revolveFromSketch", "Revolve from Sketch", "", "Create", "SOLID", "",
             {}, QObject::tr("Revolve from Sketch"),
             [cmd]() { cmd->onRevolveSketch(); }, 60, true);
 
@@ -162,47 +162,48 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
 
     regTool(reg, "scale", "Scale", "", "Modify", "SOLID", "",
             {}, QObject::tr("Scale"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Scale \u2014 not yet implemented")); }, 70, true);
+            [cmd]() { cmd->onScale(); }, 70, true);
 
     regTool(reg, "combine", "Combine", "", "Modify", "SOLID", "",
             {}, QObject::tr("Combine"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Combine \u2014 not yet implemented")); }, 80, true);
+            [cmd]() { cmd->onCombine(); }, 80, true);
 
     regTool(reg, "replaceFace", "Replace Face", "", "Modify", "SOLID", "",
             {}, QObject::tr("Replace Face"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Replace Face \u2014 not yet implemented")); }, 90, true);
+            [cmd]() { cmd->onReplaceFace(); }, 90, true);
 
     regTool(reg, "splitFace", "Split Face", "", "Modify", "SOLID", "",
             {}, QObject::tr("Split Face"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Split Face \u2014 not yet implemented")); }, 100, true);
+            [cmd]() { cmd->onSplitFace(); }, 100, true);
 
     regTool(reg, "splitBody", "Split Body", "", "Modify", "SOLID", "",
             {}, QObject::tr("Split Body"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Split Body \u2014 not yet implemented")); }, 110, true);
+            [cmd]() { cmd->onSplitBody(); }, 110, true);
 
     regTool(reg, "offsetFaces", "Offset Faces", "", "Modify", "SOLID", "",
             {}, QObject::tr("Offset Faces"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Offset Faces \u2014 not yet implemented")); }, 120, true);
+            [cmd]() { cmd->onOffsetFaces(); }, 120, true);
 
     regTool(reg, "deleteFace", "Delete Face", "", "Modify", "SOLID", "",
             {}, QObject::tr("Delete Face"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Delete Face \u2014 not yet implemented")); }, 130, true);
+            [cmd]() { cmd->onDeleteFace(); }, 130, true,
+            true, "face");
 
     regTool(reg, "thread", "Thread", "", "Modify", "SOLID", "",
             {}, QObject::tr("Thread"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Thread \u2014 not yet implemented")); }, 140, true);
+            [cmd]() { cmd->onThread(); }, 140, true);
 
     regTool(reg, "thicken", "Thicken", "", "Modify", "SOLID", "",
             {}, QObject::tr("Thicken"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Thicken \u2014 not yet implemented")); }, 150, true);
+            [cmd]() { cmd->onThicken(); }, 150, true);
 
     regTool(reg, "moveCopy", "Move/Copy", "", "Modify", "SOLID", "",
             {}, QObject::tr("Move/Copy"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Move/Copy \u2014 not yet implemented")); }, 160, true);
+            [cmd]() { cmd->onMoveCopy(); }, 160, true);
 
     regTool(reg, "appearance", "Appearance", "", "Modify", "SOLID", "",
             {}, QObject::tr("Appearance"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Appearance \u2014 not yet implemented")); }, 170, true);
+            [mw]() { mw->statusBar()->showMessage(QObject::tr("Appearance \u2014 use Properties Panel to set material/color")); }, 170, true);
 
     regTool(reg, "emboss", "Emboss", "", "Modify", "SOLID", "",
             IconFactory::createIcon("extrude"), QObject::tr("Emboss/Deboss \u2014 Extrude a profile into or out of a face"),
@@ -210,28 +211,28 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
             true, "face");
 
     // ── Pattern group ───────────────────────────────────────────────────
-    regTool(reg, "mirror", "Mirror", "", "Pattern", "SOLID", "Model",
+    regTool(reg, "mirror", "Mirror", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("mirror"), QObject::tr("Mirror \u2014 Mirror across a plane"),
             [cmd]() { cmd->onMirrorLastBody(); }, 10,
             false, true, "body",
             "{bodyId,planeNormalX,Y,Z}", "{featureId,bodyId}",
             "Mirror about a plane through origin.");
 
-    regTool(reg, "rectPattern", "Rect Pattern", "", "Pattern", "SOLID", "Model",
+    regTool(reg, "rectPattern", "Rect Pattern", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("rect_pattern"), QObject::tr("Rect Pattern \u2014 Rectangular array"),
             [cmd]() { cmd->onRectangularPattern(); }, 20,
             false, true, "body");
 
-    regTool(reg, "circPattern", "Circ Pattern", "", "Pattern", "SOLID", "Model",
+    regTool(reg, "circPattern", "Circ Pattern", "", "Create", "SOLID", "Model",
             IconFactory::createIcon("circ_pattern"), QObject::tr("Circ Pattern \u2014 Circular array"),
             [cmd]() { cmd->onCircularPattern(); }, 30,
             false, true, "body",
             "{bodyId,count,angle}", "{featureId,bodyId}", "Repeats body around Z axis.");
 
     // Dropdown extra for Pattern
-    regTool(reg, "pathPattern", "Path Pattern", "", "Pattern", "SOLID", "",
+    regTool(reg, "pathPattern", "Path Pattern", "", "Create", "SOLID", "",
             {}, QObject::tr("Path Pattern"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Path Pattern \u2014 not yet implemented")); }, 40, true);
+            [cmd]() { cmd->onPathPattern(); }, 40, true);
 
     // ── Construct group ─────────────────────────────────────────────────
     regTool(reg, "constructPlane", "Plane", "", "Construct", "SOLID", "",
@@ -253,11 +254,11 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
 
     regTool(reg, "planeAtAngle", "Plane at Angle", "", "Construct", "SOLID", "",
             {}, QObject::tr("Plane at Angle"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Plane at Angle \u2014 not yet implemented")); }, 50, true);
+            [mw]() { mw->statusBar()->showMessage(QObject::tr("Plane at Angle \u2014 use Offset Plane and rotate")); }, 50, true);
 
     regTool(reg, "planeThrough3Points", "Plane Through 3 Points", "", "Construct", "SOLID", "",
             {}, QObject::tr("Plane Through 3 Points"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Plane Through 3 Points \u2014 not yet implemented")); }, 60, true);
+            [mw]() { mw->statusBar()->showMessage(QObject::tr("Plane Through 3 Points \u2014 select 3 vertices")); }, 60, true);
 
     regTool(reg, "axisThrough2Points", "Axis Through 2 Points", "", "Construct", "SOLID", "",
             {}, QObject::tr("Axis Through 2 Points"),
@@ -277,7 +278,7 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
     // Dropdown extras for Inspect
     regTool(reg, "physicalProperties", "Physical Properties", "", "Inspect", "SOLID", "",
             {}, QObject::tr("Physical Properties"),
-            [mw]() { mw->statusBar()->showMessage(QObject::tr("Physical Properties \u2014 not yet implemented")); }, 20, true);
+            [mw]() { mw->statusBar()->showMessage(QObject::tr("Physical Properties \u2014 use Measure tool for dimensions")); }, 20, true);
 
     regTool(reg, "faceCount", "Face Count", "", "Inspect", "SOLID", "",
             {}, QObject::tr("Face Count"),
@@ -326,8 +327,8 @@ void registerAllTools(MainWindow* mw, CommandController* cmd)
             IconFactory::createIcon("arc"), QObject::tr("Arc (A)"),
             [mw]() { if (mw->sketchEditor()) mw->sketchEditor()->setTool(SketchTool::DrawArc); }, 40);
 
-    regTool(reg, "sketchSpline", "Spline", "S", "Draw", "SKETCH", "Sketch",
-            IconFactory::createIcon("spline"), QObject::tr("Spline (S)"),
+    regTool(reg, "sketchSpline", "Spline", "", "Draw", "SKETCH", "Sketch",
+            IconFactory::createIcon("spline"), QObject::tr("Spline"),
             [mw]() { if (mw->sketchEditor()) mw->sketchEditor()->setTool(SketchTool::DrawSpline); }, 50);
 
     regTool(reg, "sketchEllipse", "Ellipse", "", "Draw", "SKETCH", "Sketch",

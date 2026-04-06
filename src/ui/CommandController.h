@@ -54,6 +54,18 @@ public:
     void onDraft();
     void onPressPull();
     void onAddHole();
+    void onScale();
+    void onCombine();
+    void onSplitBody();
+    void onMoveCopy();
+    void onThicken();
+    void onOffsetFaces();
+    void onThread();
+    void onDeleteFace();
+    void onReplaceFace();
+    void onSplitFace();
+    void onPathPattern();
+    void onCoil();
 
     // ── Pattern ─────────────────────────────────────────────────────────
     void onMirrorLastBody();

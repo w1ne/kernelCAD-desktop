@@ -1530,8 +1530,8 @@ bool SketchEditor::handleKeyPress(QKeyEvent* event)
         return true;
 
     case Qt::Key_S:
-        setTool(SketchTool::DrawSpline);
-        return true;
+        // S key opens the command palette (Design Shortcuts) — handled by MainWindow
+        return false;
 
     case Qt::Key_D: {
         // Fusion-style: if near an entity in pointer mode, dimension it immediately

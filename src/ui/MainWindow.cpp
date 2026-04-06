@@ -607,10 +607,12 @@ void MainWindow::setupToolBar()
     connect(measureAliasI, &QAction::triggered, m_commandController, &CommandController::onMeasure);
     addAction(measureAliasI);
 
-    auto* createSketchShortcut = new QAction(this);
-    createSketchShortcut->setShortcut(QKeySequence(tr("S")));
-    connect(createSketchShortcut, &QAction::triggered, m_commandController, &CommandController::onCreateSketch);
-    addAction(createSketchShortcut);
+    // "S" key opens the command palette (Design Shortcuts), matching Fusion 360.
+    // Create Sketch is available via toolbar and command palette search.
+    auto* designShortcutsKey = new QShortcut(QKeySequence(Qt::Key_S), this);
+    connect(designShortcutsKey, &QShortcut::activated, this, [this]() {
+        m_commandPalette->activate();
+    });
 
     auto* pressPullAction = new QAction(this);
     pressPullAction->setShortcut(QKeySequence(tr("Q")));
@@ -2469,7 +2471,7 @@ void MainWindow::setupSketchToolBar()
     addBtn("ellipse", "Ellipse", SketchTool::DrawEllipse);
     addBtn("polygon", "Polygon", SketchTool::DrawPolygon);
     addBtn("slot", "Slot", SketchTool::DrawSlot);
-    addBtn("spline", "Spline (S)", SketchTool::DrawSpline);
+    addBtn("spline", "Spline", SketchTool::DrawSpline);
 
     m_sketchToolBar->addSeparator();
 

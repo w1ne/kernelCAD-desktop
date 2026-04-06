@@ -1666,8 +1666,9 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* event)
         update();
     } else if (event->button() == Qt::LeftButton && !m_isDragging) {
         // Single click without drag -- perform a pick
-        bool shiftHeld = event->modifiers() & Qt::ShiftModifier;
-        handlePick(event->pos(), shiftHeld);
+        // Ctrl+click adds to selection (Fusion 360 convention)
+        bool addToSelection = event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
+        handlePick(event->pos(), addToSelection);
     }
 
     // Orbit momentum: if releasing middle-button while dragging, apply momentum
@@ -3785,7 +3786,7 @@ void Viewport3D::drawWelcomeOverlay()
     painter.setFont(subFont);
     painter.setPen(QColor(120, 120, 120));
     painter.drawText(QRect(0, h / 2 - 25, w, 20), Qt::AlignCenter,
-                     "Press S to create a sketch  |  Ctrl+O to open a file  |  Ctrl+N for new document");
+                     "Press S for Design Shortcuts  |  Ctrl+O to open a file  |  Ctrl+N for new document");
 
     // Keyboard shortcut hints
     QFont hintFont = subFont;

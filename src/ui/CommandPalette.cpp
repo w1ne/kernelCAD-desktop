@@ -114,7 +114,7 @@ CommandPalette::CommandPalette(QWidget* parent)
     // We use absolute positioning inside the overlay.
 
     m_searchBox = new QLineEdit(this);
-    m_searchBox->setPlaceholderText(tr("Type a command..."));
+    m_searchBox->setPlaceholderText(tr("Design Shortcuts — type a command..."));
     m_searchBox->setFixedHeight(kSearchBoxH);
     m_searchBox->setStyleSheet(
         "QLineEdit {"
