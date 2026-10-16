@@ -102,7 +102,7 @@ Open-source parametric CAD application built with C++17, Qt6, and OpenCASCADE Te
 ### File I/O
 - **Native format**: `.kcd` (JSON) with full parametric history — all 36 feature types, sketches, joints, materials, timeline groups, parameters
 - **Import**: STEP (`.step`, `.stp`), IGES (`.igs`, `.iges`)
-- **Export**: STEP, STL, **3MF** (modern 3D printing format with units + ZIP packaging)
+- **Export**: STEP, STL, OBJ, **3MF** (modern 3D printing format with units + ZIP packaging). Meshes are welded into closed models, use `draft` / `standard` / `fine` quality presets, and report whether they are watertight
 - **2D Drawings**: HLR-projected Front/Top/Right/Isometric views with title block — export to **PDF** and **SVG**
 - **Recent files**: File > Recent remembers last 10 opened/saved files (persisted via QSettings)
 - **Preferences**: Edit > Preferences for units, grid, auto-save interval, display, sketch settings

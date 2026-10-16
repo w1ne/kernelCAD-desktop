@@ -5,6 +5,7 @@ add_executable(kernelCAD
   kernel/OCCTKernel.cpp
   kernel/BRepModel.cpp
   kernel/MeshBoolean.cpp
+  kernel/TriMesh.cpp
   kernel/EntityAttribute.cpp
   kernel/BRepQuery.cpp
   kernel/StableReference.cpp
@@ -133,6 +134,7 @@ add_executable(kernelcad-cli
   kernel/OCCTKernel.cpp
   kernel/BRepModel.cpp
   kernel/MeshBoolean.cpp
+  kernel/TriMesh.cpp
   kernel/EntityAttribute.cpp
   kernel/BRepQuery.cpp
   kernel/StableReference.cpp

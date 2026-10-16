@@ -1,5 +1,6 @@
 #include "OCCTKernel.h"
 
+#include <algorithm>
 #include <cmath>
 #include <queue>
 #include <set>
@@ -42,6 +43,7 @@
 #include <gp_Ax2.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <IMeshTools_Parameters.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Shape.hxx>
@@ -58,7 +60,6 @@
 #include <STEPControl_Writer.hxx>
 #include <STEPControl_Reader.hxx>
 #include <IGESControl_Reader.hxx>
-#include <StlAPI_Writer.hxx>
 #include <StlAPI_Reader.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -1432,21 +1433,63 @@ bool OCCTKernel::exportSTEP(const TopoDS_Shape& shape, const std::string& path)
     return writer.Write(path.c_str()) == IFSelect_RetDone;
 }
 
-bool OCCTKernel::exportSTL(const TopoDS_Shape& shape, const std::string& path,
-                             double linDeflection)
+// Export meshes are welded so faces that share an edge also share its vertices.
+// The result is a closed, indexed mesh that the report can check. Normals are
+// dropped because no exporter writes them.
+static void prepareExportMesh(OCCTKernel::Mesh& mesh, trimesh::MeshReport* report)
 {
-    BRepMesh_IncrementalMesh mesh(shape, linDeflection);
-    mesh.Perform();
-    StlAPI_Writer writer;
-    return writer.Write(shape, path.c_str());
+    if (mesh.vertices.empty()) {
+        if (report) *report = trimesh::MeshReport{};
+        return;
+    }
+
+    // Tolerance is a millionth of the bounding diagonal: far below any printing
+    // feature, and well above float rounding at typical part sizes.
+    double lo[3] = { mesh.vertices[0], mesh.vertices[1], mesh.vertices[2] };
+    double hi[3] = { lo[0], lo[1], lo[2] };
+    for (size_t i = 0; i + 2 < mesh.vertices.size(); i += 3)
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], double(mesh.vertices[i + k]));
+            hi[k] = std::max(hi[k], double(mesh.vertices[i + k]));
+        }
+    double diagonalSquared = 0.0;
+    for (int k = 0; k < 3; ++k)
+        diagonalSquared += (hi[k] - lo[k]) * (hi[k] - lo[k]);
+    const double tolerance = std::max(1e-7, 1e-6 * std::sqrt(diagonalSquared));
+
+    trimesh::weld(mesh.vertices, mesh.indices, tolerance);
+    mesh.normals.clear();
+    if (report) *report = trimesh::analyze(mesh.vertices, mesh.indices);
+}
+
+bool OCCTKernel::exportSTL(const TopoDS_Shape& shape, const std::string& path,
+                             const MeshQuality& quality, trimesh::MeshReport* report)
+{
+    Mesh mesh = tessellate(shape, quality);
+    if (mesh.vertices.empty()) return false;
+    prepareExportMesh(mesh, report);
+    if (mesh.indices.empty()) return false;
+    return trimesh::writeBinarySTL(path, mesh.vertices, mesh.indices);
+}
+
+bool OCCTKernel::exportOBJ(const TopoDS_Shape& shape, const std::string& path,
+                           const MeshQuality& quality, trimesh::MeshReport* report)
+{
+    Mesh mesh = tessellate(shape, quality);
+    if (mesh.vertices.empty()) return false;
+    prepareExportMesh(mesh, report);
+    if (mesh.indices.empty()) return false;
+    return trimesh::writeOBJ(path, mesh.vertices, mesh.indices);
 }
 
 bool OCCTKernel::export3MF(const TopoDS_Shape& shape, const std::string& path,
-                            double linDeflection)
+                            const MeshQuality& quality, trimesh::MeshReport* report)
 {
     // Tessellate the shape
-    Mesh mesh = tessellate(shape, linDeflection);
+    Mesh mesh = tessellate(shape, quality);
     if (mesh.vertices.empty()) return false;
+    prepareExportMesh(mesh, report);
+    if (mesh.indices.empty()) return false;
 
     // 3MF is a ZIP file. We write an uncompressed ZIP with two entries:
     // [Content_Types].xml and 3D/3dmodel.model
@@ -1614,9 +1657,16 @@ bool OCCTKernel::export3MF(const TopoDS_Shape& shape, const std::string& path,
     return true;
 }
 
-OCCTKernel::Mesh OCCTKernel::tessellate(const TopoDS_Shape& shape, double linDeflection)
+OCCTKernel::Mesh OCCTKernel::tessellate(const TopoDS_Shape& shape, const MeshQuality& quality)
 {
-    BRepMesh_IncrementalMesh mesher(shape, linDeflection);
+    // Shapes are cached and shared, so an earlier export or preview may have left a
+    // finer triangulation behind. AllowQualityDecrease lets this request coarsen it;
+    // without it the output would depend on what was meshed before.
+    IMeshTools_Parameters parameters;
+    parameters.Deflection = quality.linearDeflection;
+    parameters.Angle = quality.angularDeflection;
+    parameters.AllowQualityDecrease = true;
+    BRepMesh_IncrementalMesh mesher(shape, parameters);
     mesher.Perform();
 
     Mesh result;

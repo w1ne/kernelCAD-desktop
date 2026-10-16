@@ -153,7 +153,7 @@ bool PreviewEngine::updatePreview()
             return false;
 
         // Tessellate the preview shape
-        auto mesh = kernel.tessellate(previewShape, 0.1);
+        auto mesh = kernel.tessellate(previewShape, kernel::OCCTKernel::MeshQuality::draft());
         if (mesh.vertices.empty())
             return false;
 

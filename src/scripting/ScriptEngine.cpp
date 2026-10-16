@@ -118,6 +118,52 @@ static std::vector<int> getIntArray(const JsonValue& obj, const std::string& key
     return out;
 }
 
+// Mesh export options shared by exportStl and exportObj. "quality" picks a preset
+// (draft, standard or fine); "deflection" (mm) and "angleDeg" (degrees) override it.
+static bool meshQualityFromCommand(const JsonValue& cmd, kernel::OCCTKernel::MeshQuality& quality,
+                                   std::string& error)
+{
+    const std::string preset = cmd.getString("quality", "standard");
+    if (preset == "draft")
+        quality = kernel::OCCTKernel::MeshQuality::draft();
+    else if (preset == "standard")
+        quality = kernel::OCCTKernel::MeshQuality::standard();
+    else if (preset == "fine")
+        quality = kernel::OCCTKernel::MeshQuality::fine();
+    else {
+        error = "Unknown quality '" + preset + "'. Use draft, standard or fine.";
+        return false;
+    }
+
+    const double pi = std::acos(-1.0);
+    quality.linearDeflection = cmd.getNumber("deflection", quality.linearDeflection);
+    const double angleDeg = cmd.getNumber("angleDeg", quality.angularDeflection * 180.0 / pi);
+    quality.angularDeflection = angleDeg * pi / 180.0;
+
+    if (!(quality.linearDeflection >= 0.001 && quality.linearDeflection <= 10.0)) {
+        error = "deflection must be between 0.001 and 10 mm";
+        return false;
+    }
+    if (!(angleDeg >= 1.0 && angleDeg <= 90.0)) {
+        error = "angleDeg must be between 1 and 90 degrees";
+        return false;
+    }
+    return true;
+}
+
+// Topology summary of an exported mesh, so a caller can check printability.
+static void writeMeshReport(JsonWriter& w, const kernel::trimesh::MeshReport& report)
+{
+    w.writeNumber("triangleCount", static_cast<double>(report.triangleCount));
+    w.writeNumber("vertexCount", static_cast<double>(report.vertexCount));
+    w.writeBool("watertight", report.watertight());
+    w.writeNumber("boundaryEdges", static_cast<double>(report.boundaryEdges));
+    w.writeNumber("nonManifoldEdges", static_cast<double>(report.nonManifoldEdges));
+    w.writeNumber("orientationErrors", static_cast<double>(report.orientationErrors));
+    w.writeNumber("degenerateTriangles", static_cast<double>(report.degenerateTriangles));
+    w.writeNumber("volume", report.volume);
+}
+
 /// Build a success JSON response.
 static std::string okResponse(int id, std::function<void(JsonWriter&)> fillResult)
 {
@@ -224,7 +270,8 @@ std::string ScriptEngine::Impl::helpCommand(int id, const std::string& about)
         {"faceCount", "{bodyId}", "{count}", "Number of B-Rep faces."},
         {"edgeCount", "{bodyId}", "{count}", "Number of B-Rep edges."},
         {"exportStep", "{path}", "{}", "Export all bodies to STEP file."},
-        {"exportStl", "{path}", "{}", "Export all bodies to STL file."},
+        {"exportStl", "{path,quality?,deflection?,angleDeg?}", "{triangleCount,vertexCount,watertight,boundaryEdges,nonManifoldEdges,orientationErrors,volume}", "Export all bodies to binary STL. quality: draft|standard|fine (default standard). Check watertight before printing."},
+        {"exportObj", "{path,quality?,deflection?,angleDeg?}", "{triangleCount,vertexCount,watertight,boundaryEdges,nonManifoldEdges,orientationErrors,volume}", "Export all bodies to Wavefront OBJ (mm). Same quality options as exportStl."},
         {"undo", "{}", "{}", "Undo last operation."},
         {"redo", "{}", "{}", "Redo."},
         {"state", "{}", "{bodies,features,sketches}", "Dump current document state — use this to understand what you have."},
@@ -380,14 +427,19 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
             if (!ok) return errResponse(id, "STEP export failed");
             return okResponse(id, nullptr);
         }
-        if (cmdName == "exportStl") {
+        if (cmdName == "exportStl" || cmdName == "exportObj") {
             std::string path = cmd.getString("path");
             if (path.empty()) return errResponse(id, "Missing 'path'");
-            double deflection = cmd.getNumber("deflection", 0.1);
+            kernel::OCCTKernel::MeshQuality quality;
+            std::string error;
+            if (!meshQualityFromCommand(cmd, quality, error)) return errResponse(id, error);
             TopoDS_Shape compound = compoundAllBodies();
-            bool ok = doc.kernel().exportSTL(compound, path, deflection);
-            if (!ok) return errResponse(id, "STL export failed");
-            return okResponse(id, nullptr);
+            kernel::trimesh::MeshReport report;
+            const bool isStl = cmdName == "exportStl";
+            const bool ok = isStl ? doc.kernel().exportSTL(compound, path, quality, &report)
+                                  : doc.kernel().exportOBJ(compound, path, quality, &report);
+            if (!ok) return errResponse(id, isStl ? "STL export failed" : "OBJ export failed");
+            return okResponse(id, [&](JsonWriter& w) { writeMeshReport(w, report); });
         }
         if (cmdName == "undo") {
             bool ok = doc.history().undo(doc);
@@ -1256,8 +1308,9 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
             if (!doc.brepModel().hasBody(bodyId))
                 return errResponse(id, "Body not found: " + bodyId);
 
-            double deflection = cmd.getNumber("deflection", 0.5);
-            auto mesh = doc.kernel().tessellate(doc.brepModel().getShape(bodyId), deflection);
+            kernel::OCCTKernel::MeshQuality quality = kernel::OCCTKernel::MeshQuality::draft();
+            quality.linearDeflection = cmd.getNumber("deflection", 0.5);
+            auto mesh = doc.kernel().tessellate(doc.brepModel().getShape(bodyId), quality);
 
             return okResponse(id, [&](JsonWriter& w) {
                 w.writeNumber("vertexCount", static_cast<double>(mesh.vertices.size() / 3));
@@ -1319,7 +1372,7 @@ std::string ScriptEngine::Impl::dispatch(const JsonValue& cmd)
                 stlPath = stlPath.substr(0, stlPath.rfind('.')) + ".stl";
 
             auto compound = compoundAllBodies();
-            doc.kernel().exportSTL(compound, stlPath, 0.1);
+            doc.kernel().exportSTL(compound, stlPath, kernel::OCCTKernel::MeshQuality::draft());
 
             // Return a text description the LLM can use
             return okResponse(id, [&](JsonWriter& w) {

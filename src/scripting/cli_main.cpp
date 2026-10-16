@@ -20,7 +20,7 @@ int main(int argc, char* argv[])
             "  \"version\": \"0.1.0\",\n"
             "  \"protocol\": \"JSONL: one JSON command per line on stdin, one JSON response per line on stdout\",\n"
             "  \"commands\": {\n"
-            "    \"document\": [\"newDocument\",\"save\",\"load\",\"importStep\",\"exportStep\",\"exportStl\",\"undo\",\"redo\",\"recompute\"],\n"
+            "    \"document\": [\"newDocument\",\"save\",\"load\",\"importStep\",\"exportStep\",\"exportStl\",\"exportObj\",\"undo\",\"redo\",\"recompute\"],\n"
             "    \"primitives\": [\"createBox\",\"createCylinder\",\"createSphere\",\"createTorus\",\"createPipe\"],\n"
             "    \"sketch\": [\"createSketch\",\"sketchAddPoint\",\"sketchAddLine\",\"sketchAddRectangle\",\"sketchAddCircle\",\"sketchAddArc\",\"sketchAddConstraint\",\"sketchSolve\",\"sketchDetectProfiles\"],\n"
             "    \"features\": [\"extrude\",\"fillet\",\"chamfer\",\"shell\",\"mirror\",\"circularPattern\",\"rectangularPattern\",\"hole\",\"combine\"],\n"

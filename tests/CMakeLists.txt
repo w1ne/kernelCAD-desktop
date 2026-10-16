@@ -57,6 +57,7 @@ add_test(NAME SketchButtons COMMAND test_sketch_buttons)
 add_executable(test_kernel
   test_OCCTKernel.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/OCCTKernel.cpp
+  ${CMAKE_SOURCE_DIR}/src/kernel/TriMesh.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/StableReference.cpp
 )
 target_include_directories(test_kernel PRIVATE ${CMAKE_SOURCE_DIR}/src ${OpenCASCADE_INCLUDE_DIR})
@@ -65,6 +66,16 @@ target_link_libraries(test_kernel PRIVATE
   TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo TKPrim
   TKBool TKFillet TKOffset TKMesh TKSTEP TKIGES TKXSBase TKSTL TKShHealing TKFeat)
 add_test(NAME OCCTKernel COMMAND test_kernel)
+
+# ── Triangle mesh tests (welding, topology, STL/OBJ writers) ────────────────
+add_executable(test_trimesh
+  test_TriMesh.cpp
+  ${CMAKE_SOURCE_DIR}/src/kernel/TriMesh.cpp
+)
+target_include_directories(test_trimesh PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_trimesh PRIVATE
+  kernelcad_compiler_options Qt6::Core Qt6::Test)
+add_test(NAME TriMesh COMMAND test_trimesh)
 
 # ── PluginManager tests ────────────────────────────────────────────────────
 add_executable(test_plugin_manager
@@ -95,6 +106,7 @@ add_executable(test_workflows
   ${CMAKE_SOURCE_DIR}/src/document/JsonReader.cpp
   ${CMAKE_SOURCE_DIR}/src/document/Serializer.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/OCCTKernel.cpp
+  ${CMAKE_SOURCE_DIR}/src/kernel/TriMesh.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/BRepModel.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/EntityAttribute.cpp
   ${CMAKE_SOURCE_DIR}/src/kernel/BRepQuery.cpp

@@ -56,7 +56,8 @@ Every CAD model follows this pattern:
 | `load` | `path` (string) | `{}` | Load from .kcd file |
 | `importStep` | `path` (string) | `{count, bodyIds}` | Import STEP file |
 | `exportStep` | `path` (string) | `{}` | Export all bodies to STEP |
-| `exportStl` | `path` (string) | `{}` | Export all bodies to STL |
+| `exportStl` | `path` (string); optional `quality` (`draft`/`standard`/`fine`, default `standard`), `deflection` (mm), `angleDeg` | `triangleCount`, `watertight`, `boundaryEdges`, `volume`, ... | Export all bodies to binary STL. Check `watertight` before printing |
+| `exportObj` | same as `exportStl` | same as `exportStl` | Export all bodies to Wavefront OBJ (mm) |
 | `undo` | — | `{}` | Undo last operation |
 | `redo` | — | `{}` | Redo last undone operation |
 | `recompute` | — | `{}` | Force recompute all features |

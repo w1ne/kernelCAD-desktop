@@ -4,6 +4,7 @@
 #include <utility>
 #include <memory>
 #include <TopoDS_Shape.hxx>
+#include "TriMesh.h"
 
 namespace kernel {
 
@@ -273,13 +274,39 @@ public:
 
     // ── Export ────────────────────────────────────────────────────────────
     bool exportSTEP(const TopoDS_Shape& shape, const std::string& path);
+    /// How finely curved faces are sampled, for display and export. Same idea as
+    /// OpenSCAD's $fs/$fa: the mesher keeps subdividing a face until both limits
+    /// hold, so small holes get enough facets without over-tessellating large
+    /// surfaces.
+    struct MeshQuality {
+        double linearDeflection = 0.1;   ///< mm: max gap between a facet and the true surface
+        double angularDeflection = 0.5;  ///< rad: max angle between adjacent facets
+
+        /// Coarse and fast. Used for live previews.
+        static MeshQuality draft() { return {0.1, 0.5}; }
+        /// Default for file export: round holes stay round at printing scale.
+        static MeshQuality standard() { return {0.02, 0.2}; }
+        /// Small or jewelry-scale features; larger files.
+        static MeshQuality fine() { return {0.005, 0.1}; }
+    };
+
+    // Exports tessellate with `quality`, weld the mesh into a closed indexed
+    // mesh, and optionally return its topology report. Check report->watertight()
+    // before sending a file to a slicer.
     bool exportSTL(const TopoDS_Shape& shape, const std::string& path,
-                   double linDeflection = 0.1);
+                   const MeshQuality& quality = MeshQuality::standard(),
+                   trimesh::MeshReport* report = nullptr);
 
     /// Export to 3MF format (ZIP containing XML mesh data).
     /// The modern 3D printing format — supports units, colors, multi-body.
     bool export3MF(const TopoDS_Shape& shape, const std::string& path,
-                   double linDeflection = 0.1);
+                   const MeshQuality& quality = MeshQuality::standard(),
+                   trimesh::MeshReport* report = nullptr);
+
+    /// Export Wavefront OBJ (positions and faces, mm). Same welding and report as STL.
+    bool exportOBJ(const TopoDS_Shape& shape, const std::string& path,
+                   const MeshQuality& quality = MeshQuality::standard(),
+                   trimesh::MeshReport* report = nullptr);
 
     // ── Tessellation ─────────────────────────────────────────────────────
     struct Mesh {
@@ -287,7 +314,9 @@ public:
         std::vector<float>    normals;    // x,y,z triples
         std::vector<uint32_t> indices;
     };
-    Mesh tessellate(const TopoDS_Shape& shape, double linDeflection = 0.1);
+    /// Triangulate a shape for display or export. Defaults to draft quality.
+    Mesh tessellate(const TopoDS_Shape& shape,
+                    const MeshQuality& quality = MeshQuality::draft());
 
     // ── Topology queries ─────────────────────────────────────────────────
     /// Count the number of faces in a shape (TopExp_Explorer order).

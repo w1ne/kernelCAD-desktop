@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Export
+- STL, 3MF and OBJ exports share one mesh path: tessellate, weld coincident vertices into a closed indexed mesh, then write.
+- `MeshQuality` presets (`draft`, `standard`, `fine`) set linear and angular deflection. Export defaults to `standard`; live previews stay on `draft`.
+- Exports report topology (triangle count, boundary and non-manifold edges, orientation errors, signed volume). `watertight` is true only when the mesh can be printed without repair.
+- STL is now written in binary (OCCT's writer used ASCII). New OBJ export; `exportStl` and `exportObj` accept `quality`, `deflection` and `angleDeg` in the CLI.
+
+### Fixes
+- A shape that was meshed finely by an earlier export or preview is re-meshed when a coarser quality is requested, so output no longer depends on export history.
+
 ## v0.1.0 — Alpha Release (2026-03-24)
 
 First public release of kernelCAD Desktop.
