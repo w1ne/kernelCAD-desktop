@@ -106,6 +106,48 @@ private slots:
         QVERIFY(std::abs(props.volume - 2000.0) < 10.0);  // 10*10*20
     }
 
+    void testExtrudeSymmetricAndTwoSides()
+    {
+        kernel::OCCTKernel k;
+        gp_Pnt p1(0, 0, 0), p2(10, 0, 0), p3(10, 10, 0), p4(0, 10, 0);
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(BRepBuilderAPI_MakeEdge(p1, p2));
+        wire.Add(BRepBuilderAPI_MakeEdge(p2, p3));
+        wire.Add(BRepBuilderAPI_MakeEdge(p3, p4));
+        wire.Add(BRepBuilderAPI_MakeEdge(p4, p1));
+        TopoDS_Shape face = BRepBuilderAPI_MakeFace(wire.Wire());
+
+        auto symmetric = k.extrudeSymmetric(face, 20);
+        auto symProps = k.computeProperties(symmetric);
+        QVERIFY(std::abs(symProps.volume - 2000.0) < 10.0);
+        QVERIFY(std::abs(symProps.bboxMinZ - (-10.0)) < 0.1);
+        QVERIFY(std::abs(symProps.bboxMaxZ - 10.0) < 0.1);
+
+        auto twoSides = k.extrudeTwoSides(face, 15, 5);
+        auto twoProps = k.computeProperties(twoSides);
+        QVERIFY(std::abs(twoProps.volume - 2000.0) < 10.0);
+        QVERIFY(std::abs(twoProps.bboxMinZ - (-5.0)) < 0.1);
+        QVERIFY(std::abs(twoProps.bboxMaxZ - 15.0) < 0.1);
+    }
+
+    void testPipeAndCounterboreVolume()
+    {
+        kernel::OCCTKernel k;
+        auto pipe = k.makePipe(10, 6, 20);
+        QVERIFY(!pipe.IsNull());
+        auto pipeProps = k.computeProperties(pipe);
+        double pipeVolume = M_PI * (100.0 - 36.0) * 20.0;
+        QVERIFY(std::abs(pipeProps.volume - pipeVolume) < 10.0);
+
+        auto block = k.makeBox(40, 40, 20);
+        auto bored = k.counterboreHole(block, 20, 20, 20, 0, 0, -1,
+                                        10, 20, 16, 5);
+        auto boredProps = k.computeProperties(bored);
+        // Through hole r=5 plus the counterbore ring r=8 over 5 mm.
+        double removed = M_PI * 25.0 * 20.0 + M_PI * (64.0 - 25.0) * 5.0;
+        QVERIFY(std::abs(boredProps.volume - (32000.0 - removed)) < 20.0);
+    }
+
     void testFillet()
     {
         kernel::OCCTKernel k;

@@ -71,6 +71,7 @@
 #include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffset_Mode.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRep_Builder.hxx>
@@ -200,6 +201,48 @@ TopoDS_Shape uniteCopies(const std::vector<TopoDS_Shape>& shapes)
     return fuseMany(live);
 }
 
+// One prism covering [z0, z1] along world Z. Symmetric and two-sided extrudes
+// are this span; a boolean of two half-prisms builds the same solid.
+TopoDS_Shape prismBetweenZ(const TopoDS_Shape& profile, double z0, double z1)
+{
+    const double lo = std::min(z0, z1);
+    const double hi = std::max(z0, z1);
+    if (hi - lo < 1e-12)
+        throw std::runtime_error("Extrude distance is zero");
+
+    TopoDS_Shape base = profile;
+    if (std::abs(lo) > 1e-12) {
+        gp_Trsf shift;
+        shift.SetTranslation(gp_Vec(0, 0, lo));
+        BRepBuilderAPI_Transform mover(profile, shift, Standard_True);
+        if (!mover.IsDone())
+            throw std::runtime_error("Extrude failed");
+        base = mover.Shape();
+    }
+    return BRepPrimAPI_MakePrism(base, gp_Vec(0, 0, hi - lo)).Shape();
+}
+
+TopoDS_Shape cutWithTools(const TopoDS_Shape& target, const std::vector<TopoDS_Shape>& tools)
+{
+    TopTools_ListOfShape toolList;
+    for (const auto& tool : tools) {
+        if (!tool.IsNull())
+            toolList.Append(tool);
+    }
+    if (toolList.IsEmpty())
+        return target;
+
+    BRepAlgoAPI_Cut cut;
+    TopTools_ListOfShape arguments;
+    arguments.Append(target);
+    cut.SetArguments(arguments);
+    cut.SetTools(toolList);
+    cut.Build();
+    if (!cut.IsDone() || cut.Shape().IsNull())
+        return target;
+    return cut.Shape();
+}
+
 } // namespace
 
 struct OCCTKernel::Impl {};
@@ -239,9 +282,23 @@ TopoDS_Shape OCCTKernel::makeTorus(double majorRadius, double minorRadius)
 TopoDS_Shape OCCTKernel::makePipe(double outerRadius, double innerRadius, double height)
 {
     OCCT_SAFE_BEGIN
-    auto outer = makeCylinder(outerRadius, height);
-    auto inner = makeCylinder(innerRadius, height);
-    return booleanCut(outer, inner);
+    if (!(outerRadius > innerRadius) || !(height > 0.0))
+        throw std::runtime_error("Pipe creation failed. Outer radius must be greater than inner radius");
+
+    // An annular face extruded once. A boolean of two cylinders builds the same tube.
+    gp_Ax2 axis(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1));
+    TopoDS_Wire outerWire = BRepBuilderAPI_MakeWire(
+        BRepBuilderAPI_MakeEdge(gp_Circ(axis, outerRadius)));
+    TopoDS_Wire innerWire = BRepBuilderAPI_MakeWire(
+        BRepBuilderAPI_MakeEdge(gp_Circ(axis, innerRadius)));
+    innerWire.Reverse();
+
+    BRepBuilderAPI_MakeFace faceMaker(outerWire, Standard_True);
+    faceMaker.Add(innerWire);
+    if (faceMaker.IsDone())
+        return BRepPrimAPI_MakePrism(faceMaker.Face(), gp_Vec(0, 0, height)).Shape();
+
+    return booleanCut(makeCylinder(outerRadius, height), makeCylinder(innerRadius, height));
     OCCT_SAFE_END("Pipe creation failed. Outer radius must be greater than inner radius")
 }
 
@@ -522,11 +579,7 @@ TopoDS_Shape OCCTKernel::extrude(const TopoDS_Shape& profile, double distance)
 TopoDS_Shape OCCTKernel::extrudeSymmetric(const TopoDS_Shape& profile, double totalDistance)
 {
     OCCT_SAFE_BEGIN
-    gp_Vec dirPos(0, 0, totalDistance / 2.0);
-    gp_Vec dirNeg(0, 0, -totalDistance / 2.0);
-    TopoDS_Shape pos = BRepPrimAPI_MakePrism(profile, dirPos).Shape();
-    TopoDS_Shape neg = BRepPrimAPI_MakePrism(profile, dirNeg).Shape();
-    return booleanUnion(pos, neg);
+    return prismBetweenZ(profile, -totalDistance / 2.0, totalDistance / 2.0);
     OCCT_SAFE_END("Symmetric extrude failed (distance=" + std::to_string(totalDistance) +
         "mm). Check that the profile is valid")
 }
@@ -534,11 +587,9 @@ TopoDS_Shape OCCTKernel::extrudeSymmetric(const TopoDS_Shape& profile, double to
 TopoDS_Shape OCCTKernel::extrudeTwoSides(const TopoDS_Shape& profile, double dist1, double dist2)
 {
     OCCT_SAFE_BEGIN
-    gp_Vec dir1(0, 0, dist1);
-    gp_Vec dir2(0, 0, -dist2);
-    TopoDS_Shape s1 = BRepPrimAPI_MakePrism(profile, dir1).Shape();
-    TopoDS_Shape s2 = BRepPrimAPI_MakePrism(profile, dir2).Shape();
-    return booleanUnion(s1, s2);
+    const double z0 = std::min(0.0, std::min(dist1, -dist2));
+    const double z1 = std::max(0.0, std::max(dist1, -dist2));
+    return prismBetweenZ(profile, z0, z1);
     OCCT_SAFE_END("Two-sided extrude failed. Check that the profile is valid")
 }
 
@@ -1160,25 +1211,20 @@ TopoDS_Shape OCCTKernel::counterboreHole(const TopoDS_Shape& shape,
                                           double cboreDiameter, double cboreDepth)
 {
     OCCT_SAFE_BEGIN
-    // First cut the main (smaller) hole
-    TopoDS_Shape result = hole(shape, posX, posY, posZ,
-                               dirX, dirY, dirZ,
-                               diameter, depth);
-
-    // Then cut the counterbore (larger, shallow cylinder) at the same position
-    double cboreRadius = cboreDiameter / 2.0;
+    double cutDepth = (depth <= 0.0) ? 1000.0 : depth;
     gp_Pnt origin(posX, posY, posZ);
     gp_Dir direction(dirX, dirY, dirZ);
     gp_Ax2 axis(origin, direction);
 
-    BRepPrimAPI_MakeCylinder mkCbore(axis, cboreRadius, cboreDepth);
-    mkCbore.Build();
-    if (!mkCbore.IsDone()) return result;
+    BRepPrimAPI_MakeCylinder holeCyl(axis, diameter / 2.0, cutDepth);
+    BRepPrimAPI_MakeCylinder boreCyl(axis, cboreDiameter / 2.0, cboreDepth);
+    holeCyl.Build();
+    boreCyl.Build();
+    if (!holeCyl.IsDone() || !boreCyl.IsDone())
+        return shape;
 
-    BRepAlgoAPI_Cut cut(result, mkCbore.Shape());
-    cut.Build();
-    if (!cut.IsDone()) return result;
-    return cut.Shape();
+    // One cut of both tools. Two sequential cuts build the same solid.
+    return cutWithTools(shape, {holeCyl.Shape(), boreCyl.Shape()});
     OCCT_SAFE_END("Counterbore hole failed. Check dimensions and position")
 }
 
@@ -1188,15 +1234,6 @@ TopoDS_Shape OCCTKernel::countersinkHole(const TopoDS_Shape& shape,
                                           double diameter, double depth,
                                           double csinkDiameter, double csinkAngleDeg)
 {
-    // First cut the main (smaller) hole
-    TopoDS_Shape result = hole(shape, posX, posY, posZ,
-                               dirX, dirY, dirZ,
-                               diameter, depth);
-
-    // Then cut the countersink cone at the same position.
-    // The cone has its large end at the surface (csinkDiameter) and
-    // tapers down to the hole diameter. The cone height is derived from
-    // the half-angle and the radii difference.
     double halfAngleRad = (csinkAngleDeg / 2.0) * M_PI / 180.0;
     double csinkRadius = csinkDiameter / 2.0;
     double holeRadius  = diameter / 2.0;
@@ -1204,24 +1241,25 @@ TopoDS_Shape OCCTKernel::countersinkHole(const TopoDS_Shape& shape,
     OCCT_SAFE_BEGIN
     // Cone height from the geometry: h = (R - r) / tan(halfAngle)
     double tanHalf = std::tan(halfAngleRad);
-    if (tanHalf < 1e-12) return result; // degenerate angle
+    if (tanHalf < 1e-12)
+        return hole(shape, posX, posY, posZ, dirX, dirY, dirZ, diameter, depth);
     double coneHeight = (csinkRadius - holeRadius) / tanHalf;
 
+    double cutDepth = (depth <= 0.0) ? 1000.0 : depth;
     gp_Pnt origin(posX, posY, posZ);
     gp_Dir direction(dirX, dirY, dirZ);
     gp_Ax2 axis(origin, direction);
 
-    // BRepPrimAPI_MakeCone(axis, R1_at_base, R2_at_top, height)
-    // The base of the cone is at the surface (large radius), the top is
-    // at coneHeight depth (smaller radius = holeRadius).
-    BRepPrimAPI_MakeCone mkCone(axis, csinkRadius, holeRadius, coneHeight);
-    mkCone.Build();
-    if (!mkCone.IsDone()) return result;
+    BRepPrimAPI_MakeCylinder holeCyl(axis, holeRadius, cutDepth);
+    // Base of the cone is at the surface (large radius). The top is at
+    // coneHeight and matches the hole radius.
+    BRepPrimAPI_MakeCone sinkCone(axis, csinkRadius, holeRadius, coneHeight);
+    holeCyl.Build();
+    sinkCone.Build();
+    if (!holeCyl.IsDone() || !sinkCone.IsDone())
+        return shape;
 
-    BRepAlgoAPI_Cut cut(result, mkCone.Shape());
-    cut.Build();
-    if (!cut.IsDone()) return result;
-    return cut.Shape();
+    return cutWithTools(shape, {holeCyl.Shape(), sinkCone.Shape()});
     OCCT_SAFE_END("Countersink hole failed. Check dimensions and position")
 }
 
