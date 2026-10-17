@@ -1,20 +1,5 @@
 #include "BRepModel.h"
 #include <TopoDS_Shape.hxx>
-#include <BRepMesh_IncrementalMesh.hxx>
-#include <BRepAdaptor_Curve.hxx>
-#include <GCPnts_TangentialDeflection.hxx>
-#include <TopoDS_Edge.hxx>
-#include <BRep_Tool.hxx>
-#include <TopoDS.hxx>
-#include <TopoDS_Face.hxx>
-#include <TopExp_Explorer.hxx>
-#include <TopAbs_ShapeEnum.hxx>
-#include <Poly_Triangulation.hxx>
-#include <gp_Dir.hxx>
-#include <gp_Pnt.hxx>
-#include <gp_Trsf.hxx>
-#include <gp_Vec.hxx>
-#include <cmath>
 #include <stdexcept>
 
 namespace kernel {
@@ -92,87 +77,9 @@ OCCTKernel::Mesh BRepModel::getMesh(const std::string& id, double deflection)
         return cacheIt->second;
     }
 
-    // Tessellate the shape
-    const TopoDS_Shape& shape = getShape(id);
+    OCCTKernel kernel;
+    OCCTKernel::Mesh result = kernel.tessellate(getShape(id), deflection);
 
-    BRepMesh_IncrementalMesh mesher(shape, deflection);
-    mesher.Perform();
-
-    OCCTKernel::Mesh result;
-    TopExp_Explorer faceEx(shape, TopAbs_FACE);
-    for (; faceEx.More(); faceEx.Next()) {
-        const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
-        TopLoc_Location loc;
-        auto tri = BRep_Tool::Triangulation(face, loc);
-        if (tri.IsNull()) continue;
-
-        const bool reversed = (face.Orientation() == TopAbs_REVERSED);
-        const uint32_t offset = static_cast<uint32_t>(result.vertices.size() / 3);
-
-        const gp_Trsf trsf = loc.Transformation();
-        const bool hasNormals = tri->HasNormals();
-
-        for (int i = 1; i <= tri->NbNodes(); ++i) {
-            gp_Pnt p = tri->Node(i).Transformed(trsf);
-            result.vertices.push_back(static_cast<float>(p.X()));
-            result.vertices.push_back(static_cast<float>(p.Y()));
-            result.vertices.push_back(static_cast<float>(p.Z()));
-
-            if (hasNormals) {
-                gp_Dir n = tri->Normal(i);
-                n = n.Transformed(trsf);
-                if (reversed) n.Reverse();
-                result.normals.push_back(static_cast<float>(n.X()));
-                result.normals.push_back(static_cast<float>(n.Y()));
-                result.normals.push_back(static_cast<float>(n.Z()));
-            } else {
-                // Will be filled by face-normal accumulation below
-                result.normals.push_back(0);
-                result.normals.push_back(0);
-                result.normals.push_back(0);
-            }
-        }
-
-        for (int i = 1; i <= tri->NbTriangles(); ++i) {
-            int n1, n2, n3;
-            tri->Triangle(i).Get(n1, n2, n3);
-            if (reversed) std::swap(n2, n3);
-            result.indices.push_back(offset + n1 - 1);
-            result.indices.push_back(offset + n2 - 1);
-            result.indices.push_back(offset + n3 - 1);
-
-            if (!hasNormals) {
-                // Accumulate area-weighted face normals for smooth shading
-                uint32_t i0 = offset + n1 - 1;
-                uint32_t i1 = offset + n2 - 1;
-                uint32_t i2 = offset + n3 - 1;
-                gp_Vec v0(result.vertices[i0*3], result.vertices[i0*3+1], result.vertices[i0*3+2]);
-                gp_Vec v1(result.vertices[i1*3], result.vertices[i1*3+1], result.vertices[i1*3+2]);
-                gp_Vec v2(result.vertices[i2*3], result.vertices[i2*3+1], result.vertices[i2*3+2]);
-                gp_Vec faceN = (v1 - v0).Crossed(v2 - v0);
-                for (uint32_t vi : {i0, i1, i2}) {
-                    result.normals[vi*3]   += static_cast<float>(faceN.X());
-                    result.normals[vi*3+1] += static_cast<float>(faceN.Y());
-                    result.normals[vi*3+2] += static_cast<float>(faceN.Z());
-                }
-            }
-        }
-    }
-
-    // Normalize any accumulated face normals (fallback path)
-    for (size_t i = 0; i + 2 < result.normals.size(); i += 3) {
-        float nx = result.normals[i], ny = result.normals[i+1], nz = result.normals[i+2];
-        float len = std::sqrt(nx*nx + ny*ny + nz*nz);
-        if (len > 1e-10f) {
-            result.normals[i]   = nx / len;
-            result.normals[i+1] = ny / len;
-            result.normals[i+2] = nz / len;
-        } else {
-            result.normals[i] = 0; result.normals[i+1] = 0; result.normals[i+2] = 1;
-        }
-    }
-
-    // Cache result
     m_impl->meshCache[id] = result;
     m_impl->meshDeflection[id] = deflection;
     return result;
@@ -190,44 +97,11 @@ OCCTKernel::EdgeMesh BRepModel::getEdgeMesh(const std::string& id, double deflec
         return cacheIt->second;
     }
 
-    const TopoDS_Shape& shape = getShape(id);
+    // Edge polylines do not need a second IncrementalMesh. getMesh() already
+    // tessellates when the viewport asks for both, and extractEdges samples curves directly.
+    OCCTKernel kernel;
+    OCCTKernel::EdgeMesh result = kernel.extractEdges(getShape(id), deflection);
 
-    // Ensure the shape is tessellated (needed for edge polylines too)
-    BRepMesh_IncrementalMesh mesher(shape, deflection);
-    mesher.Perform();
-
-    OCCTKernel::EdgeMesh result;
-
-    TopExp_Explorer edgeEx(shape, TopAbs_EDGE);
-    for (; edgeEx.More(); edgeEx.Next()) {
-        const TopoDS_Edge& edge = TopoDS::Edge(edgeEx.Current());
-
-        if (BRep_Tool::Degenerated(edge))
-            continue;
-
-        BRepAdaptor_Curve curve(edge);
-        GCPnts_TangentialDeflection discretizer(curve, deflection, 0.1);
-
-        int nbPoints = discretizer.NbPoints();
-        if (nbPoints < 2)
-            continue;
-
-        uint32_t baseIndex = static_cast<uint32_t>(result.vertices.size() / 3);
-
-        for (int i = 1; i <= nbPoints; ++i) {
-            gp_Pnt p = discretizer.Value(i);
-            result.vertices.push_back(static_cast<float>(p.X()));
-            result.vertices.push_back(static_cast<float>(p.Y()));
-            result.vertices.push_back(static_cast<float>(p.Z()));
-        }
-
-        for (int i = 0; i < nbPoints - 1; ++i) {
-            result.indices.push_back(baseIndex + static_cast<uint32_t>(i));
-            result.indices.push_back(baseIndex + static_cast<uint32_t>(i + 1));
-        }
-    }
-
-    // Cache result
     m_impl->edgeMeshCache[id] = result;
     m_impl->edgeMeshDeflection[id] = deflection;
     return result;

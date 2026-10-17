@@ -164,6 +164,38 @@ private slots:
         QVERIFY(std::abs(props.volume - 500.0) < 10.0);
     }
 
+    void testRectangularPatternDisjoint()
+    {
+        kernel::OCCTKernel k;
+        auto box = k.makeBox(10, 10, 10);
+        auto pattern = k.rectangularPattern(box, 1, 0, 0, 20, 4, 0, 1, 0, 20, 3);
+        QVERIFY(!pattern.IsNull());
+        auto props = k.computeProperties(pattern);
+        // 12 separated boxes, 1000 mm^3 each
+        QVERIFY(std::abs(props.volume - 12000.0) < 10.0);
+        QCOMPARE(k.faceCount(pattern), 72);
+    }
+
+    void testRectangularPatternOverlap()
+    {
+        kernel::OCCTKernel k;
+        auto box = k.makeBox(20, 20, 10);
+        auto pattern = k.rectangularPattern(box, 1, 0, 0, 10, 2, 0, 1, 0, 10, 1);
+        QVERIFY(!pattern.IsNull());
+        auto props = k.computeProperties(pattern);
+        // Two 20x20x10 boxes overlapping 10 mm in X: 8000 - 2000 = 6000
+        QVERIFY(std::abs(props.volume - 6000.0) < 10.0);
+    }
+
+    void testExtractEdgesAreUnique()
+    {
+        kernel::OCCTKernel k;
+        auto box = k.makeBox(10, 10, 10);
+        auto edges = k.extractEdges(box, 0.1);
+        // 12 edges, one segment each. Explorer order would emit 24.
+        QCOMPARE(static_cast<int>(edges.indices.size() / 2), 12);
+    }
+
     void testTessellate()
     {
         kernel::OCCTKernel k;

@@ -103,6 +103,105 @@
 
 namespace kernel {
 
+namespace {
+
+Bnd_Box exactBox(const TopoDS_Shape& shape)
+{
+    Bnd_Box box;
+    // useTriangulation = false: exact bounds, and do not build a mesh just to test overlap.
+    BRepBndLib::Add(shape, box, Standard_False);
+    return box;
+}
+
+bool boundsOverlap(const Bnd_Box& a, const Bnd_Box& b)
+{
+    if (a.IsVoid() || b.IsVoid())
+        return true;
+    return !a.IsOut(b);
+}
+
+TopoDS_Shape compoundOf(const std::vector<TopoDS_Shape>& shapes)
+{
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    for (const auto& shape : shapes) {
+        if (!shape.IsNull())
+            builder.Add(compound, shape);
+    }
+    return compound;
+}
+
+// One boolean over every shape. Used when bounding boxes overlap, so a compound
+// would double-count volume and leave intersecting solids.
+TopoDS_Shape fuseMany(const std::vector<TopoDS_Shape>& shapes)
+{
+    BRepAlgoAPI_Fuse fuse;
+    TopTools_ListOfShape arguments;
+    arguments.Append(shapes.front());
+    fuse.SetArguments(arguments);
+
+    TopTools_ListOfShape tools;
+    for (size_t i = 1; i < shapes.size(); ++i)
+        tools.Append(shapes[i]);
+    fuse.SetTools(tools);
+    if (shapes.size() >= 4)
+        fuse.SetRunParallel(Standard_True);
+    fuse.Build();
+    if (fuse.IsDone() && !fuse.Shape().IsNull())
+        return fuse.Shape();
+
+    TopoDS_Shape result = shapes.front();
+    for (size_t i = 1; i < shapes.size(); ++i) {
+        BRepAlgoAPI_Fuse step(result, shapes[i]);
+        step.Build();
+        if (step.IsDone() && !step.Shape().IsNull())
+            result = step.Shape();
+    }
+    return result;
+}
+
+// Patterns and mirrors used to fuse copies one at a time. That is quadratic in
+// the growing result. Disjoint copies (the common pattern case) need no boolean
+// at all: a compound has the same volume and the same faces. Overlapping copies
+// are fused once.
+TopoDS_Shape uniteCopies(const std::vector<TopoDS_Shape>& shapes)
+{
+    std::vector<TopoDS_Shape> live;
+    live.reserve(shapes.size());
+    for (const auto& shape : shapes) {
+        if (!shape.IsNull())
+            live.push_back(shape);
+    }
+    if (live.empty())
+        return TopoDS_Shape();
+    if (live.size() == 1)
+        return live.front();
+
+    std::vector<Bnd_Box> boxes;
+    boxes.reserve(live.size());
+    bool overlapping = false;
+    for (const auto& shape : live) {
+        Bnd_Box box = exactBox(shape);
+        // Catch faces that touch within the boolean fuzzy gap used elsewhere.
+        box.Enlarge(1e-5);
+        if (!overlapping) {
+            for (const auto& prev : boxes) {
+                if (boundsOverlap(prev, box)) {
+                    overlapping = true;
+                    break;
+                }
+            }
+        }
+        boxes.push_back(box);
+    }
+    if (!overlapping)
+        return compoundOf(live);
+    return fuseMany(live);
+}
+
+} // namespace
+
 struct OCCTKernel::Impl {};
 
 OCCTKernel::OCCTKernel() : m_impl(std::make_unique<Impl>()) {}
@@ -241,13 +340,17 @@ TopoDS_Shape OCCTKernel::web(const TopoDS_Shape& body, const TopoDS_Shape& profi
                               double thickness, double depth, int count, double spacing)
 {
     OCCT_SAFE_BEGIN
-    TopoDS_Shape result = body;
+    std::vector<TopoDS_Shape> parts;
+    parts.reserve(static_cast<size_t>(count > 0 ? count : 0) + 1);
+    parts.push_back(body);
     for (int i = 0; i < count; ++i) {
         double offset = i * spacing;
         TopoDS_Shape offsetProfile = translate(profile, offset, 0, 0);
-        result = rib(result, offsetProfile, thickness, depth);
+        gp_Vec dir(0, 0, depth);
+        TopoDS_Shape extruded = BRepPrimAPI_MakePrism(offsetProfile, dir).Shape();
+        parts.push_back(thicken(extruded, thickness));
     }
-    return result;
+    return uniteCopies(parts);
     OCCT_SAFE_END("Web failed. Check profile, spacing, and body geometry")
 }
 
@@ -842,12 +945,7 @@ TopoDS_Shape OCCTKernel::mirror(const TopoDS_Shape& shape,
     if (!transformer.IsDone()) return shape;
 
     TopoDS_Shape mirrored = transformer.Shape();
-
-    // Fuse original + mirrored
-    BRepAlgoAPI_Fuse fuse(shape, mirrored);
-    fuse.Build();
-    if (!fuse.IsDone()) return shape;
-    return fuse.Shape();
+    return uniteCopies({shape, mirrored});
     OCCT_SAFE_END("Mirror failed. Check that the mirror plane is valid")
 }
 
@@ -869,11 +967,13 @@ TopoDS_Shape OCCTKernel::rectangularPattern(const TopoDS_Shape& shape,
     normalize(dirX1, dirY1, dirZ1);
     normalize(dirX2, dirY2, dirZ2);
 
-    TopoDS_Shape result = shape;
+    std::vector<TopoDS_Shape> copies;
+    copies.reserve(static_cast<size_t>(count1) * static_cast<size_t>(count2));
+    copies.push_back(shape);
 
     for (int i = 0; i < count1; ++i) {
         for (int j = 0; j < count2; ++j) {
-            if (i == 0 && j == 0) continue; // skip the original
+            if (i == 0 && j == 0) continue;
 
             double tx = dirX1 * spacing1 * i + dirX2 * spacing2 * j;
             double ty = dirY1 * spacing1 * i + dirY2 * spacing2 * j;
@@ -884,15 +984,11 @@ TopoDS_Shape OCCTKernel::rectangularPattern(const TopoDS_Shape& shape,
 
             BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
             if (!transformer.IsDone()) continue;
-
-            BRepAlgoAPI_Fuse fuse(result, transformer.Shape());
-            fuse.Build();
-            if (fuse.IsDone())
-                result = fuse.Shape();
+            copies.push_back(transformer.Shape());
         }
     }
 
-    return result;
+    return uniteCopies(copies);
     OCCT_SAFE_END("Rectangular pattern failed. Check spacing and directions")
 }
 
@@ -910,7 +1006,9 @@ TopoDS_Shape OCCTKernel::circularPattern(const TopoDS_Shape& shape,
 
     double stepAngleRad = (totalAngleDeg * M_PI / 180.0) / count;
 
-    TopoDS_Shape result = shape;
+    std::vector<TopoDS_Shape> copies;
+    copies.reserve(static_cast<size_t>(count));
+    copies.push_back(shape);
 
     for (int i = 1; i < count; ++i) {
         gp_Trsf trsf;
@@ -918,14 +1016,10 @@ TopoDS_Shape OCCTKernel::circularPattern(const TopoDS_Shape& shape,
 
         BRepBuilderAPI_Transform transformer(shape, trsf, /*copy=*/Standard_True);
         if (!transformer.IsDone()) continue;
-
-        BRepAlgoAPI_Fuse fuse(result, transformer.Shape());
-        fuse.Build();
-        if (fuse.IsDone())
-            result = fuse.Shape();
+        copies.push_back(transformer.Shape());
     }
 
-    return result;
+    return uniteCopies(copies);
     OCCT_SAFE_END("Circular pattern failed. Check axis direction and count")
 }
 
@@ -1620,6 +1714,19 @@ OCCTKernel::Mesh OCCTKernel::tessellate(const TopoDS_Shape& shape, double linDef
     mesher.Perform();
 
     Mesh result;
+    int nodeCount = 0;
+    int triCount = 0;
+    for (TopExp_Explorer countEx(shape, TopAbs_FACE); countEx.More(); countEx.Next()) {
+        TopLoc_Location loc;
+        auto tri = BRep_Tool::Triangulation(TopoDS::Face(countEx.Current()), loc);
+        if (tri.IsNull()) continue;
+        nodeCount += tri->NbNodes();
+        triCount += tri->NbTriangles();
+    }
+    result.vertices.reserve(static_cast<size_t>(nodeCount) * 3);
+    result.normals.reserve(static_cast<size_t>(nodeCount) * 3);
+    result.indices.reserve(static_cast<size_t>(triCount) * 3);
+
     TopExp_Explorer faceEx(shape, TopAbs_FACE);
     for (; faceEx.More(); faceEx.Next()) {
         const TopoDS_Face& face = TopoDS::Face(faceEx.Current());
@@ -1700,6 +1807,9 @@ OCCTKernel::Mesh OCCTKernel::tessellate(const TopoDS_Shape& shape, double linDef
 OCCTKernel::EdgeMesh OCCTKernel::extractEdges(const TopoDS_Shape& shape, double deflection)
 {
     EdgeMesh result;
+    // TopExp_Explorer visits each shared edge once per face. A box reports 24
+    // edge occurrences and only 12 unique edges. Discretize each edge once.
+    TopTools_IndexedMapOfShape seenEdges;
 
     TopExp_Explorer edgeEx(shape, TopAbs_EDGE);
     for (; edgeEx.More(); edgeEx.Next()) {
@@ -1708,6 +1818,9 @@ OCCTKernel::EdgeMesh OCCTKernel::extractEdges(const TopoDS_Shape& shape, double 
         // Skip degenerated edges (seam edges on periodic surfaces)
         if (BRep_Tool::Degenerated(edge))
             continue;
+        if (seenEdges.Contains(edge))
+            continue;
+        seenEdges.Add(edge);
 
         BRepAdaptor_Curve curve(edge);
         GCPnts_TangentialDeflection discretizer(curve, deflection, 0.1 /*angular deflection*/);
@@ -1797,8 +1910,16 @@ std::vector<OCCTKernel::InterferenceResult> OCCTKernel::checkInterference(
 {
     std::vector<InterferenceResult> results;
 
+    std::vector<Bnd_Box> boxes;
+    boxes.reserve(bodies.size());
+    for (const auto& body : bodies)
+        boxes.push_back(exactBox(body.second));
+
     for (size_t i = 0; i < bodies.size(); ++i) {
         for (size_t j = i + 1; j < bodies.size(); ++j) {
+            // Disjoint bounds cannot interfere. Skip the boolean entirely.
+            if (!boundsOverlap(boxes[i], boxes[j]))
+                continue;
             try {
                 BRepAlgoAPI_Common common(bodies[i].second, bodies[j].second);
                 common.Build();
@@ -1915,9 +2036,6 @@ TopoDS_Shape OCCTKernel::pathPattern(const TopoDS_Shape& shape,
     // Compute total length
     double totalLength = 0;
     for (const auto& edge : edges) {
-        BRepAdaptor_Curve curve(edge);
-        GCPnts_TangentialDeflection sampler(curve, 0.01, 0.1);
-        // Use GProp for accurate length
         GProp_GProps props;
         BRepGProp::LinearProperties(edge, props);
         totalLength += props.Mass();
@@ -1935,8 +2053,8 @@ TopoDS_Shape OCCTKernel::pathPattern(const TopoDS_Shape& shape,
         // Single copy at startDist
     }
 
-    // Build a compound of all copies fused together
-    TopoDS_Shape result = shape;
+    std::vector<TopoDS_Shape> copies;
+    copies.reserve(static_cast<size_t>(count));
 
     // Walk along edges to find points at given distances
     auto pointAndTangentAtDist = [&](double targetDist) -> std::pair<gp_Pnt, gp_Dir> {
@@ -2002,16 +2120,12 @@ TopoDS_Shape OCCTKernel::pathPattern(const TopoDS_Shape& shape,
 
         TopoDS_Shape copy = xform.Shape();
 
-        if (i == 0) {
-            result = copy;
-        } else {
-            BRepAlgoAPI_Fuse fuser(result, copy);
-            if (fuser.IsDone())
-                result = fuser.Shape();
-        }
+        copies.push_back(copy);
     }
 
-    return result;
+    if (copies.empty())
+        return shape;
+    return uniteCopies(copies);
     OCCT_SAFE_END("Path pattern failed. Check that the path is a valid wire")
 }
 

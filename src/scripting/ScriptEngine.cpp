@@ -9,6 +9,8 @@
 #ifndef KERNELCAD_CLI
 #include "../ui/DrawingView.h"
 #endif
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
@@ -173,12 +175,14 @@ struct ScriptEngine::Impl {
         if (ids.size() == 1)
             return doc.brepModel().getShape(ids[0]);
 
-        // Fuse all bodies into a compound
-        TopoDS_Shape result = doc.brepModel().getShape(ids[0]);
-        for (size_t i = 1; i < ids.size(); ++i) {
-            result = doc.kernel().booleanUnion(result, doc.brepModel().getShape(ids[i]));
-        }
-        return result;
+        // Group bodies for export. A compound keeps separate solids and skips
+        // the boolean that used to run on every STEP/STL/drawing export.
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (const auto& id : ids)
+            builder.Add(compound, doc.brepModel().getShape(id));
+        return compound;
     }
 
     // ── Meta commands for LLM agents ─────────────────────────────────
